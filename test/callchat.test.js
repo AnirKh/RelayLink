@@ -70,6 +70,8 @@ function call({ onScreen = true } = {}) {
   const window = { ResizeObserver: class { constructor(f) { resized = f; } observe() {} } };
   const api = new Function("document", "callOverlay", "chatScreen", "window", "ResizeObserver", "setTimeout",
     "showCallChrome", "stopCallChrome", "endCall", `
+    let callSwapped = false;                     // the pictures swapped (THE SELF-VIEW): not here
+    function setCallSwapped(on) { callSwapped = on; }
     ${fn("selfViewPosition")}
     ${BLOCK}
     return { setCallMini, resetCallMini, noteCallChat, mini: () => callMini };`
@@ -330,7 +332,7 @@ test("small, you are beside them, not over their picture — a tile each, untouc
   assert.match(mini, /--mini-shape:\s*3 \/ 4;/, "a phone's camera is upright");
   assert.match(css, /@media \(min-width: 769px\) \{ \.call-overlay\.mini \{ --mini-tile: \d+px; --mini-shape: 4 \/ 3; \} \}/, "a computer's lies on its side");
   assert.match(rule(".call-overlay.mini #localVideo.cam-off"), /display:\s*none;/, "no black square with the camera off");
-  assert.match(fn("keepSelfViewInside"), /if \(callMini\) return;/, "its full-call place is kept while small");
+  assert.match(fn("keepSelfViewInside"), /if \(callMini \|\| callSwapped\) return;/, "its full-call place is kept while small (and while swapped big)");
   assert.match(between("toggleCamBtn.onclick = () => {", "\n};"), /localVideo\.classList\.toggle\("cam-off", isCamOff\);/);
   assert.match(fn("stopCallMedia"), /isCamOff = false;\s*\n\s*localVideo\.classList\.remove\("cam-off"\);/, "and the next call starts with it on");
 });

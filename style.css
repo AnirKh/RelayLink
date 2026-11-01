@@ -1020,6 +1020,24 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
   -webkit-touch-callout: none;
 }
 #localVideo.dragging { cursor: grabbing; }
+/* Swapped by a tap on the self-view (setCallSwapped in app.js): your picture
+   fills the call — over wherever it had been dragged to, hence !important —
+   and theirs takes the small spot, where a tap swaps back. */
+.call-overlay.swapped #localVideo {
+  inset: 0 !important; width: 100% !important; height: 100% !important;
+  min-width: 0; max-height: none; aspect-ratio: auto;
+  border: 0; border-radius: 0; z-index: 1; cursor: default; background: #000;
+}
+.call-overlay.swapped #remoteVideo {
+  inset: auto;
+  bottom: calc(110px + var(--safe-bottom));
+  right: calc(14px + var(--safe-right));
+  width: min(34vw, 156px); min-width: 86px; height: auto;
+  max-height: min(28vh, 180px);
+  aspect-ratio: var(--remote-video-aspect, 16 / 9);
+  border-radius: 10px; border: 2px solid rgba(255,255,255,0.25);
+  z-index: 10; cursor: pointer;
+}
 /* The back camera shows the world, not you: no mirror, so text in it reads the
    right way round here as well. showCameraFacing() in app.js sets the class. */
 #localVideo.back-camera { transform: none; }

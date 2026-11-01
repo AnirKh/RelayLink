@@ -129,12 +129,12 @@ test("with nothing to measure against, there is no answer", () => {
    moveSelfView / keepSelfViewInside against stand-in elements
 ══════════════════════════════════════════ */
 
-function stage({ left = "", top = "", w = 156, h = 88, areaW = 800, areaH = 600, mini = false } = {}) {
+function stage({ left = "", top = "", w = 156, h = 88, areaW = 800, areaH = 600, mini = false, swapped = false } = {}) {
   const localVideo  = { offsetWidth: w, offsetHeight: h, style: { left, top, right: "", bottom: "" } };
   const callOverlay = { clientWidth: areaW, clientHeight: areaH };
-  const fns = new Function("localVideo", "callOverlay", "SELF_VIEW_MARGIN", "callMini",
+  const fns = new Function("localVideo", "callOverlay", "SELF_VIEW_MARGIN", "callMini", "callSwapped",
     `${positionSrc}\n${moveSrc}\n${keepSrc}\nreturn { moveSelfView, keepSelfViewInside };`
-  )(localVideo, callOverlay, 8, mini);
+  )(localVideo, callOverlay, 8, mini, swapped);
   return { localVideo, callOverlay, ...fns };
 }
 
@@ -201,4 +201,117 @@ test("it is put back inside whenever the call or the picture changes size", () =
   assert.match(app, /new ResizeObserver\(keepSelfViewInside\)/);
   assert.match(app, /\.observe\(callOverlay\)/);
   assert.match(app, /\.observe\(localVideo\)/);
+});
+
+/* ══════════════════════════════════════════
+   Your own picture big
+   ──────────────────────────────────────────
+   Asked for: a tap on your own small picture to see it big. The pictures
+   swap places, not streams — theirs carries their sound, and moved into
+   the muted self-view it would go silent. A tap on theirs, small, swaps back.
+══════════════════════════════════════════ */
+
+const swapBlock = (() => {
+  const src = app.replace(/\r\n/g, "\n");
+  const a = src.indexOf("let selfViewDrag = null;");
+  const b = src.indexOf("if (window.ResizeObserver) {", a);
+  assert.ok(a > 0 && b > a, "the self-view's pointer handling not found");
+  return src.slice(a, b);
+})();
+
+function call({ voice = false, mini = false, left = "", top = "" } = {}) {
+  const listeners = {}, remoteClicks = [];
+  const classes = new Set(voice ? ["voice-only"] : []);
+  const classList = { contains: c => classes.has(c), toggle: (c, on) => (on ? classes.add(c) : classes.delete(c)),
+                      add: c => classes.add(c), remove: c => classes.delete(c) };
+  const vars = {};
+  const localVideo = {
+    style: { left, top, right: left ? "auto" : "", bottom: top ? "auto" : "" }, offsetWidth: 156, offsetHeight: 88,
+    classList: { add() {}, remove() {} }, getBoundingClientRect: () => ({ left: 600, top: 400 }),
+    setPointerCapture() {}, addEventListener: (t, f) => { listeners[t] = f; }
+  };
+  const remoteVideo = {
+    style: { left: "", top: "", right: "", bottom: "", setProperty: (k, v) => { vars[k] = v; } },
+    videoWidth: 720, videoHeight: 1280, addEventListener: (t, f) => { if (t === "click") remoteClicks.push(f); }
+  };
+  const callOverlay = { classList, clientWidth: 800, clientHeight: 600, getBoundingClientRect: () => ({ left: 0, top: 0 }) };
+  const api = new Function("localVideo", "remoteVideo", "callOverlay", "callMini", "SELF_VIEW_MARGIN",
+    `${positionSrc}\n${moveSrc}\n${keepSrc}\n${swapBlock}\nreturn { swapped: () => callSwapped, setCallSwapped };`
+  )(localVideo, remoteVideo, callOverlay, mini, 8);
+  const press = (type, x, y) => listeners[type]({ type, pointerId: 1, button: 0, clientX: x, clientY: y, preventDefault() {} });
+  return { ...api, press, classes, localVideo, remoteVideo, vars, tapRemote: () => remoteClicks.forEach(f => f()) };
+}
+
+test("a tap on your own small picture shows it big; theirs goes small where yours was", () => {
+  const c = call({ left: "420px", top: "300px" });
+  c.press("pointerdown", 610, 410);
+  c.press("pointerup", 612, 411);              // a finger that wobbles but does not travel
+  assert.equal(c.swapped(), true);
+  assert.ok(c.classes.has("swapped"));
+  assert.equal(c.remoteVideo.style.left, "420px", "theirs where yours was put");
+  assert.equal(c.remoteVideo.style.top, "300px");
+  assert.equal(c.vars["--remote-video-aspect"], "720 / 1280", "with its own shape");
+});
+
+test("a tap on theirs, small, swaps back — and theirs fills the call again", () => {
+  const c = call();
+  c.press("pointerdown", 610, 410);
+  c.press("pointerup", 610, 410);
+  c.tapRemote();
+  assert.equal(c.swapped(), false);
+  assert.ok(!c.classes.has("swapped"));
+  assert.deepEqual([c.remoteVideo.style.left, c.remoteVideo.style.top, c.remoteVideo.style.right, c.remoteVideo.style.bottom], ["", "", "", ""]);
+  c.tapRemote();
+  assert.equal(c.swapped(), false, "a tap on theirs, big, does nothing");
+});
+
+test("a drag moves your picture and swaps nothing; a press the browser takes over swaps nothing", () => {
+  const c = call();
+  c.press("pointerdown", 610, 410);
+  c.press("pointermove", 640, 430);
+  c.press("pointerup", 640, 430);
+  assert.equal(c.swapped(), false);
+  assert.ok(c.localVideo.style.left, "moved");
+  const taken = call();
+  taken.press("pointerdown", 610, 410);
+  taken.press("pointercancel", 610, 410);
+  assert.equal(taken.swapped(), false);
+});
+
+test("big, your picture is neither dragged nor swapped by a tap on it", () => {
+  const c = call();
+  c.setCallSwapped(true);
+  c.press("pointerdown", 100, 100);
+  c.press("pointermove", 300, 300);
+  c.press("pointerup", 300, 300);
+  assert.equal(c.swapped(), true);
+  assert.equal(c.localVideo.style.left, "", "not moved: it fills the call");
+});
+
+test("not in a voice call, nor in the small call", () => {
+  const voice = call({ voice: true });
+  voice.press("pointerdown", 610, 410);
+  voice.press("pointerup", 610, 410);
+  assert.equal(voice.swapped(), false);
+  const mini = call({ mini: true });
+  mini.setCallSwapped(true);
+  assert.equal(mini.swapped(), false);
+});
+
+test("swapped, the stylesheet puts yours over the whole call and theirs in the small spot", () => {
+  const big = rule(".call-overlay.swapped #localVideo");
+  assert.match(big, /inset:\s*0 !important;/, "over wherever it had been dragged to");
+  assert.match(big, /width:\s*100% !important;/);
+  assert.match(big, /z-index:\s*1;/);
+  const small = rule(".call-overlay.swapped #remoteVideo");
+  assert.match(small, /aspect-ratio:\s*var\(--remote-video-aspect, 16 \/ 9\);/);
+  assert.match(small, /z-index:\s*10;/);
+  assert.doesNotMatch(small, /transform/, "theirs is never mirrored, small or big");
+});
+
+test("a call made small, or over, comes back the usual way round", () => {
+  const src = app.replace(/\r\n/g, "\n");
+  const fn = name => (src.match(new RegExp(`^function ${name}\\([^)]*\\)\\s*\\{[\\s\\S]*?^\\}`, "m")) || [""])[0];
+  assert.match(fn("setCallMini"), /if \(on && callSwapped\) setCallSwapped\(false\);/);
+  assert.match(fn("resetCallMini"), /if \(callSwapped\) setCallSwapped\(false\);/);
 });

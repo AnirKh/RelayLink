@@ -27,7 +27,7 @@
 
    APP_BUILD is written by tools/sync-build.js and by nothing else.
 ══════════════════════════════════════════════ */
-const APP_BUILD = "202610310503-73e7c67b";
+const APP_BUILD = "202611010755-2c0a654d";
 
 function refuseToRunInAStalePage() {
   let builtFor = null;
@@ -5485,27 +5485,35 @@ function moveSelfView(x, y) {
   localVideo.style.bottom = "auto";
 }
 
-let selfViewDrag = null;   // { id, dx, dy } while a finger or the mouse holds it
+let selfViewDrag = null;   // { id, dx, dy, x0, y0, moved } while a finger or the mouse holds it
+const SELF_VIEW_SLOP = 6;  // px a finger may wander and still be a tap
 
 localVideo.addEventListener("pointerdown", (e) => {
-  if (e.button !== 0) return;
+  if (e.button !== 0 || callSwapped) return;   // big, it is not the one to drag or tap
   const box = localVideo.getBoundingClientRect();
-  selfViewDrag = { id: e.pointerId, dx: e.clientX - box.left, dy: e.clientY - box.top };
+  selfViewDrag = { id: e.pointerId, dx: e.clientX - box.left, dy: e.clientY - box.top,
+                   x0: e.clientX, y0: e.clientY, moved: false };
   localVideo.setPointerCapture(e.pointerId);
-  localVideo.classList.add("dragging");
   e.preventDefault();
 });
 
 localVideo.addEventListener("pointermove", (e) => {
   if (!selfViewDrag || e.pointerId !== selfViewDrag.id) return;
+  if (!selfViewDrag.moved && Math.hypot(e.clientX - selfViewDrag.x0, e.clientY - selfViewDrag.y0) < SELF_VIEW_SLOP) return;
+  selfViewDrag.moved = true;
+  localVideo.classList.add("dragging");
   const area = callOverlay.getBoundingClientRect();
   moveSelfView(e.clientX - area.left - selfViewDrag.dx, e.clientY - area.top - selfViewDrag.dy);
 });
 
+/** Let go: a drag ends where it is; a tap — never moved past the slop, and
+    not a cancelled press — swaps the two pictures (setCallSwapped). */
 function endSelfViewDrag(e) {
   if (!selfViewDrag || e.pointerId !== selfViewDrag.id) return;
+  const tapped = e.type === "pointerup" && !selfViewDrag.moved;
   selfViewDrag = null;
   localVideo.classList.remove("dragging");
+  if (tapped) setCallSwapped(true);
 }
 localVideo.addEventListener("pointerup", endSelfViewDrag);
 localVideo.addEventListener("pointercancel", endSelfViewDrag);
@@ -5516,10 +5524,38 @@ localVideo.addEventListener("lostpointercapture", endSelfViewDrag);
 function keepSelfViewInside() {
   if (!localVideo.style.left) return;
   /* The call made small shows the self-view in its own corner (style.css);
-     measured against the small call, this would lose the place it was put. */
-  if (callMini) return;
+     measured against the small call, this would lose the place it was put.
+     Swapped, it fills the call: held to that size, it would come back in
+     the top-left corner rather than where it was put. */
+  if (callMini || callSwapped) return;
   moveSelfView(parseFloat(localVideo.style.left), parseFloat(localVideo.style.top));
 }
+/* ── Your own picture big ───────────────────
+   Asked for: in a video call, a tap on your own small picture to see it big.
+   It swaps the pictures' places, not their streams: theirs plays their sound,
+   and moving their stream into the muted self-view would silence them. Theirs
+   goes small where yours was, and a tap on it swaps back. Not in a voice call
+   (no pictures) nor the small call (side by side already); a call that ends,
+   or is made small, comes back the usual way round. */
+let callSwapped = false;
+
+function setCallSwapped(on) {
+  if (on && (callMini || callOverlay.classList.contains("voice-only") || callOverlay.classList.contains("hidden"))) return;
+  callSwapped = on;
+  callOverlay.classList.toggle("swapped", on);
+  if (on) {
+    /* Theirs small, with its own shape, where yours was put — or in its corner. */
+    if (remoteVideo.videoWidth && remoteVideo.videoHeight) {
+      remoteVideo.style.setProperty("--remote-video-aspect", `${remoteVideo.videoWidth} / ${remoteVideo.videoHeight}`);
+    }
+    for (const side of ["left", "top", "right", "bottom"]) remoteVideo.style[side] = localVideo.style[side];
+  } else {
+    for (const side of ["left", "top", "right", "bottom"]) remoteVideo.style[side] = "";
+  }
+}
+
+remoteVideo.addEventListener("click", () => { if (callSwapped) setCallSwapped(false); });
+
 if (window.ResizeObserver) {
   const selfViewSizes = new ResizeObserver(keepSelfViewInside);
   selfViewSizes.observe(callOverlay);
@@ -6034,6 +6070,7 @@ let callMini       = false;
 let callChatUnread = 0;
 
 function setCallMini(on) {
+  if (on && callSwapped) setCallSwapped(false);   // side by side in the small call: the usual way round
   callMini = on;
   callOverlay.classList.toggle("mini", on);
   if (on) {
@@ -6052,6 +6089,7 @@ function callFillsScreen() {
 
 /** The call is over: the next one starts full size, with nothing counted. */
 function resetCallMini() {
+  if (callSwapped) setCallSwapped(false);         // and the next call starts the usual way round
   callMini = false;
   callOverlay.classList.remove("mini");
   callChatUnread = 0;
