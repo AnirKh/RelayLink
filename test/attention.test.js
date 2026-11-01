@@ -45,7 +45,7 @@ test("nobody is looking when the page is hidden, or another window is in front",
 });
 
 test("the title counts what is unread, and shows a phone while a call rings", () => {
-  const base = "Шууд холбоос";
+  const base = "Өртөө";
   assert.equal(G.tabTitle({ base, unread: 0, ringing: false }), base);
   assert.equal(G.tabTitle({ base, unread: 2, ringing: false }), `(2) ${base}`);
   assert.equal(G.tabTitle({ base, unread: 120, ringing: false }), `(99+) ${base}`);
@@ -66,7 +66,9 @@ function classes(initial = []) {
   return { add: c => set.add(c), remove: c => set.delete(c), contains: c => set.has(c) };
 }
 
-function page({ visible = false, focused = false, ctxState = "running", resumeWorks = true } = {}) {
+const I18N = new Function("localStorage", `${fs.readFileSync(path.join(__dirname, "..", "i18n.js"), "utf8")}; return I18N;`)({ getItem: () => null });
+
+function page({ visible = false, focused = false, ctxState = "running", resumeWorks = true, lang = "mn" } = {}) {
   const log = { buzz: [], badge: [], sys: [], ended: 0, callChat: 0 };
   const listeners = {};
   const timers = new Map();
@@ -93,7 +95,7 @@ function page({ visible = false, focused = false, ctxState = "running", resumeWo
     }
   }
   const document = {
-    title: "Шууд холбоос", visibilityState: visible ? "visible" : "hidden",
+    title: "Өртөө", visibilityState: visible ? "visible" : "hidden",
     hasFocus: () => focused,
     addEventListener: (type, f) => { (listeners[type] = listeners[type] || []).push(f); }
   };
@@ -111,7 +113,7 @@ function page({ visible = false, focused = false, ctxState = "running", resumeWo
     function noteCallChat() { log.callChat++; }
     return { noticeArrival, startIncomingRing, stopIncomingRing,
              ringing: () => ringing, RING_BUZZ, INCOMING_RING_MS };`
-  )(G, k => k, document, window, navigator, { now: () => clock.now },
+  )(G, k => (k === "appName" ? I18N[lang].appName : k), document, window, navigator, { now: () => clock.now },
     (f, ms) => { const id = ++nextTimer; timers.set(id, { f, ms }); return id; }, id => timers.delete(id),
     callRequestModal, k => log.sys.push(k), log);
 
@@ -136,20 +138,30 @@ test("nobody looking: a message chimes, buzzes, and counts in the title and on t
   p.fire("pointerdown");                    // touched once, earlier
   p.noticeArrival();
   await p.settle();
-  assert.equal(p.document.title, "(1) Шууд холбоос");
+  assert.equal(p.document.title, "(1) Өртөө");
   assert.equal(p.heard().chimes, 2, "a two-note chime");
   assert.deepEqual(p.log.buzz, [120]);
   assert.deepEqual(p.log.badge, [1]);
   p.clock.now += 5000;
   p.noticeArrival();
-  assert.equal(p.document.title, "(2) Шууд холбоос");
+  assert.equal(p.document.title, "(2) Өртөө");
+});
+
+test("the title names the app in the language chosen: Өртөө or RelayLink", () => {
+  assert.equal(I18N.mn.appName, "Өртөө");
+  assert.equal(I18N.en.appName, "RelayLink");
+  const p = page({ lang: "en" });
+  p.noticeArrival();
+  assert.equal(p.document.title, "(1) RelayLink");
+  assert.match(fn("applyI18n"), /\n\s*drawTitle\(\);/, "switching the language renames the tab at once");
+  assert.doesNotMatch(app, /BASE_TITLE|document\.title(?! =)/, "nothing keeps the name the page was loaded with");
 });
 
 test("a burst of messages chimes once, and every one is counted", () => {
   const p = page();
   p.fire("pointerdown");
   for (let i = 0; i < 5; i++) p.noticeArrival();
-  assert.equal(p.document.title, "(5) Шууд холбоос");
+  assert.equal(p.document.title, "(5) Өртөө");
   assert.equal(p.heard().chimes, 2);
   assert.equal(p.log.buzz.length, 1);
   p.clock.now += 1500;
@@ -161,7 +173,7 @@ test("while it is looked at, a message makes no sound and no count", () => {
   const p = page({ visible: true, focused: true });
   p.fire("pointerdown");
   p.noticeArrival();
-  assert.equal(p.document.title, "Шууд холбоос");
+  assert.equal(p.document.title, "Өртөө");
   assert.equal(p.heard().chimes, 0);
   assert.deepEqual(p.log.buzz, []);
   assert.equal(p.log.callChat, 1, "but a call covering the chat is still told — see callchat");
@@ -171,7 +183,7 @@ test("on screen but behind another window counts as not looked at", () => {
   const p = page({ visible: true, focused: false });
   p.fire("pointerdown");
   p.noticeArrival();
-  assert.equal(p.document.title, "(1) Шууд холбоос");
+  assert.equal(p.document.title, "(1) Өртөө");
 });
 
 test("looked at again, the count goes — and only once it really is", () => {
@@ -180,10 +192,10 @@ test("looked at again, the count goes — and only once it really is", () => {
   p.noticeArrival(); p.noticeArrival();
   p.look(true, false);
   p.fire("visibilitychange");
-  assert.equal(p.document.title, "(2) Шууд холбоос", "back on screen, but another window has the focus");
+  assert.equal(p.document.title, "(2) Өртөө", "back on screen, but another window has the focus");
   p.look(true, true);
   p.fire("focus");
-  assert.equal(p.document.title, "Шууд холбоос");
+  assert.equal(p.document.title, "Өртөө");
   assert.equal(p.log.badge.at(-1), 0, "the app's icon is cleared too");
 });
 
@@ -191,7 +203,7 @@ test("before the first tap there is no sound — browsers allow none — but the
   const p = page();
   p.noticeArrival();
   assert.equal(p.contexts.length, 0, "no sound made at all");
-  assert.equal(p.document.title, "(1) Шууд холбоос");
+  assert.equal(p.document.title, "(1) Өртөө");
 });
 
 test("a sound the phone put to sleep is woken first", async () => {
@@ -208,14 +220,14 @@ test("an incoming call rings — looked at or not — with a phone in the title,
   p.fire("pointerdown");
   p.startIncomingRing();
   await p.settle();
-  assert.equal(p.document.title, "📞 Шууд холбоос");
+  assert.equal(p.document.title, "📞 Өртөө");
   const rings = Math.ceil(p.INCOMING_RING_MS / 3000);
   assert.equal(p.heard().rings, 2 * rings, "a two-note ring every three seconds, for the whole time");
   assert.deepEqual(p.log.buzz, [p.RING_BUZZ]);
   p.stopIncomingRing();
   assert.equal(p.heard().rings, 0, "cut, every ring still to come with it");
   assert.equal(p.log.buzz.at(-1), 0, "the buzzing stops");
-  assert.equal(p.document.title, "Шууд холбоос");
+  assert.equal(p.document.title, "Өртөө");
   assert.equal(p.timers.size, 0);
 });
 
@@ -250,7 +262,7 @@ test("a hang-up that never arrives: once the caller has surely given up, it is a
   assert.equal(p.log.ended, 1);
   assert.deepEqual(p.log.sys, ["sysMissedCall"]);
   assert.equal(p.ringing(), false);
-  assert.equal(p.document.title, "(1) Шууд холбоос", "noticed like a message");
+  assert.equal(p.document.title, "(1) Өртөө", "noticed like a message");
 });
 
 test("the ring's buzz is a buzz, then quiet, for as long as it rings, inside what phones accept", () => {

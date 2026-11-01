@@ -1,6 +1,6 @@
 /*
   ─────────────────────────────────────────────
-  Direct Connection — ratelimit.js
+  RelayLink — ratelimit.js
   ─────────────────────────────────────────────
 
   The sliding-window counters behind the `list-sessions` and `create-session`

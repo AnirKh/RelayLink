@@ -1,6 +1,6 @@
 {
-  "name": "Шууд холбоос — Direct Connection",
-  "short_name": "Шууд холбоос",
+  "name": "Өртөө — RelayLink",
+  "short_name": "Өртөө",
   "description": "Хоёр хүний шууд, шифрлэгдсэн чат ба дуудлага. Private, end-to-end encrypted chat and calls between two people.",
   "lang": "mn",
   "start_url": "./",

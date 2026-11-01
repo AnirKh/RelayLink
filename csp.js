@@ -1,6 +1,6 @@
 /*
   ─────────────────────────────────────────────
-  Direct Connection — csp.js
+  RelayLink — csp.js
   Single source of truth for the Content-Security-Policy.
   ─────────────────────────────────────────────
 

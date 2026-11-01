@@ -1,6 +1,6 @@
 /*
   ─────────────────────────────────────────────
-  Direct Connection — framebust.js
+  RelayLink — framebust.js
   ─────────────────────────────────────────────
 
   Stops the app being operated inside someone else's page.

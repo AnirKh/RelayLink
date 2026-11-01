@@ -1,6 +1,6 @@
 /*
   ─────────────────────────────────────────────
-  Direct Connection — guards.js
+  RelayLink — guards.js
   ─────────────────────────────────────────────
 
   The safety decisions, as pure functions.
@@ -1166,7 +1166,7 @@
   }
 
   /**
-   * The tab's title: "(2) Шууд холбоос" for two unread, with a phone in front
+   * The tab's title: "(2) Өртөө" for two unread, with a phone in front
    * while a call rings. Past 99 it says "99+", as a badge would.
    *
    * @param {{base: string, unread: number, ringing: boolean}} o

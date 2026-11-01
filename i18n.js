@@ -1,6 +1,6 @@
 /*
   ─────────────────────────────────────────────
-  Direct Connection — i18n.js
+  RelayLink — i18n.js
   ─────────────────────────────────────────────
 
   All user-visible strings, Mongolian (default) and English. Pure data with no
@@ -32,12 +32,11 @@ const I18N = {
   mn: {
     // Modal
     aboutLabel:      "Энэ хуудасны тухай",
-    aboutTitle:      "Шууд холбоос",
+    appName:         "Өртөө",
     authorLabel:     "Зохиогчийн тухай",
     authorAbout:     "Хүмүүс хоорондоо хялбар, чөлөөтэй харилцах боломжийг бүрдүүлэхийн тулд энэхүү аппыг бүтээлээ. Надтай холбогдохыг хүсвэл эндээс холбогдоорой.",
     aboutDesc:       "Энэхүү холбоосыг ямар нэгэн гуравдагч этгээдээр мэдээллээ дамжуулалгүйгээр харилцах зорилготой бүтээлээ.",
     // Lobby
-    lobbyTitle:      "Шууд холбогдох хэсэг",
     tabRooms:        "Өрөөнүүд",
     installApp:      "Апп суулгах",
     appInstalled:    "Апп суулгагдлаа",
@@ -357,11 +356,10 @@ const I18N = {
   },
   en: {
     aboutLabel:      "About this page",
-    aboutTitle:      "Direct Connection",
+    appName:         "RelayLink",
     authorLabel:     "About the author",
     authorAbout:     "I built this app to make it easier for people to connect and communicate. If you'd like to get in touch with me, you can reach me here.",
     aboutDesc:       "This link was created to communicate without sharing your information through any third party.",
-    lobbyTitle:      "Direct Connection",
     tabRooms:        "Rooms",
     installApp:      "Install app",
     appInstalled:    "App installed",

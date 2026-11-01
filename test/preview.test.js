@@ -4,7 +4,7 @@
   Pasted into Messenger, Telegram, Facebook or WhatsApp, the address used to
   arrive bare: no name, no picture, nothing to say what it was. The og:* and
   twitter:* lines in index.html give it a card — name, one line of what it
-  is, and icons/link-preview.png — and the description is what search
+  is, and icons/link-preview-relaylink.png — and the description is what search
   engines show under the name.
 
   These check the lines are there and agree with each other and with the
@@ -37,7 +37,7 @@ test("the page says what it is, for search engines and for every card", () => {
   const description = meta("name", "description");
   assert.ok(description.length >= 50 && description.length <= 300, `${description.length} characters`);
   assert.equal(og("type"), "website");
-  assert.ok(og("title").startsWith("Шууд холбоос"));
+  assert.ok(og("title").startsWith("Өртөө"));
   assert.ok(og("description").length >= 30);
   assert.equal(tw("title"), og("title"));
 });

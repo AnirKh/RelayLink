@@ -1,6 +1,6 @@
 /*
   ─────────────────────────────────────────────
-  Direct Connection — server.js
+  RelayLink — server.js
   Features:
   - Session create with 6-digit PIN, or open (no PIN, first guest in)
   - Session list broadcast
@@ -278,7 +278,7 @@ app.get("/", (req, res) => {
 app.get(["/app.js", "/protocol.js", "/i18n.js", "/framebust.js", "/connstats.js", "/guards.js", "/pake.js", "/vendor/noble.js", "/style.css",
          "/manifest.webmanifest", "/icons/icon.svg", "/icons/apple-touch-icon.png", "/icons/author.jpg",
          "/icons/icon-192.png", "/icons/icon-512.png", "/icons/icon-maskable-512.png",
-         "/icons/link-preview.png", "/sw.js",
+         "/icons/link-preview-relaylink.png", "/sw.js",
          "/vendor/tabler/tabler-icons.min.css", "/vendor/tabler/fonts/tabler-icons.woff2"], (req, res) => {
   res.sendFile(path.join(__dirname, req.path.slice(1)));
 });
@@ -425,7 +425,7 @@ app.post("/api/send-message",
   const htmlBody = `
     <div style="font-family:Arial,sans-serif;max-width:520px;margin:auto;background:#1b1f27;color:#fff;border-radius:12px;overflow:hidden">
       <div style="background:#2563eb;padding:20px 24px">
-        <h2 style="margin:0;font-size:18px">📩 New message via Direct Connection</h2>
+        <h2 style="margin:0;font-size:18px">📩 New message via RelayLink</h2>
       </div>
       <div style="padding:24px">
         <p style="color:#9ca3af;font-size:13px;margin:0 0 4px">From</p>
@@ -438,7 +438,7 @@ app.post("/api/send-message",
   `;
 
   const mailOptions = {
-    from:    "Direct Connection <onboarding@resend.dev>",
+    from:    "RelayLink <onboarding@resend.dev>",
     to:      process.env.MAIL_TO,
     subject: `📩 New message from ${senderLabel}`,
     text:    `From: ${senderLabel}\nSent: ${sentAt}\n\n${trimmedMessage}`,

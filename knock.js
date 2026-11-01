@@ -1,6 +1,6 @@
 /*
   ─────────────────────────────────────────────
-  Direct Connection — knock.js
+  RelayLink — knock.js
   ─────────────────────────────────────────────
 
   A knock: when one of two people who saved each other taps the other's name

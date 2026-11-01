@@ -1,6 +1,6 @@
 /*
   ─────────────────────────────────────────────
-  Direct Connection — protocol.js
+  RelayLink — protocol.js
   ─────────────────────────────────────────────
 
   The parts of the wire protocol that are pure functions of their inputs:

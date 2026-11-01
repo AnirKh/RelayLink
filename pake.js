@@ -1,6 +1,6 @@
 /*
   ─────────────────────────────────────────────
-  Direct Connection — pake.js
+  RelayLink — pake.js
   ─────────────────────────────────────────────
 
   SPAKE2 (RFC 9382) over P-256. A password-authenticated key agreement:

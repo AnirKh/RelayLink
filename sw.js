@@ -1,6 +1,6 @@
 /*
   ─────────────────────────────────────────────
-  Direct Connection — sw.js
+  RelayLink — sw.js
   ─────────────────────────────────────────────
 
   For knocks, and nothing else. When a saved person taps this device's name

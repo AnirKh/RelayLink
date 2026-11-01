@@ -1,6 +1,6 @@
 /*
   ─────────────────────────────────────────────
-  Direct Connection — clientip.js
+  RelayLink — clientip.js
   ─────────────────────────────────────────────
 
   Works out which address a request really came from. Every rate limit in

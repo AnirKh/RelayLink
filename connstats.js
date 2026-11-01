@@ -1,6 +1,6 @@
 /*
   ─────────────────────────────────────────────
-  Direct Connection — connstats.js
+  RelayLink — connstats.js
   ─────────────────────────────────────────────
 
   Everything the UI derives from an RTCStatsReport, as pure functions of it.

@@ -1,5 +1,5 @@
 /*
-  Direct Connection — app.js  v20260518
+  RelayLink — app.js  v20260518
   ─────────────────────────────────────────────
   Dual-language support: Mongolian (default) / English
   All user-visible strings routed through t() / I18N
@@ -27,7 +27,7 @@
 
    APP_BUILD is written by tools/sync-build.js and by nothing else.
 ══════════════════════════════════════════════ */
-const APP_BUILD = "202611010755-2c0a654d";
+const APP_BUILD = "202611010818-d4ccd1e7";
 
 function refuseToRunInAStalePage() {
   let builtFor = null;
@@ -136,6 +136,8 @@ function applyI18n() {
   });
   // update document lang attribute
   document.documentElement.lang = LANG === "mn" ? "mn" : "en";
+  // the tab's title names the app in this language: Өртөө or RelayLink
+  drawTitle();
   // re-render session list so timeAgo labels update
   renderSessionList(_lastSessionList);
   drawPeople();
@@ -459,7 +461,7 @@ function announce(text) {
    nothing in the tab's title, and an incoming call rang nobody.
 
      a message or file   while the page is not looked at: a short chime, a
-                         buzz where the phone can, and "(2) Шууд холбоос" in
+                         buzz where the phone can, and "(2) Өртөө" in
                          the title — and on the installed app's icon — until
                          it is looked at again (noticeArrival)
      an incoming call    rings and buzzes for as long as it is asked, looked
@@ -471,7 +473,6 @@ function announce(text) {
    iPhone with its screen off, or with Safari in the background — runs none of
    this until it wakes: only a notification sent through a server could reach
    it there, and this app has none.                                         */
-const BASE_TITLE = document.title;
 const CHIME_GAP_MS = 1500;          // a burst of messages chimes once
 const RING_EVERY_S = 3;             // a ring, quiet, the next ring
 /* The caller gives up after CALL_RING_MS. A little longer here, so a hang-up
@@ -533,7 +534,7 @@ function lookedAt() {
 }
 
 function drawTitle() {
-  document.title = G.tabTitle({ base: BASE_TITLE, unread, ringing });
+  document.title = G.tabTitle({ base: t("appName"), unread, ringing });
   try {
     if (navigator.setAppBadge) (unread ? navigator.setAppBadge(unread) : navigator.clearAppBadge()).catch(() => {});
   } catch (_) {}

@@ -1,6 +1,6 @@
 /*
   ─────────────────────────────────────────────
-  Direct Connection — mailbox.js
+  RelayLink — mailbox.js
   ─────────────────────────────────────────────
 
   Messages waiting for a saved person who is not there, until they open the

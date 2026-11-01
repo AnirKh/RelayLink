@@ -8,20 +8,20 @@
        ignore it are covered by fitToVisibleArea() in app.js. -->
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content">
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self' data:; img-src 'self' blob: data:; media-src 'self' blob: mediastream:; connect-src 'self' https://direct-connection.onrender.com https://raspberrypi.vulture-manta.ts.net https://anirkh.github.io http://localhost:3000 http://127.0.0.1:3000 wss://direct-connection.onrender.com wss://raspberrypi.vulture-manta.ts.net wss://anirkh.github.io ws://localhost:3000 ws://127.0.0.1:3000; object-src 'none'; base-uri 'self'; form-action 'self'; frame-src 'none'; worker-src 'self' blob:">
-  <title>Шууд холбоос</title>
+  <title>Өртөө</title>
 
   <!-- Installable as an app: an icon on the home screen or desktop that opens
        in its own window. The manifest names it and points at icons/; the
        Install button at the bottom left is in the lobby (installOffer in
        guards.js). iPhones read the apple-* lines, since Safari takes the icon
        and title from these rather than from the manifest. -->
-  <link rel="manifest" href="manifest.webmanifest?v=202611010755-2c0a654d">
-  <link rel="icon" type="image/svg+xml" href="icons/icon.svg?v=202611010755-2c0a654d">
-  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png?v=202611010755-2c0a654d">
+  <link rel="manifest" href="manifest.webmanifest?v=202611010818-d4ccd1e7">
+  <link rel="icon" type="image/svg+xml" href="icons/icon.svg?v=202611010818-d4ccd1e7">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png?v=202611010818-d4ccd1e7">
   <meta name="theme-color" content="#15151a">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black">
-  <meta name="apple-mobile-web-app-title" content="Шууд холбоос">
+  <meta name="apple-mobile-web-app-title" content="Өртөө">
 
   <!-- What a shared link shows: Messenger, Telegram, Facebook and WhatsApp read
        the og:* lines, X the twitter:* ones, search engines the description.
@@ -32,21 +32,21 @@
   <meta name="description" content="Хоёр хүний хооронд шууд, төгсгөл хүртэл шифрлэгдсэн чат, дуудлага, файл. Бүртгэл шаардахгүй. Direct, end-to-end encrypted chat, calls and files between two people — no sign-up.">
   <link rel="canonical" href="https://anirkh.github.io/direct-connection/">
   <meta property="og:type" content="website">
-  <meta property="og:site_name" content="Шууд холбоос">
-  <meta property="og:title" content="Шууд холбоос — Direct Connection">
+  <meta property="og:site_name" content="Өртөө">
+  <meta property="og:title" content="Өртөө — RelayLink">
   <meta property="og:description" content="Хоёр хүний хооронд шууд, шифрлэгдсэн чат, дуудлага, файл. Бүртгэл шаардахгүй.">
   <meta property="og:url" content="https://anirkh.github.io/direct-connection/">
-  <meta property="og:image" content="https://anirkh.github.io/direct-connection/icons/link-preview.png">
+  <meta property="og:image" content="https://anirkh.github.io/direct-connection/icons/link-preview-relaylink.png">
   <meta property="og:image:type" content="image/png">
   <meta property="og:image:width" content="1200">
   <meta property="og:image:height" content="630">
-  <meta property="og:image:alt" content="Шууд холбоос — a speech bubble with a lock: direct, encrypted chat between two people">
+  <meta property="og:image:alt" content="Өртөө — a speech bubble with a lock: direct, encrypted chat between two people">
   <meta property="og:locale" content="mn_MN">
   <meta property="og:locale:alternate" content="en_US">
   <meta name="twitter:card" content="summary_large_image">
-  <meta name="twitter:title" content="Шууд холбоос — Direct Connection">
+  <meta name="twitter:title" content="Өртөө — RelayLink">
   <meta name="twitter:description" content="Direct, end-to-end encrypted chat, calls and files between two people — no sign-up.">
-  <meta name="twitter:image" content="https://anirkh.github.io/direct-connection/icons/link-preview.png">
+  <meta name="twitter:image" content="https://anirkh.github.io/direct-connection/icons/link-preview-relaylink.png">
 
   <!--
     Clickjacking cover for the GitHub Pages build. The server sends
@@ -62,7 +62,7 @@
     soon as it parses.
   -->
   <style id="antiClickjack">body{visibility:hidden}</style>
-  <script src="framebust.js?v=202611010755-2c0a654d"></script>
+  <script src="framebust.js?v=202611010818-d4ccd1e7"></script>
 
   <!--
     The icons, from our own copy. They came from a CDN, which saw every visit —
@@ -72,8 +72,8 @@
     test/csp.test.js checks, so it cannot be edited by accident. See "Icon
     font" in the README.
   -->
-  <link rel="stylesheet" href="vendor/tabler/tabler-icons.min.css?v=202611010755-2c0a654d">
-  <link rel="stylesheet" href="style.css?v=202611010755-2c0a654d">
+  <link rel="stylesheet" href="vendor/tabler/tabler-icons.min.css?v=202611010818-d4ccd1e7">
+  <link rel="stylesheet" href="style.css?v=202611010818-d4ccd1e7">
 </head>
 <body>
 
@@ -90,10 +90,10 @@
          is the way to reach them. Opened and closed like the about panel. -->
     <details id="authorDropdown" class="author">
       <summary class="author-btn" data-i18n-aria="authorLabel" aria-label="Зохиогчийн тухай">
-        <img src="icons/author.jpg?v=202611010755-2c0a654d" alt="" width="36" height="36">
+        <img src="icons/author.jpg?v=202611010818-d4ccd1e7" alt="" width="36" height="36">
       </summary>
       <div class="author-panel">
-        <img class="author-photo" src="icons/author.jpg?v=202611010755-2c0a654d" alt="" width="72" height="72">
+        <img class="author-photo" src="icons/author.jpg?v=202611010818-d4ccd1e7" alt="" width="72" height="72">
         <div class="author-name">Anir Khurelbaatar</div>
         <p data-i18n="authorAbout">Хүмүүс хоорондоо хялбар, чөлөөтэй харилцах боломжийг бүрдүүлэхийн тулд энэхүү аппыг бүтээлээ. Надтай холбогдохыг хүсвэл эндээс холбогдоорой.</p>
         <div class="author-links">
@@ -114,13 +114,13 @@
            every visit with an "approve" button that approved nothing — it only
            closed the dialog — so returning visitors dismissed it every time. -->
       <div class="lobby-head">
-        <h1 class="lobby-title" data-i18n="lobbyTitle">Шууд холбогдох хэсэг</h1>
+        <h1 class="lobby-title" data-i18n="appName">Өртөө</h1>
         <details id="aboutDropdown" class="about">
           <summary class="icon-btn" data-i18n-aria="aboutLabel" aria-label="Энэ хуудасны тухай">
             <i class="ti ti-info-circle" aria-hidden="true"></i>
           </summary>
           <div class="about-panel">
-            <div class="about-title" data-i18n="aboutTitle">Шууд холбоос</div>
+            <div class="about-title" data-i18n="appName">Өртөө</div>
             <p data-i18n="aboutDesc">Энэхүү холбоосыг ямар нэгэн гуравдагч этгээдээр мэдээллээ дамжуулалгүйгээр харилцах зорилготой бүтээлээ.</p>
           </div>
         </details>
@@ -587,14 +587,14 @@
   </div>
 
   <!-- Load order matters: app.js reads DCProtocol, LANG and I18N at parse time. -->
-  <script src="protocol.js?v=202611010755-2c0a654d"></script>
-  <script src="connstats.js?v=202611010755-2c0a654d"></script>
-  <script src="guards.js?v=202611010755-2c0a654d"></script>
-  <script src="i18n.js?v=202611010755-2c0a654d"></script>
+  <script src="protocol.js?v=202611010818-d4ccd1e7"></script>
+  <script src="connstats.js?v=202611010818-d4ccd1e7"></script>
+  <script src="guards.js?v=202611010818-d4ccd1e7"></script>
+  <script src="i18n.js?v=202611010818-d4ccd1e7"></script>
   <!-- vendor/noble.js sets window.DCNoble; pake.js (SPAKE2) reads it, and app.js
        reads window.DCPake. So both load before app.js, noble before pake. -->
-  <script src="vendor/noble.js?v=202611010755-2c0a654d"></script>
-  <script src="pake.js?v=202611010755-2c0a654d"></script>
-  <script src="app.js?v=202611010755-2c0a654d"></script>
+  <script src="vendor/noble.js?v=202611010818-d4ccd1e7"></script>
+  <script src="pake.js?v=202611010818-d4ccd1e7"></script>
+  <script src="app.js?v=202611010818-d4ccd1e7"></script>
 </body>
 </html>
