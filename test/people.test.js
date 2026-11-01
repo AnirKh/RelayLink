@@ -275,7 +275,7 @@ function page({ saved = [], storage = "works", connected = true, checked = true,
                 callRequestModal: element("div"),
                 knockKey: knock.serverKey === false || knock.keyLater ? null : SERVER_KNOCK_KEY };
   env.callRequestModal.classList.add("hidden");              // no call ringing here
-  const location = { hash: knock.hash || hash || "", pathname: "/direct-connection/", search: "" };
+  const location = { hash: knock.hash || hash || "", pathname: "/RelayLink/", search: "" };
   const history = { replaceState: (s, title, url) => log.replaced.push(url) };
   els.leaveBtn.click = () => { log.left++; if (env.onLeave) env.onLeave(); };
   const ws = { readyState: wsOpen ? 1 : 3 };
@@ -1416,7 +1416,7 @@ test("an address the push service says is gone is forgotten; another room's answ
 test("opened by tapping a knock: the address tidied, and them met at once", async () => {
   const anu = await person("Anu");
   const p = page({ saved: [anu], knock: { hash: `#knock=${anu.room}` } });
-  assert.deepEqual(p.log.replaced, ["/direct-connection/"]);
+  assert.deepEqual(p.log.replaced, ["/RelayLink/"]);
   assert.deepEqual(p.log.ws, [{ type: "meet-session", sessionId: anu.room, side: "a" }]);
   assert.deepEqual(p.log.tabs, ["rooms"]);
   const stranger = page({ saved: [anu], knock: { hash: `#knock=~${"z".repeat(43)}` } });
@@ -1650,7 +1650,7 @@ test("\"a message waits\" tapped: the app opens at their conversation — or, al
   const p = page({ saved: [anu], hash: `#mail=${anu.room}` });
   assert.ok(!p.els.mailOverlay.classList.contains("hidden"));
   assert.equal(p.els.mailTitle.textContent, "Anu");
-  assert.deepEqual(p.log.replaced, ["/direct-connection/"], "the address tidied");
+  assert.deepEqual(p.log.replaced, ["/RelayLink/"], "the address tidied");
   const q = page({ saved: [anu] });
   q.push.swListeners.message({ data: { type: "mail", room: anu.room } });
   assert.equal(q.els.mailTitle.textContent, "Anu");

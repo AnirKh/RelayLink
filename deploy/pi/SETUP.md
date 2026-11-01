@@ -39,7 +39,7 @@ The server runs as `dc`, a system user with no login and no password.
 ```sh
 sudo useradd --system --home-dir /var/lib/direct-connection --create-home --shell /usr/sbin/nologin dc
 sudo install -d -o dc -g dc /opt/direct-connection
-sudo runuser -u dc -- env HOME=/var/lib/direct-connection git clone https://github.com/AnirKh/direct-connection.git /opt/direct-connection
+sudo runuser -u dc -- env HOME=/var/lib/direct-connection git clone https://github.com/AnirKh/RelayLink.git /opt/direct-connection
 cd /opt/direct-connection
 sudo runuser -u dc -- env HOME=/var/lib/direct-connection npm ci --omit=dev --ignore-scripts --no-audit --no-fund
 ```

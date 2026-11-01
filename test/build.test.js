@@ -92,7 +92,7 @@ test("the server announces the same build the client carries", () => {
 const guardSource = (app.match(/^function refuseToRunInAStalePage\(\)\s*\{[\s\S]*?^\}/m) || [])[0];
 
 /** Runs the real function with a stand-in page and reports what it did. */
-function load({ scriptUrl, search = "", hash = "", pathname = "/direct-connection/", scriptBuild = "202610131742-3fa9c1d2" }) {
+function load({ scriptUrl, search = "", hash = "", pathname = "/RelayLink/", scriptBuild = "202610131742-3fa9c1d2" }) {
   const did = { wentTo: null, showedNotice: false, threw: null };
   const document = { currentScript: scriptUrl === null ? null : { src: scriptUrl } };
   const location = { pathname, search, hash, replace: url => { did.wentTo = url; } };
@@ -103,7 +103,7 @@ function load({ scriptUrl, search = "", hash = "", pathname = "/direct-connectio
   } catch (err) { did.threw = err.message; }
   return did;
 }
-const SITE = "https://anirkh.github.io/direct-connection/";
+const SITE = "https://anirkh.github.io/RelayLink/";
 
 test("the guard is where the test expects it, and runs before anything else", () => {
   assert.ok(guardSource, "refuseToRunInAStalePage not found as a top-level function in app.js");
@@ -128,7 +128,7 @@ test("a script loaded by an older page fetches a fresh page and does not start",
   /* The reproduced crash: the old page has no open-room button, the new script
      reaches for it, and nothing on the page works afterwards. */
   const did = load({ scriptUrl: SITE + "app.js?v=202608261800" });
-  assert.equal(did.wentTo, "/direct-connection/?r=202610131742-3fa9c1d2");
+  assert.equal(did.wentTo, "/RelayLink/?r=202610131742-3fa9c1d2");
   assert.ok(did.threw, "the script must stop, not carry on into a page it does not match");
   assert.equal(did.showedNotice, false);
 });

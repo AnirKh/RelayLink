@@ -353,9 +353,9 @@ test("a web address in a message is a link, opening in a new tab; the words roun
 
 test("your own links too", async () => {
   const c = chat();
-  c.type("https://anirkh.github.io/direct-connection/");
+  c.type("https://anirkh.github.io/RelayLink/");
   await c.sendTextMessage();
-  assert.equal(c.parts("me")[0][0].href, "https://anirkh.github.io/direct-connection/");
+  assert.equal(c.parts("me")[0][0].href, "https://anirkh.github.io/RelayLink/");
 });
 
 test("nothing but a web page becomes a link — and a message with none is plain text", async () => {

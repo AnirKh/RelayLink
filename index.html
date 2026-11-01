@@ -15,9 +15,9 @@
        Install button at the bottom left is in the lobby (installOffer in
        guards.js). iPhones read the apple-* lines, since Safari takes the icon
        and title from these rather than from the manifest. -->
-  <link rel="manifest" href="manifest.webmanifest?v=202611010912-2f295bee">
-  <link rel="icon" type="image/svg+xml" href="icons/icon.svg?v=202611010912-2f295bee">
-  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png?v=202611010912-2f295bee">
+  <link rel="manifest" href="manifest.webmanifest?v=202611010922-98ff500a">
+  <link rel="icon" type="image/svg+xml" href="icons/icon.svg?v=202611010922-98ff500a">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png?v=202611010922-98ff500a">
   <meta name="theme-color" content="#15151a">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black">
@@ -30,13 +30,13 @@
        link's secret is in its #fragment, which no preview fetcher ever sends,
        so every link previews as this card. -->
   <meta name="description" content="Хоёр хүний хооронд шууд, төгсгөл хүртэл шифрлэгдсэн чат, дуудлага, файл. Бүртгэл шаардахгүй. Direct, end-to-end encrypted chat, calls and files between two people — no sign-up.">
-  <link rel="canonical" href="https://anirkh.github.io/direct-connection/">
+  <link rel="canonical" href="https://anirkh.github.io/RelayLink/">
   <meta property="og:type" content="website">
   <meta property="og:site_name" content="Өртөө">
   <meta property="og:title" content="Өртөө — RelayLink">
   <meta property="og:description" content="Хоёр хүний хооронд шууд, шифрлэгдсэн чат, дуудлага, файл. Бүртгэл шаардахгүй.">
-  <meta property="og:url" content="https://anirkh.github.io/direct-connection/">
-  <meta property="og:image" content="https://anirkh.github.io/direct-connection/icons/link-preview-relaylink.png">
+  <meta property="og:url" content="https://anirkh.github.io/RelayLink/">
+  <meta property="og:image" content="https://anirkh.github.io/RelayLink/icons/link-preview-relaylink.png">
   <meta property="og:image:type" content="image/png">
   <meta property="og:image:width" content="1200">
   <meta property="og:image:height" content="630">
@@ -46,7 +46,7 @@
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:title" content="Өртөө — RelayLink">
   <meta name="twitter:description" content="Direct, end-to-end encrypted chat, calls and files between two people — no sign-up.">
-  <meta name="twitter:image" content="https://anirkh.github.io/direct-connection/icons/link-preview-relaylink.png">
+  <meta name="twitter:image" content="https://anirkh.github.io/RelayLink/icons/link-preview-relaylink.png">
 
   <!--
     Clickjacking cover for the GitHub Pages build. The server sends
@@ -62,7 +62,7 @@
     soon as it parses.
   -->
   <style id="antiClickjack">body{visibility:hidden}</style>
-  <script src="framebust.js?v=202611010912-2f295bee"></script>
+  <script src="framebust.js?v=202611010922-98ff500a"></script>
 
   <!--
     The icons, from our own copy. They came from a CDN, which saw every visit —
@@ -72,8 +72,8 @@
     test/csp.test.js checks, so it cannot be edited by accident. See "Icon
     font" in the README.
   -->
-  <link rel="stylesheet" href="vendor/tabler/tabler-icons.min.css?v=202611010912-2f295bee">
-  <link rel="stylesheet" href="style.css?v=202611010912-2f295bee">
+  <link rel="stylesheet" href="vendor/tabler/tabler-icons.min.css?v=202611010922-98ff500a">
+  <link rel="stylesheet" href="style.css?v=202611010922-98ff500a">
 </head>
 <body>
 
@@ -90,10 +90,10 @@
          is the way to reach them. Opened and closed like the about panel. -->
     <details id="authorDropdown" class="author">
       <summary class="author-btn" data-i18n-aria="authorLabel" aria-label="Зохиогчийн тухай">
-        <img src="icons/author.jpg?v=202611010912-2f295bee" alt="" width="36" height="36">
+        <img src="icons/author.jpg?v=202611010922-98ff500a" alt="" width="36" height="36">
       </summary>
       <div class="author-panel">
-        <img class="author-photo" src="icons/author.jpg?v=202611010912-2f295bee" alt="" width="72" height="72">
+        <img class="author-photo" src="icons/author.jpg?v=202611010922-98ff500a" alt="" width="72" height="72">
         <div class="author-name">Anir Khurelbaatar</div>
         <p data-i18n="authorAbout">Хүмүүс хоорондоо хялбар, чөлөөтэй харилцах боломжийг бүрдүүлэхийн тулд энэхүү аппыг бүтээлээ. Надтай холбогдохыг хүсвэл эндээс холбогдоорой.</p>
         <div class="author-links">
@@ -587,14 +587,14 @@
   </div>
 
   <!-- Load order matters: app.js reads DCProtocol, LANG and I18N at parse time. -->
-  <script src="protocol.js?v=202611010912-2f295bee"></script>
-  <script src="connstats.js?v=202611010912-2f295bee"></script>
-  <script src="guards.js?v=202611010912-2f295bee"></script>
-  <script src="i18n.js?v=202611010912-2f295bee"></script>
+  <script src="protocol.js?v=202611010922-98ff500a"></script>
+  <script src="connstats.js?v=202611010922-98ff500a"></script>
+  <script src="guards.js?v=202611010922-98ff500a"></script>
+  <script src="i18n.js?v=202611010922-98ff500a"></script>
   <!-- vendor/noble.js sets window.DCNoble; pake.js (SPAKE2) reads it, and app.js
        reads window.DCPake. So both load before app.js, noble before pake. -->
-  <script src="vendor/noble.js?v=202611010912-2f295bee"></script>
-  <script src="pake.js?v=202611010912-2f295bee"></script>
-  <script src="app.js?v=202611010912-2f295bee"></script>
+  <script src="vendor/noble.js?v=202611010922-98ff500a"></script>
+  <script src="pake.js?v=202611010922-98ff500a"></script>
+  <script src="app.js?v=202611010922-98ff500a"></script>
 </body>
 </html>

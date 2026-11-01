@@ -128,7 +128,7 @@ function knockKeysFromEnv(env) {
     ecdh.setPrivateKey(unb64u(privateKey));
     if (!ecdh.getPublicKey().equals(pub)) return null;          // a pair, or nothing
   } catch (_) { return null; }
-  return { publicKey, privateKey, subject: env.KNOCK_SUBJECT || "https://anirkh.github.io/direct-connection/" };
+  return { publicKey, privateKey, subject: env.KNOCK_SUBJECT || "https://anirkh.github.io/RelayLink/" };
 }
 
 /** A fresh key pair for KNOCK_PUBLIC_KEY / KNOCK_PRIVATE_KEY — see tools/knock-keys.js. */

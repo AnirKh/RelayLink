@@ -101,7 +101,7 @@ test("each request is signed for the push service's origin, for twelve hours, by
 test("the keys come from the server's environment, as a pair, or there are no knocks", () => {
   const pair = K.makeKnockKeys();
   assert.deepEqual(K.knockKeysFromEnv({ KNOCK_PUBLIC_KEY: pair.publicKey, KNOCK_PRIVATE_KEY: pair.privateKey }),
-    { ...pair, subject: "https://anirkh.github.io/direct-connection/" });
+    { ...pair, subject: "https://anirkh.github.io/RelayLink/" });
   assert.equal(K.knockKeysFromEnv({ KNOCK_PUBLIC_KEY: pair.publicKey, KNOCK_PRIVATE_KEY: pair.privateKey, KNOCK_SUBJECT: "mailto:a@b.c" }).subject, "mailto:a@b.c");
   const other = K.makeKnockKeys();
   for (const env of [{}, { KNOCK_PUBLIC_KEY: pair.publicKey }, { KNOCK_PRIVATE_KEY: pair.privateKey },
@@ -224,7 +224,7 @@ function worker({ kept = null, i18n = true, pages = [] } = {}) {
   const log = { shown: [], opened: [], focused: 0, posted: [] };
   const listeners = {};
   const self = {
-    registration: { scope: "https://anirkh.github.io/direct-connection/", showNotification: async (title, options) => { log.shown.push({ title, options }); } },
+    registration: { scope: "https://anirkh.github.io/RelayLink/", showNotification: async (title, options) => { log.shown.push({ title, options }); } },
     clients: {
       matchAll: async () => pages.map(url => ({ url, focus: async () => { log.focused++; }, postMessage: m => log.posted.push(m) })),
       openWindow: async url => { log.opened.push(url); },
@@ -295,15 +295,15 @@ test("a message waiting: shown by name as a message, not a knock — its own tag
 });
 
 test("a message waiting, tapped: an open page is told it is a message; a closed one opens at the messages", async () => {
-  const open = worker({ pages: ["https://anirkh.github.io/direct-connection/"] });
+  const open = worker({ pages: ["https://anirkh.github.io/RelayLink/"] });
   await open.clickWith({ room: ROOM, kind: "mail" });
   assert.deepEqual(open.log.posted, [{ type: "mail", room: ROOM }]);
   const closed = worker();
   await closed.clickWith({ room: ROOM, kind: "mail" });
-  assert.deepEqual(closed.log.opened, [`https://anirkh.github.io/direct-connection/#mail=${ROOM}`]);
+  assert.deepEqual(closed.log.opened, [`https://anirkh.github.io/RelayLink/#mail=${ROOM}`]);
   const odd = worker();
   await odd.clickWith({ room: ROOM, kind: "<script>" });
-  assert.deepEqual(odd.log.opened, [`https://anirkh.github.io/direct-connection/#knock=${ROOM}`], "an unknown kind is a knock");
+  assert.deepEqual(odd.log.opened, [`https://anirkh.github.io/RelayLink/#knock=${ROOM}`], "an unknown kind is a knock");
 });
 
 test("without the words file, English stands in", async () => {
@@ -313,7 +313,7 @@ test("without the words file, English stands in", async () => {
 });
 
 test("tapped: an open page is brought forward and told who; otherwise one opens, naming them", async () => {
-  const open = worker({ pages: ["https://anirkh.github.io/direct-connection/?x"] });
+  const open = worker({ pages: ["https://anirkh.github.io/RelayLink/?x"] });
   await open.click(ROOM);
   assert.equal(open.log.focused, 1);
   assert.deepEqual(open.log.posted, [{ type: "knock", room: ROOM }]);
@@ -321,14 +321,14 @@ test("tapped: an open page is brought forward and told who; otherwise one opens,
 
   const closed = worker({ pages: ["https://elsewhere.example/"] });
   await closed.click(ROOM);
-  assert.deepEqual(closed.log.opened, [`https://anirkh.github.io/direct-connection/#knock=${ROOM}`]);
+  assert.deepEqual(closed.log.opened, [`https://anirkh.github.io/RelayLink/#knock=${ROOM}`]);
 
   const nobody = worker();
   await nobody.click(null);
-  assert.deepEqual(nobody.log.opened, ["https://anirkh.github.io/direct-connection/"]);
+  assert.deepEqual(nobody.log.opened, ["https://anirkh.github.io/RelayLink/"]);
   const odd = worker();
   await odd.click("~not-a-room\"><script>");
-  assert.deepEqual(odd.log.opened, ["https://anirkh.github.io/direct-connection/"], "only a room's own shape goes in the address");
+  assert.deepEqual(odd.log.opened, ["https://anirkh.github.io/RelayLink/"], "only a room's own shape goes in the address");
 });
 
 test("the worker answers no requests: every page and file still comes from the network", () => {

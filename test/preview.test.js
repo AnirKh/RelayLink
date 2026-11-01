@@ -31,7 +31,7 @@ const meta = (attr, name) => {
 const og = name => meta("property", `og:${name}`);
 const tw = name => meta("name", `twitter:${name}`);
 
-const SITE = "https://anirkh.github.io/direct-connection/";
+const SITE = "https://anirkh.github.io/RelayLink/";
 
 test("the page says what it is, for search engines and for every card", () => {
   const description = meta("name", "description");

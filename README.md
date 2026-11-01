@@ -1,4 +1,6 @@
-AnirKh.github.io/direct-connection
+# Өртөө / RelayLink
+
+App: https://anirkh.github.io/RelayLink/ · Code: https://github.com/AnirKh/RelayLink
 
 ## Layout
 
@@ -294,7 +296,9 @@ Some networks block direct connections, and with no relay server two such device
 
 The app is **Өртөө** in Mongolian and **RelayLink** in English — one key, `appName` in `i18n.js`. The lobby heading, the about panel and the tab's title follow the language chosen, and the tab is renamed the moment the language is switched (`applyI18n` calls `drawTitle`). What cannot change with the language puts the Mongolian name first: the installed app (`short_name` "Өртөө", full name "Өртөө — RelayLink"), the page's `<title>` before the script runs, and the link-preview card. The email a left message arrives as says RelayLink.
 
-The web address, the repository and the server's files and services keep `direct-connection`, so links already shared, the Pi's services and Render go on working unchanged.
+The repository is `AnirKh/RelayLink`, so the app is at `https://anirkh.github.io/RelayLink/` — capital R and L: GitHub Pages tells the two apart, and `/relaylink/` is not found. The old `/direct-connection/` address stopped working with the rename; saved people and rooms survive it, since the browser keeps them per site (`anirkh.github.io`), not per address. GitHub still forwards the old repository address, so `git` on the Pi and Render go on fetching.
+
+What keeps `direct-connection`: the Pi's services, folders and settings file (`deploy/pi/`), the Render service, and the labels the keys for saved people and the mailbox are made from. Those labels are part of the keys — renaming them would orphan every saved person.
 
 ## Installable as an app
 

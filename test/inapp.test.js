@@ -91,17 +91,17 @@ test("the ways out: Safari on an iPhone; the default browser on Android, but onl
 });
 
 test("Safari is handed the whole address, the invite's fragment included", () => {
-  const invite = "https://anirkh.github.io/direct-connection/#bat-room:tok:secret";
+  const invite = "https://anirkh.github.io/RelayLink/#bat-room:tok:secret";
   assert.equal(G.safariUrl(invite), `x-safari-${invite}`);
   for (const bad of ["javascript:alert(1)", "intent://x", "", null, 5]) assert.equal(G.safariUrl(bad), null, String(bad));
 });
 
 test("Android's default browser is offered only an address with no fragment", () => {
-  assert.equal(G.androidIntentUrl("https://anirkh.github.io/direct-connection/"),
-               "intent://anirkh.github.io/direct-connection/#Intent;scheme=https;end");
-  assert.equal(G.androidIntentUrl("https://anirkh.github.io/direct-connection/?r=1"),
-               "intent://anirkh.github.io/direct-connection/?r=1#Intent;scheme=https;end");
-  assert.equal(G.androidIntentUrl("https://anirkh.github.io/direct-connection/#bat-room:tok:secret"), null,
+  assert.equal(G.androidIntentUrl("https://anirkh.github.io/RelayLink/"),
+               "intent://anirkh.github.io/RelayLink/#Intent;scheme=https;end");
+  assert.equal(G.androidIntentUrl("https://anirkh.github.io/RelayLink/?r=1"),
+               "intent://anirkh.github.io/RelayLink/?r=1#Intent;scheme=https;end");
+  assert.equal(G.androidIntentUrl("https://anirkh.github.io/RelayLink/#bat-room:tok:secret"), null,
     "never with an invite: the secret could not ride along, and must not be put anywhere else");
   for (const bad of ["http://anirkh.github.io/", "not a url", "", null]) assert.equal(G.androidIntentUrl(bad), null, String(bad));
 });
@@ -120,7 +120,7 @@ function classes(initial = []) {
 
 function open({ userAgent, invite = true, chosen = false, socketOpen = true, standalone = false }) {
   const hash = invite ? "#bat-room:tok:secret" : "";
-  const location = { pathname: "/direct-connection/", hash, href: `https://anirkh.github.io/direct-connection/${hash}` };
+  const location = { pathname: "/RelayLink/", hash, href: `https://anirkh.github.io/RelayLink/${hash}` };
   const log = { replaced: [], joins: 0, toasts: [], copied: [], timers: [] };
   const store = new Map(chosen ? [["dc-inapp-continue", "1"]] : []);
   const els = {};
@@ -161,7 +161,7 @@ test("Instagram on an iPhone, with an invite: the notice, Safari offered, the in
 test("Open in Safari hands Safari the whole address; if the app blocks it, the note says what else to do", () => {
   const p = open({ userAgent: IG_IPHONE });
   p.els.inAppSafariBtn.onclick();
-  assert.equal(p.location.href, "x-safari-https://anirkh.github.io/direct-connection/#bat-room:tok:secret");
+  assert.equal(p.location.href, "x-safari-https://anirkh.github.io/RelayLink/#bat-room:tok:secret");
   assert.equal(p.log.timers[0].ms, 1500);
   p.log.timers[0].f();
   assert.equal(p.els.inAppNote.textContent, I18N.en.inAppIfNothing);
@@ -171,7 +171,7 @@ test("Copy link copies the whole invite", async () => {
   const p = open({ userAgent: IG_IPHONE });
   p.els.inAppCopyBtn.onclick();
   await new Promise(r => setImmediate(r));
-  assert.deepEqual(p.log.copied, ["https://anirkh.github.io/direct-connection/#bat-room:tok:secret"]);
+  assert.deepEqual(p.log.copied, ["https://anirkh.github.io/RelayLink/#bat-room:tok:secret"]);
   assert.deepEqual(p.log.toasts, [I18N.en.inAppCopied]);
 });
 
@@ -180,13 +180,13 @@ test("Continue here: the notice goes, the address is tidied, the invite joins �
   p.els.inAppContinueBtn.onclick();
   assert.equal(p.shown("inAppOverlay"), false);
   assert.equal(p.held(), false);
-  assert.deepEqual(p.log.replaced, ["/direct-connection/"]);
+  assert.deepEqual(p.log.replaced, ["/RelayLink/"]);
   assert.equal(p.log.joins, 1);
   assert.equal(p.store.get("dc-inapp-continue"), "1");
 
   const again = open({ userAgent: IG_IPHONE, chosen: true });
   assert.equal(again.shown("inAppOverlay"), false);
-  assert.deepEqual(again.log.replaced, ["/direct-connection/"], "an ordinary invite page from then on");
+  assert.deepEqual(again.log.replaced, ["/RelayLink/"], "an ordinary invite page from then on");
 });
 
 test("Continue here before the server link is up joins when it comes up, not into nothing", () => {
@@ -199,7 +199,7 @@ test("Facebook on Android: the default browser offered for the site, but not for
   const site = open({ userAgent: FB_ANDROID, invite: false });
   assert.equal(site.shown("inAppDefaultBtn"), true);
   site.els.inAppDefaultBtn.onclick();
-  assert.equal(site.location.href, "intent://anirkh.github.io/direct-connection/#Intent;scheme=https;end");
+  assert.equal(site.location.href, "intent://anirkh.github.io/RelayLink/#Intent;scheme=https;end");
 
   const invite = open({ userAgent: FB_ANDROID });
   assert.equal(invite.shown("inAppDefaultBtn"), false);
@@ -215,7 +215,7 @@ test("a real browser gets no notice and the usual tidy address", () => {
   const p = open({ userAgent: BROWSERS["Safari (iPhone)"] });
   assert.equal(p.shown("inAppOverlay"), false);
   assert.equal(p.held(), false);
-  assert.deepEqual(p.log.replaced, ["/direct-connection/"]);
+  assert.deepEqual(p.log.replaced, ["/RelayLink/"]);
 });
 
 /* ══════════════════════════════════════════
