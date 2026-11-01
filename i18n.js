@@ -35,7 +35,7 @@ const I18N = {
     appName:         "Өртөө",
     authorLabel:     "Зохиогчийн тухай",
     authorAbout:     "Хүмүүс хоорондоо хялбар, чөлөөтэй харилцах боломжийг бүрдүүлэхийн тулд энэхүү аппыг бүтээлээ. Надтай холбогдохыг хүсвэл эндээс холбогдоорой.",
-    aboutDesc:       "Энэхүү холбоосыг ямар нэгэн гуравдагч этгээдээр мэдээллээ дамжуулалгүйгээр харилцах зорилготой бүтээлээ.",
+    aboutDesc:       "Сервер дамжихгүй шууд холбогдох зориулалтаар бүтээлээ.",
     // Lobby
     tabRooms:        "Өрөөнүүд",
     installApp:      "Апп суулгах",
@@ -359,7 +359,7 @@ const I18N = {
     appName:         "RelayLink",
     authorLabel:     "About the author",
     authorAbout:     "I built this app to make it easier for people to connect and communicate. If you'd like to get in touch with me, you can reach me here.",
-    aboutDesc:       "This link was created to communicate without sharing your information through any third party.",
+    aboutDesc:       "Built to connect directly, without going through a server.",
     tabRooms:        "Rooms",
     installApp:      "Install app",
     appInstalled:    "App installed",
