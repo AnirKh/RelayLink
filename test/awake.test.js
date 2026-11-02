@@ -208,8 +208,8 @@ test("however a chat ends, there is one Back button", () => {
     appendChild: c => children.push(c)
   };
   const document = { createElement: () => ({ className: "", appendChild() {} }) };
-  const show = new Function("chatMessages", "document", "t", "leaveBtn", "scrollBottom", "keepScreenOn",
-    `${fn("showReconnectButton")}\nreturn showReconnectButton;`)(chatMessages, document, k => k, {}, () => {}, () => {});
+  const show = new Function("chatMessages", "document", "t", "leaveBtn", "scrollBottom", "keepScreenOn", "settleOutbox",
+    `${fn("showReconnectButton")}\nreturn showReconnectButton;`)(chatMessages, document, k => k, {}, () => {}, () => {}, () => {});
   show(); show(); show();
   assert.equal(children.filter(c => c.className === "reconnect-sys-wrap").length, 1);
 });

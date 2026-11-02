@@ -167,7 +167,8 @@ const NAMES = ["G", "DC", "I18N", "LANG", "t", "localStorage", "window", "docume
   "setTimeout", "clearTimeout", "knockBtn", "knockIcon", "knockLabel", "Notification", "navigator", "location", "history", "indexedDB",
   "APP_BUILD", "installOverlay", "showLobbyTab", "runningInstalled",
   "mailOverlay", "mailTitle", "mailHint", "mailList", "mailInput", "mailSendBtn", "mailCloseBtn", "mailClearBtn",
-  "fillMessage", "noticeArrival", "typingWithFinger", "env"];
+  "fillMessage", "noticeArrival", "typingWithFinger", "env",
+  "mailAttachBtn", "mailFileInput", "openImageViewer", "closeImageViewer", "DCS", "fetch", "SERVER_URL", "IDBKeyRange", "URL"];
 
 /** A real P-256 public key and a 16-byte secret, as a browser's subscription has. */
 function pushKeys() {
@@ -214,14 +215,20 @@ function pushBrowser(env, log) {
   return { navigator, Notification, swListeners, current: () => current };
 }
 
-/** IndexedDB, as much as the worker's copy needs. */
-function fakeIndexedDB(idb) {
+/** IndexedDB, as much as the page needs: the worker's copy (`idb`), and the
+    waiting photos and files (`files`, kept as they are given). */
+function fakeIndexedDB(idb, files) {
   return {
-    open: () => {
+    open: name => {
       const db = {
         createObjectStore() {}, close() {},
         transaction: () => {
-          const tx = { objectStore: () => ({ put: (v, k) => { idb.set(k, JSON.parse(JSON.stringify(v))); setTimeout(() => tx.oncomplete && tx.oncomplete()); } }) };
+          const done = result => { setTimeout(() => tx.oncomplete && tx.oncomplete()); return { result }; };
+          const tx = { objectStore: () => (name === "dc-mail-files" ? {
+            put: (v, k) => { files.set(k, v); return done(undefined); },
+            get: k => done(files.get(k)),
+            delete: range => { for (const k of [...files.keys()]) if (range.includes(k)) files.delete(k); return done(undefined); }
+          } : { put: (v, k) => { idb.set(k, JSON.parse(JSON.stringify(v))); return done(undefined); } }) };
           return tx;
         }
       };
@@ -229,6 +236,28 @@ function fakeIndexedDB(idb) {
       setTimeout(() => req.onsuccess && req.onsuccess());
       return req;
     }
+  };
+}
+const IDBKeyRange = { bound: (lo, hi, loOpen, hiOpen) => ({ includes: k => (loOpen ? k > lo : k >= lo) && (hiOpen ? k < hi : k <= hi) }) };
+
+/** The server's /api/mailbox/file, stood in for: what was sent, kept by the
+    X-DC-Mail header's "box:side:id"; asked for, handed back. `env.web` says
+    how it answers: "works", "down" (no answer), or a status to answer with. */
+function fakeWeb(env, log) {
+  return async (url, opts = {}) => {
+    const [box, side, id, size] = (opts.headers["X-DC-Mail"] || "").split(":");
+    log.web.push({ url, method: opts.method || "GET", headers: { ...opts.headers } });
+    if (env.web === "down") throw new TypeError("Failed to fetch");
+    if (typeof env.web === "number") return { ok: false, status: env.web, json: async () => ({ code: env.webCode }) };
+    const at = `${box}:${side}:${id}`;
+    if (opts.method === "POST") {
+      assert.equal(opts.body.length, Number(size), "the size said is the size sent");
+      env.uploads.set(at, Uint8Array.from(opts.body));
+      return { ok: true, status: 200, json: async () => ({ ok: true }) };
+    }
+    if (!env.uploads.has(at)) return { ok: false, status: 404, json: async () => ({ code: "gone" }) };
+    const bytes = env.uploads.get(at);
+    return { ok: true, status: 200, arrayBuffer: async () => bytes.slice().buffer };
   };
 }
 
@@ -240,7 +269,7 @@ function fakeIndexedDB(idb) {
 function page({ saved = [], storage = "works", connected = true, checked = true, kind = "pin", wsOpen = true, inChat = false, lang = "mn",
                  knock = {}, mail = null, hash = "", timers = null } = {}) {
   const log = { ws: [], sealed: [], toasts: [], sys: [], screen: [], left: 0, quality: [], reconnect: 0, closed: 0,
-                asked: 0, registered: [], subscribed: [], unsubscribed: 0, replaced: [], tabs: [], noticed: 0 };
+                asked: 0, registered: [], subscribed: [], unsubscribed: 0, replaced: [], tabs: [], noticed: 0, web: [], viewed: [] };
   const store = new Map();
   if (saved.length) store.set("dc-people", JSON.stringify({ v: 1, people: saved }));
   if (mail) store.set("dc-mail", JSON.stringify(mail));
@@ -252,7 +281,8 @@ function page({ saved = [], storage = "works", connected = true, checked = true,
   };
   const winListeners = {};
   const idb = new Map();
-  const indexedDB = fakeIndexedDB(idb);
+  const files = new Map();
+  const indexedDB = fakeIndexedDB(idb, files);
   const window = { indexedDB, addEventListener: (type, f) => { (winListeners[type] = winListeners[type] || []).push(f); } };
   const push = pushBrowser(knock, log);
   const docListeners = {};
@@ -262,7 +292,8 @@ function page({ saved = [], storage = "works", connected = true, checked = true,
   for (const n of ["chatMessages", "peopleSection", "peopleList", "saveOverlay", "saveTitle", "saveHint", "saveNameInput",
                    "saveCancelBtn", "saveConfirmBtn", "leaveBtn", "lobbyStatus", "voiceCallBtn", "videoCallBtn", "statsBar", "chatScreen",
                    "knockBtn", "knockIcon", "knockLabel", "installOverlay",
-                   "mailOverlay", "mailTitle", "mailHint", "mailList", "mailInput", "mailSendBtn", "mailCloseBtn", "mailClearBtn"]) {
+                   "mailOverlay", "mailTitle", "mailHint", "mailList", "mailInput", "mailSendBtn", "mailCloseBtn", "mailClearBtn",
+                   "mailAttachBtn", "mailFileInput"]) {
     els[n] = element(n === "saveNameInput" || n === "mailInput" ? "input" : "div");
   }
   els.peopleSection.classList.add("hidden");
@@ -273,7 +304,8 @@ function page({ saved = [], storage = "works", connected = true, checked = true,
   if (!inChat) els.chatScreen.classList.add("hidden");
   const env = { kind, connected, checked, onLeave: null, knockSupported: knock.supported !== false, calls: [],
                 callRequestModal: element("div"),
-                knockKey: knock.serverKey === false || knock.keyLater ? null : SERVER_KNOCK_KEY };
+                knockKey: knock.serverKey === false || knock.keyLater ? null : SERVER_KNOCK_KEY,
+                web: "works", webCode: null, uploads: new Map() };
   env.callRequestModal.classList.add("hidden");              // no call ringing here
   const location = { hash: knock.hash || hash || "", pathname: "/RelayLink/", search: "" };
   const history = { replaceState: (s, title, url) => log.replaced.push(url) };
@@ -301,6 +333,7 @@ function page({ saved = [], storage = "works", connected = true, checked = true,
       knockAnswered, answerKnock, savedInChatNow, theyWait, mailAtConnect, openPersonMenu, closePersonMenu,
       quickCallPerson, placeQuickCall, quickCallPeerReady,
       openThread, closeThread, sendMail, receiveMail, mailAnswered, mailAtConnect, fetchMail, answerMail, sendFromThread,
+      sendMailFile, mailFileBlob, files: () => mailFileQueue,
       get: () => ({ people, meeting, waitingForUs, personMenuFor, heldOpen, quickCall, pendingMeet, saveOffer, saveAsked, saveDialog, forgetting, currentSession,
                     isConnecting, isHost, hostKey, roomSecret, pendingRoomSecret, roomKind, guestKey,
                     knockKey, knockSub, knockSent, knockShared, savedInChat, knockEarly, mailStore, mailOpenFor }),
@@ -328,14 +361,16 @@ function page({ saved = [], storage = "works", connected = true, checked = true,
     timers ? f => timers.push(f) : f => f(), id => { if (timers && id) timers[id - 1] = null; }, els.knockBtn, els.knockIcon, els.knockLabel, push.Notification, push.navigator, location, history, indexedDB,
     "202610290000-abcdef12", els.installOverlay, n => log.tabs.push(n), () => Boolean(knock.standalone),
     els.mailOverlay, els.mailTitle, els.mailHint, els.mailList, els.mailInput, els.mailSendBtn, els.mailCloseBtn, els.mailClearBtn,
-    (el, text) => { el.textContent = text; }, () => { log.noticed++; }, () => false, env);
+    (el, text) => { el.textContent = text; }, () => { log.noticed++; }, () => false, env,
+    els.mailAttachBtn, els.mailFileInput, (url, name) => log.viewed.push({ url, name }), () => {}, { fmtBytes: n => `${n} B` },
+    fakeWeb(env, log), "https://pi.test/dc", IDBKeyRange, URL);
   const rows = () => els.peopleList.children;
   const button = (row, cls) => row.children.find(c => c.classList.contains(cls));
   const stored = () => JSON.parse(store.get("dc-people") || "null");
   const storageEvent = () => (winListeners.storage || []).forEach(f => f({ key: "dc-people" }));
   const type = text => { els.saveNameInput.value = text; };
   const doc = (type, e) => (docListeners[type] || []).forEach(f => f(e));
-  return { api, log, els, env, ws, store, rows, button, stored, storageEvent, type, idb, push, doc, timers };
+  return { api, log, els, env, ws, store, rows, button, stored, storageEvent, type, idb, files, push, doc, timers };
 }
 
 const settle = () => new Promise(r => setTimeout(r, 0));
@@ -1662,9 +1697,230 @@ test("the wiring: asked after at each connection, the server's word taken, and t
   const onopen = between("  ws.onopen    = () => {", "  ws.onclose");
   assert.match(onopen, /mailAtConnect\(\);/);
   for (const type of ["mail", "mail-waiting", "mail-dropped", "mail-refused"]) assert.ok(app.includes(`case "${type}":`), type);
-  assert.match(fn("dropMail"), /wsSend\(\{ type: "mail-drop", box: p\.room, to: G\.otherSide\(p\.side\), id: item\.id, at: item\.at, iv: item\.iv, ct: item\.ct,\s*\n\s*\.\.\.\(p\.knock \? \{ knock: p\.knock \} : \{\}\) \}\);/);
+  assert.match(fn("dropMail"), /wsSend\(\{ type: "mail-drop", box: p\.room, to: G\.otherSide\(p\.side\), id: item\.id, at: item\.at, iv: item\.iv, ct: item\.ct,\s*\n\s*\.\.\.\(item\.file \? \{ file: true \} : \{\}\), \.\.\.\(p\.knock \? \{ knock: p\.knock \} : \{\}\) \}\);/);
   assert.match(fn("forgetPerson"), /delete mailStore\.threads\[p\.room\];\s*\n\s*delete mailStore\.seen\[p\.room\];/);
-  for (const id of ["mailOverlay", "mailTitle", "mailHint", "mailList", "mailInput", "mailSendBtn", "mailCloseBtn", "mailClearBtn"]) {
+  for (const id of ["mailOverlay", "mailTitle", "mailHint", "mailList", "mailInput", "mailSendBtn", "mailCloseBtn", "mailClearBtn",
+                    "mailAttachBtn", "mailFileInput"]) {
     assert.ok(html.includes(`id="${id}"`), id);
   }
+});
+
+/* ══════════════════════════════════════════
+   Waiting photos and files
+══════════════════════════════════════════ */
+
+/** A file as the picker hands one over. */
+function picked(name, type, bytes) {
+  const file = new Blob([bytes], { type });
+  file.name = name;
+  return file;
+}
+
+/** A photo or file from the other side of `p`'s pair: its message, sealed as
+    their device seals it, and its bytes left on the stand-in server. */
+async function fileFromThem(page, p, meta, bytes, over = {}) {
+  const key = await DC.mailboxKey(p.secret);
+  const where = { box: p.room, from: G.otherSide(p.side), to: p.side, id: DC.makeMailId() };
+  const at = Date.now() - 1000;
+  const sealed = await DC.sealMailBody(key, { ...where, at }, { file: meta });
+  const fileWhere = { ...where, ...(over.fileWhere || {}) };
+  page.env.uploads.set(`${p.room}:${p.side}:${where.id}`, await DC.sealMailFile(key, fileWhere, over.bytes || bytes));
+  return { id: where.id, at, ...sealed, file: bytes.length + 28 };
+}
+
+const thePhoto = Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 1, 2, 3, 4, 5, 6]);
+
+test("a photo for them: kept here, sealed, sent to the server first — then its message, which says only that it is a file", async () => {
+  const anu = await person("Anu", "a");
+  const p = page({ saved: [anu] });
+  p.api.openThread(anu);
+  p.els.mailAttachBtn.onclick === null || p.els.mailAttachBtn.onclick();
+  p.els.mailFileInput.files = [picked("beach.png", "image/png", thePhoto)];
+  p.els.mailFileInput.onchange();
+  await until(() => p.log.ws.some(m => m.type === "mail-drop"));
+  await p.api.files();
+  const [upload] = p.log.web;
+  assert.equal(upload.method, "POST");
+  assert.equal(upload.url, "https://pi.test/dc/api/mailbox/file", "nothing of who or what in the address");
+  const drop = p.log.ws.find(m => m.type === "mail-drop");
+  assert.equal(upload.headers["X-DC-Mail"], `${anu.room}:b:${drop.id}:${thePhoto.length + 28}`);
+  assert.equal(upload.headers["X-DC-Client"], "1");
+  const key = await DC.mailboxKey(anu.secret);
+  const where = { box: anu.room, from: "a", to: "b", id: drop.id };
+  const sent = p.env.uploads.get(`${anu.room}:b:${drop.id}`);
+  assert.ok(!Buffer.from(sent).includes(Buffer.from(thePhoto)), "sealed: the server never sees it");
+  assert.deepEqual(await DC.openMailFile(key, where, sent), thePhoto, "their device opens it");
+  assert.equal(drop.file, true);
+  assert.deepEqual(await DC.openMailBody(key, { ...where, at: drop.at, iv: drop.iv, ct: drop.ct }),
+                   { file: { name: "beach.png", type: "image/png", size: thePhoto.length } });
+  const kept = JSON.parse(p.store.get("dc-mail")).threads[anu.room].items[0];
+  assert.deepEqual(kept.file, { name: "beach.png", type: "image/png", size: thePhoto.length });
+  assert.equal(kept.text, undefined);
+  const copy = await p.api.mailFileBlob(anu.room, drop.id);
+  assert.deepEqual(new Uint8Array(await copy.arrayBuffer()), thePhoto, "our own copy, kept here");
+  assert.equal(p.els.mailFileInput.value, "", "the picker emptied, so the same one can be picked again");
+  p.api.mailAnswered({ type: "mail-dropped", id: drop.id }, true);
+  assert.equal(p.api.get().mailStore.threads[anu.room].items[0].state, "kept");
+});
+
+test("a file that says it is a page is kept as plain bytes, here and there — never opened as one", async () => {
+  const anu = await person("Anu", "a");
+  const p = page({ saved: [anu] });
+  await p.api.sendMailFile(anu, picked("note.html", "text/html", Uint8Array.from([60, 98, 62])));
+  const id = p.api.get().mailStore.threads[anu.room].items[0].id;
+  assert.equal((await p.api.mailFileBlob(anu.room, id)).type, "application/octet-stream");
+  const q = page({ saved: [{ ...anu, side: "b" }] });
+  const m = await fileFromThem(q, { ...anu, side: "b" }, { name: "x.svg", type: "image/svg+xml", size: 3 }, Uint8Array.from([1, 2, 3]));
+  await q.api.receiveMail({ type: "mail", box: anu.room, side: "b", items: [m] });
+  assert.equal((await q.api.mailFileBlob(anu.room, m.id)).type, "application/octet-stream", "an SVG can carry script: a file, not a picture");
+});
+
+test("too big, or a server that keeps no files: said, and nothing sent", async () => {
+  const anu = await person("Anu", "a");
+  const p = page({ saved: [anu] });
+  const big = picked("film.mp4", "video/mp4", new Uint8Array(1));
+  Object.defineProperty(big, "size", { value: G.MAIL_FILE_MAX + 1 });
+  await p.api.sendMailFile(anu, big);
+  assert.deepEqual(p.log.toasts, [I18N.mn.mailFileTooBig]);
+  assert.deepEqual(p.log.web, []);
+  assert.equal((p.api.get().mailStore.threads[anu.room] || { items: [] }).items.length, 0);
+  assert.match(app, /if \(j && Number\.isSafeInteger\(j\.mailFileMaxBytes\)\) mailFileMaxBytes = Math\.max\(0, Math\.min\(j\.mailFileMaxBytes - 28, G\.MAIL_FILE_MAX\)\);/,
+    "the server's own limit, from /api/ping — 0 when it keeps none");
+  assert.match(fn("sendMailFile"), /if \(!mailFileMaxBytes\) \{ showToast\(t\("mailFilesOff"\), "warn"\); return; \}/);
+});
+
+test("the server says no: marked not sent, and why — in our words", async () => {
+  const anu = await person("Anu", "a");
+  for (const [status, code, said] of [[507, "full", I18N.mn.mailBoxFull], [503, "busy", I18N.mn.mailTryLater],
+                                      [413, "too-large", I18N.mn.mailFileTooBig], [503, "off", I18N.mn.mailFilesOff], [500, null, I18N.mn.mailNotSent]]) {
+    const p = page({ saved: [anu] });
+    p.env.web = status;
+    p.env.webCode = code;
+    await p.api.sendMailFile(anu, picked("a.png", "image/png", thePhoto));
+    assert.equal(p.api.get().mailStore.threads[anu.room].items[0].state, "refused", code);
+    assert.deepEqual(p.log.toasts, [said], code);
+    assert.ok(!p.log.ws.some(m => m.type === "mail-drop"), "no message for a file not there");
+  }
+});
+
+test("no answer from the server: still on its way, and sent from the start at the next connection — once, however often asked", async () => {
+  const anu = await person("Anu", "a");
+  const p = page({ saved: [anu] });
+  p.env.web = "down";
+  await p.api.sendMailFile(anu, picked("a.png", "image/png", thePhoto));
+  const item = p.api.get().mailStore.threads[anu.room].items[0];
+  assert.equal(item.state, "sending");
+  assert.deepEqual(p.log.toasts, []);
+  p.env.web = "works";
+  p.log.web.length = 0;
+  p.api.mailAtConnect();
+  p.api.mailAtConnect();
+  await p.api.files();
+  assert.equal(p.log.web.filter(r => r.method === "POST").length, 1, "the file once");
+  assert.deepEqual(p.log.ws.filter(m => m.type === "mail-drop").map(m => [m.id, m.file]), [[item.id, true]]);
+});
+
+test("several picked at once: each shown at once, sent one after another", async () => {
+  const anu = await person("Anu", "a");
+  const p = page({ saved: [anu] });
+  p.api.openThread(anu);
+  p.els.mailFileInput.files = [picked("1.png", "image/png", thePhoto), picked("2.pdf", "application/pdf", Uint8Array.from([7, 7]))];
+  p.els.mailFileInput.onchange();
+  await until(() => p.log.ws.filter(m => m.type === "mail-drop").length === 2);
+  assert.deepEqual(p.api.get().mailStore.threads[anu.room].items.map(m => m.file.name).sort(), ["1.png", "2.pdf"]);
+  assert.equal(p.log.web.length, 2);
+});
+
+test("theirs: fetched, opened, kept here and shown — and only then the server told it can let it go", async () => {
+  const anu = await person("Anu", "a");
+  const p = page({ saved: [anu] });
+  const m = await fileFromThem(p, anu, { name: "cat.jpg", type: "image/jpeg", size: thePhoto.length }, thePhoto);
+  await p.api.receiveMail({ type: "mail", box: anu.room, side: "a", items: [m] });
+  const fetched = p.log.web.find(r => r.method === "GET");
+  assert.equal(fetched.url, "https://pi.test/dc/api/mailbox/file");
+  assert.equal(fetched.headers["X-DC-Mail"], `${anu.room}:a:${m.id}`);
+  const item = p.api.get().mailStore.threads[anu.room].items[0];
+  assert.deepEqual([item.mine, item.file], [false, { name: "cat.jpg", type: "image/jpeg", size: thePhoto.length }]);
+  const copy = await p.api.mailFileBlob(anu.room, m.id);
+  assert.deepEqual(new Uint8Array(await copy.arrayBuffer()), thePhoto);
+  assert.equal(copy.type, "image/jpeg");
+  assert.deepEqual(p.log.ws.at(-1), { type: "mail-ack", box: anu.room, side: "a", ids: [m.id] });
+  assert.deepEqual(p.log.toasts, [I18N.mn.mailArrived("Anu")]);
+});
+
+test("theirs, with no answer from the server: not taken, not let go — fetched next time", async () => {
+  const anu = await person("Anu", "a");
+  const p = page({ saved: [anu] });
+  const m = await fileFromThem(p, anu, { name: "cat.jpg", type: "image/jpeg", size: thePhoto.length }, thePhoto);
+  const text = await fromThem(anu, "and a word");
+  p.env.web = "down";
+  await p.api.receiveMail({ type: "mail", box: anu.room, side: "a", items: [m, text] });
+  assert.deepEqual(p.log.ws.at(-1).ids, [text.id], "only the word let go");
+  assert.equal(p.api.get().mailStore.threads[anu.room].items.length, 1);
+  p.env.web = 429;
+  await p.api.receiveMail({ type: "mail", box: anu.room, side: "a", items: [m] });
+  assert.equal(p.api.get().mailStore.threads[anu.room].items.length, 1, "busy: the same");
+  p.env.web = "works";
+  await p.api.receiveMail({ type: "mail", box: anu.room, side: "a", items: [m] });
+  assert.deepEqual(p.api.get().mailStore.threads[anu.room].items.map(x => Boolean(x.file)).sort(), [false, true]);
+  assert.deepEqual(p.log.ws.at(-1).ids, [m.id]);
+});
+
+test("theirs, gone from the server or not opening as this one: said once, and let go", async () => {
+  const anu = await person("Anu", "a");
+  const p = page({ saved: [anu] });
+  const gone = await fileFromThem(p, anu, { name: "a.png", type: "image/png", size: thePhoto.length }, thePhoto);
+  p.env.uploads.clear();
+  const swapped = await fileFromThem(p, anu, { name: "b.png", type: "image/png", size: thePhoto.length }, thePhoto, { fileWhere: { id: DC.makeMailId() } });
+  const resized = await fileFromThem(p, anu, { name: "c.png", type: "image/png", size: 3 }, thePhoto);
+  await p.api.receiveMail({ type: "mail", box: anu.room, side: "a", items: [gone, swapped, resized] });
+  assert.equal((p.api.get().mailStore.threads[anu.room] || { items: [] }).items.length, 0);
+  assert.deepEqual(p.log.toasts, [I18N.mn.mailFileGone]);
+  assert.deepEqual(p.log.ws.at(-1).ids, [gone.id, swapped.id, resized.id]);
+  assert.equal(p.files.size, 0, "nothing kept");
+});
+
+test("in the conversation: a photo is drawn, tap to see it big; a file is its name and size, tap to save it", async () => {
+  const anu = await person("Anu", "a");
+  const p = page({ saved: [anu] });
+  const photo = await fileFromThem(p, anu, { name: "cat.jpg", type: "image/jpeg", size: thePhoto.length }, thePhoto);
+  const doc = await fileFromThem(p, anu, { name: "plan.pdf", type: "application/pdf", size: 2 }, Uint8Array.from([1, 2]));
+  await p.api.receiveMail({ type: "mail", box: anu.room, side: "a", items: [photo, doc] });
+  p.api.openThread(anu);
+  await settle(); await settle(); await settle();
+  const [first, second] = p.els.mailList.children.map(r => r.querySelector(".mail-bubble"));
+  const img = first.children[0];
+  assert.equal(img.className, "mail-image");
+  assert.ok(first.classList.contains("has-image"));
+  assert.match(img.src, /^blob:/);
+  img.onclick();
+  assert.deepEqual(p.log.viewed, [{ url: img.src, name: "cat.jpg" }]);
+  const chip = second.querySelector(".mail-file");
+  assert.equal(chip.querySelector(".mail-file-name").textContent, "plan.pdf");
+  assert.equal(chip.download, "plan.pdf");
+  assert.match(chip.href, /^blob:/);
+  p.api.closeThread();
+  p.files.clear();
+  p.api.openThread(anu);
+  await settle(); await settle(); await settle();
+  const missing = p.els.mailList.children[0].querySelector(".mail-file");
+  assert.ok(missing.classList.contains("missing"), "its copy gone from this device: said so");
+  assert.match(missing.querySelector(".mail-file-size").textContent, new RegExp(I18N.mn.mailFileMissing));
+  assert.doesNotMatch(fn("fillMailFile"), /[^.]fmtBytes\(/, "drawn as the page loads, from a tapped alert: nothing declared later in app.js");
+});
+
+test("cleared, or the person forgotten: their files go from this device too", async () => {
+  const anu = await person("Anu", "a"), bat = await person("Bat", "a");
+  const p = page({ saved: [anu, bat] });
+  await p.api.sendMailFile(anu, picked("a.png", "image/png", thePhoto));
+  await p.api.sendMailFile(bat, picked("b.png", "image/png", thePhoto));
+  assert.equal(p.files.size, 2);
+  p.api.openThread(anu);
+  p.els.mailClearBtn.click();
+  p.els.mailClearBtn.click();
+  await settle(); await settle();
+  assert.deepEqual([...p.files.keys()].map(k => k.split("/")[0]), [bat.room], "only theirs");
+  p.api.forgetPerson(p.api.get().people.find(q => q.name === "Bat"));
+  await settle(); await settle();
+  assert.equal(p.files.size, 0);
 });

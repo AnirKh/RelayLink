@@ -13,6 +13,7 @@ const path   = require("node:path");
 const DC     = require("../protocol.js");
 const G      = require("../guards.js");
 const M      = require("../mailbox.js");
+const I18N   = new Function("localStorage", `${fs.readFileSync(path.join(__dirname, "..", "i18n.js"), "utf8")}; return I18N;`)({ getItem: () => null });
 
 const BOX = `~${"b".repeat(43)}`;
 const id = n => `${String(n).padStart(4, "0")}${"i".repeat(18)}`;
@@ -223,4 +224,180 @@ test("the other side of a pair, and the server's refusals in our words", () => {
   assert.equal(G.mailRefusalKey("server-full"), "mailServerFull");
   assert.equal(G.mailRefusalKey("too-many"), "mailTooMany");
   for (const other of ["invalid", "constructor", "__proto__", undefined, 7]) assert.equal(G.mailRefusalKey(other), "mailNotSent", String(other));
+});
+
+/* ══════════════════════════════════════════
+   Photos and files
+══════════════════════════════════════════ */
+
+test("a file sealed for the other side opens for them, as this message's — and nowhere else", async () => {
+  const secret = DC.makeRoomSecret();
+  const key = await DC.mailboxKey(secret);
+  const where = { box: BOX, from: "a", to: "b", id: DC.makeMailId() };
+  const bytes = Uint8Array.from({ length: 1000 }, (_, i) => i % 251);
+  const sealed = await DC.sealMailFile(key, where, bytes);
+  assert.equal(sealed.length, bytes.length + 28, "12 of IV, 16 of tag");
+  assert.deepEqual(await DC.openMailFile(key, where, sealed), bytes);
+  for (const [what, changed] of [["another box", { box: `~${"c".repeat(43)}` }], ["from them", { from: "b", to: "a" }],
+                                 ["another message", { id: DC.makeMailId() }]]) {
+    assert.equal(await DC.openMailFile(key, { ...where, ...changed }, sealed), null, what);
+  }
+  assert.equal(await DC.openMailFile(await DC.mailboxKey(DC.makeRoomSecret()), where, sealed), null, "another pair's key");
+  const flipped = sealed.slice();
+  flipped[40] ^= 1;
+  assert.equal(await DC.openMailFile(key, where, flipped), null, "changed on the way");
+  assert.equal(await DC.openMailFile(key, where, sealed.slice(0, 27)), null, "too short to be one");
+  assert.deepEqual(await DC.openMailFile(key, where, await DC.sealMailFile(key, where, new Uint8Array(0))), new Uint8Array(0), "an empty file is a file");
+});
+
+test("a file's seal is exactly as written down — checked against node's own crypto", async () => {
+  const nodeCrypto = require("node:crypto");
+  const secret = DC.makeRoomSecret();
+  const where = { box: BOX, from: "b", to: "a", id: DC.makeMailId() };
+  const key = Buffer.from(nodeCrypto.hkdfSync("sha256", Buffer.from(secret), Buffer.alloc(0), Buffer.from("direct-connection/mailbox/v1"), 32));
+  const iv = nodeCrypto.randomBytes(12);
+  const c = nodeCrypto.createCipheriv("aes-256-gcm", key, iv);
+  c.setAAD(Buffer.from(JSON.stringify(["dc-mailfile-1", where.box, where.from, where.to, where.id])));
+  const sealed = Buffer.concat([iv, c.update(Buffer.from("from node")), c.final(), c.getAuthTag()]);
+  assert.equal(Buffer.from(await DC.openMailFile(await DC.mailboxKey(secret), where, sealed)).toString(), "from node");
+});
+
+test("a message that describes a file: its name, type and size — believed only in that shape", async () => {
+  const secret = DC.makeRoomSecret();
+  const key = await DC.mailboxKey(secret);
+  const m = { box: BOX, from: "a", to: "b", id: DC.makeMailId(), at: 1_793_000_000_123 };
+  const meta = { name: "cat.jpg", type: "image/jpeg", size: 12345 };
+  const sealed = await DC.sealMailBody(key, m, { file: meta });
+  assert.deepEqual(await DC.openMailBody(key, { ...m, ...sealed }), { file: meta });
+  assert.equal(await DC.openMail(key, { ...m, ...sealed }), null, "not a text");
+  const extra = await DC.sealMailBody(key, m, { file: { ...meta, path: "/etc" } });
+  assert.deepEqual(await DC.openMailBody(key, { ...m, ...extra }), { file: meta }, "only what is known is taken");
+  for (const bad of [{ ...meta, name: "" }, { ...meta, name: "x".repeat(256) }, { ...meta, type: 5 }, { ...meta, type: "x".repeat(101) },
+                     { ...meta, size: -1 }, { ...meta, size: 1.5 }, { ...meta, size: "12" }, null, "file"]) {
+    const s = await DC.sealMailBody(key, m, { file: bad });
+    assert.equal(await DC.openMailBody(key, { ...m, ...s }), null, JSON.stringify(bad));
+  }
+  assert.ok(G.mailFileValid(meta));
+  assert.ok(!G.mailFileValid({ ...meta, size: G.MAIL_FILE_MAX + 1 }), "the page takes no more than it can send");
+  assert.deepEqual(await DC.openMailBody(key, { ...m, ...(await DC.sealMail(key, { ...m, text: "hi" })) }), { text: "hi" });
+});
+
+test("on this device, a photo or file is kept as its description — never with text too, never half-formed", () => {
+  const room = `~${"r".repeat(43)}`;
+  const photo = { id: id(1), at: 5, mine: false, file: { name: "a.png", type: "image/png", size: 10 } };
+  const ours = { id: id(2), at: 6, mine: true, file: { name: "b.pdf", type: "", size: 0 }, state: "sending" };
+  assert.deepEqual(G.mailStore({ v: 1, threads: { [room]: { items: [photo, ours] } } }).threads[room].items, [photo, ours]);
+  for (const bad of [{ ...photo, text: "and words" }, { ...photo, file: { ...photo.file, size: -1 } }, { ...photo, file: "a.png" },
+                     { ...photo, file: null }, { ...photo, file: { ...photo.file, name: 7 } }]) {
+    assert.deepEqual(G.mailStore({ v: 1, threads: { [room]: { items: [bad] } } }).threads[room].items, [], JSON.stringify(bad));
+  }
+});
+
+test("the server's refusals of a file, in our words", () => {
+  assert.equal(G.mailRefusalKey("off"), "mailFilesOff");
+  assert.equal(G.mailRefusalKey("too-large"), "mailFileTooBig");
+  assert.equal(G.mailRefusalKey("busy"), "mailTryLater");
+  for (const key of ["mailFilesOff", "mailFileTooBig", "mailTryLater", "mailFileGone", "mailFileMissing", "mailAttach"]) {
+    assert.equal(typeof I18N.mn[key], "string", key);
+    assert.equal(typeof I18N.en[key], "string", key);
+  }
+});
+
+/** Mailboxes with a place for files, in a fresh folder. */
+function withFiles(now = () => Date.now()) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "dc-mail-files-"));
+  const filesDir = path.join(dir, "files");
+  const box = M.createMailboxes({ file: path.join(dir, "mailbox.json"), filesDir, now, saveDelayMs: 10 });
+  /** As the server writes one: to its .part, then moved into place. */
+  const send = (b, to, n, bytes) => {
+    const target = box.fileTarget(b, to, id(n));
+    fs.writeFileSync(target.part, bytes);
+    fs.renameSync(target.part, target.path);
+    box.fileStored(b, to, id(n), bytes.length);
+    return target.path;
+  };
+  return { dir, filesDir, box, send, done: () => fs.rmSync(dir, { recursive: true, force: true }) };
+}
+
+test("a file is kept only with the message that describes it — sent first, taken up by it, handed over with it", () => {
+  const { box, send, filesDir, done } = withFiles();
+  const now = Date.now();
+  assert.equal(box.drop(BOX, "b", item(1, { at: now, file: true })), "invalid", "a file never sent: no message for it");
+  const where = send(BOX, "b", 1, Buffer.alloc(100, 7));
+  assert.equal(box.fileFor(BOX, "b", id(1)), null, "not handed over before its message comes");
+  assert.equal(box.fileHere(BOX, "b", id(1)), 100, "but known to be here, if sent again");
+  assert.equal(box.drop(BOX, "a", item(1, { at: now, file: true })), "invalid", "for the other side: not that file");
+  assert.equal(box.drop(BOX, "b", item(1, { at: now, file: true })), "new");
+  assert.equal(box.drop(BOX, "b", item(1, { at: now, file: true })), "ok", "sent again: kept once");
+  assert.deepEqual(box.take(BOX, "b").map(m => [m.id, m.file]), [[id(1), 100]]);
+  assert.deepEqual(box.fileFor(BOX, "b", id(1)), { path: where, size: 100 });
+  assert.equal(box.fileFor(BOX, "a", id(1)), null, "not the other side's");
+  assert.equal(box.fileFor(BOX, "b", "../../etc/passwd"), null);
+  assert.ok(!path.basename(where).includes(BOX.slice(1, 10)), "its name on disk says nothing of whose it is");
+  assert.equal(path.dirname(where), filesDir);
+  assert.deepEqual(box.stats().fileBytes, 100);
+  box.ack(BOX, "b", [id(1)]);
+  assert.equal(box.fileFor(BOX, "b", id(1)), null);
+  assert.equal(box.stats().fileBytes, 0);
+  return new Promise(r => setTimeout(r, 30)).then(() => {
+    assert.ok(!fs.existsSync(where), "gone from disk with its message");
+    done();
+  });
+});
+
+test("files: 25 MB each, 200 MB a mailbox, 2 GB in all — and none where there is nowhere to keep them", () => {
+  const { box, done } = withFiles();
+  assert.equal(M.createMailboxes().fileRoom(BOX, "b", 100), "off");
+  assert.equal(M.createMailboxes().filesOn, false);
+  assert.equal(box.filesOn, true);
+  assert.equal(box.fileRoom(BOX, "b", M.FILE_MAX_BYTES), "ok");
+  assert.equal(box.fileRoom(BOX, "b", M.FILE_MAX_BYTES + 1), "too-large");
+  assert.equal(box.fileRoom(BOX, "b", 27), "too-large", "smaller than any sealed file");
+  assert.equal(box.fileRoom(BOX, "b", 1.5), "too-large");
+  box.fileStored(BOX, "b", id(1), M.BOX_MAX_FILE_BYTES - 100);
+  assert.equal(box.fileRoom(BOX, "b", 100), "ok");
+  assert.equal(box.fileRoom(BOX, "b", 101), "full", "this mailbox, counting what is still coming");
+  assert.equal(box.fileRoom(BOX, "a", 101), "ok", "the other side's is its own");
+  const others = Math.ceil(M.ALL_MAX_FILE_BYTES / M.BOX_MAX_FILE_BYTES);
+  for (let i = 0; i < others; i++) box.fileStored(`~${String(i).padStart(43, "x")}`, "b", id(i), M.BOX_MAX_FILE_BYTES - 100);
+  assert.equal(box.fileRoom(`~${"z".repeat(43)}`, "b", 1000), "server-full");
+  done();
+});
+
+test("a file never described goes after ten minutes; one past its week goes with its message; one no message names goes too", async () => {
+  let now = Date.now();
+  const { box, send, filesDir, done } = withFiles(() => now);
+  const orphan = send(BOX, "b", 1, Buffer.alloc(50));
+  const kept = send(BOX, "b", 2, Buffer.alloc(60));
+  box.drop(BOX, "b", item(2, { at: now, file: true }));
+  const stray = path.join(filesDir, "f".repeat(64));
+  fs.writeFileSync(stray, "left from before a restart");
+  box.sweep();
+  await new Promise(r => setTimeout(r, 30));
+  assert.ok(fs.existsSync(orphan) && fs.existsSync(kept) && fs.existsSync(stray), "all young yet");
+  now += M.ORPHAN_MS + 1000;
+  box.sweep();
+  await new Promise(r => setTimeout(r, 30));
+  assert.ok(!fs.existsSync(orphan), "never described: gone");
+  assert.equal(box.fileHere(BOX, "b", id(1)), 0);
+  assert.ok(!fs.existsSync(stray), "named by nothing: gone");
+  assert.ok(fs.existsSync(kept), "its message still waits");
+  now += M.MAIL_TTL_MS;
+  box.sweep();
+  await new Promise(r => setTimeout(r, 30));
+  assert.ok(!fs.existsSync(kept), "a week: gone with its message");
+  assert.equal(box.stats().fileBytes, 0);
+  done();
+});
+
+test("a restart keeps each file with its message — counted again, and handed over as before", async () => {
+  const { box, send, dir, filesDir, done } = withFiles();
+  send(BOX, "b", 1, Buffer.alloc(80, 1));
+  box.drop(BOX, "b", item(1, { at: Date.now(), file: true }));
+  box.flush();
+  const again = M.createMailboxes({ file: path.join(dir, "mailbox.json"), filesDir });
+  assert.equal(again.stats().fileBytes, 80);
+  assert.equal(again.fileFor(BOX, "b", id(1)).size, 80);
+  assert.equal(M.createMailboxes({ file: path.join(dir, "mailbox.json") }).fileFor(BOX, "b", id(1)), null, "no place for files: none handed over");
+  done();
 });

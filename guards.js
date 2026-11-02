@@ -550,6 +550,33 @@
     return typeof text === "string" && text.length <= MAX_MESSAGE_CHARS;
   }
 
+  /** How many messages may wait for the link at once. */
+  const OUTBOX_MAX = 100;
+
+  /**
+   * The link is down for a moment — a phone between networks, the other side
+   * reopening the page. May a message written now wait for it, rather than
+   * not go? Only in a chat on screen that has not ended, and that has been
+   * connected once — so it is known who it is for — and not past OUTBOX_MAX.
+   *
+   * @param {{chatOpen: boolean, chatEnded: boolean, hadKey: boolean, waiting: number}} o
+   */
+  function mayQueueText(o) {
+    return Boolean(o) && o.chatOpen === true && o.chatEnded !== true && o.hadKey === true &&
+           Number.isInteger(o.waiting) && o.waiting < OUTBOX_MAX;
+  }
+
+  /**
+   * May what waited go now? Only over a key agreed again, and checked at
+   * least as well as the one it was written under: a chat that was green does
+   * not send what waited into one that is amber.
+   *
+   * @param {{ready: boolean, wasGreen: boolean, green: boolean}} o
+   */
+  function mayFlushOutbox(o) {
+    return Boolean(o) && o.ready === true && (o.wasGreen !== true || o.green === true);
+  }
+
   /**
    * What the message box shows for a draft of `length` characters: a counter
    * once the draft is near the limit, marked over once it is past it.
@@ -1400,6 +1427,16 @@
   const MAIL_SEEN_MAX   = 500;    // ids remembered per person, so none is shown twice
   const MAIL_ID = /^[A-Za-z0-9_-]{22}$/;
   const MAIL_STATES = ["sending", "kept", "refused"];
+  const MAIL_FILE_MAX = 25 * 1024 * 1024;   // a photo or file that waits: the Pi keeps this much, sealed
+
+  /** A waiting photo or file, as described in its message: a name to show, a
+      type (only ever believed as presentAs allows), its size in bytes. */
+  function mailFileValid(file) {
+    return Boolean(file) && typeof file === "object" &&
+           typeof file.name === "string" && file.name.length >= 1 && file.name.length <= 255 &&
+           typeof file.type === "string" && file.type.length <= 100 &&
+           Number.isSafeInteger(file.size) && file.size >= 0 && file.size <= MAIL_FILE_MAX;
+  }
 
   /** The other side of a saved pair. */
   function otherSide(side) {
@@ -1420,7 +1457,8 @@
     for (const [room, thread] of Object.entries(stored.threads || {})) {
       if (!SAVED_ROOM.test(room) || !thread || !Array.isArray(thread.items)) continue;
       const items = thread.items.filter(m => m && typeof m === "object" && MAIL_ID.test(m.id) && Number.isSafeInteger(m.at) &&
-        typeof m.mine === "boolean" && typeof m.text === "string" && messageFits(m.text) &&
+        typeof m.mine === "boolean" &&
+        (m.file === undefined ? typeof m.text === "string" && messageFits(m.text) : m.text === undefined && mailFileValid(m.file)) &&
         (m.mine ? MAIL_STATES.includes(m.state) : m.state === undefined));
       out.threads[room] = { read: Number.isSafeInteger(thread.read) ? thread.read : 0,
                             items: items.sort((x, y) => x.at - y.at).slice(-MAIL_THREAD_MAX) };
@@ -1437,7 +1475,8 @@
     return thread.items.filter(m => !m.mine && m.at > (thread.read || 0)).length;
   }
 
-  const MAIL_REFUSALS = Object.freeze({ "full": "mailBoxFull", "server-full": "mailServerFull", "too-many": "mailTooMany" });
+  const MAIL_REFUSALS = Object.freeze({ "full": "mailBoxFull", "server-full": "mailServerFull", "too-many": "mailTooMany",
+                                       "off": "mailFilesOff", "too-large": "mailFileTooBig", "busy": "mailTryLater" });
 
   /** Why the server would not keep a message, in our words: the key for it.
       A code this page does not know is just "not sent". */
@@ -1582,7 +1621,7 @@
     mayAcceptPeerKey, shieldState,
     CODE_MAX_ATTEMPTS, CODE_LOCK_MS, codeAttemptState, codeLockSecondsLeft, lockMinutes,
     SHOWABLE_IMAGE_TYPES, INCOMING_MAX_AT_ONCE, presentAs, droppedKind, incomingTransfer, withinDeclaredSize,
-    MAX_MESSAGE_CHARS, messageFits, draftState, enterSends,
+    MAX_MESSAGE_CHARS, messageFits, draftState, enterSends, OUTBOX_MAX, mayQueueText, mayFlushOutbox,
     isAppleTouchDevice, installOffer,
     LINK_ALIVE, serverLeaveEndsChat, linkLostForGood,
     tracksToRestart, mayFlipCamera, flipCameraOffered, mayMoveMic, micChangeAction, speakerOffered,
@@ -1594,7 +1633,7 @@
     SAVED_SECRET, SAVED_ROOM, PERSON_NAME_MAX, SAVED_PEOPLE_MAX,
     personName, savedPeople, mayOfferSave, saveOfferValid, keepTheirOffer, mayUsePlainKey,
     knockAddressValid, knockState,
-    MAIL_THREAD_MAX, MAIL_SEEN_MAX, otherSide, mailStore, mailUnread, mailRefusalKey,
+    MAIL_THREAD_MAX, MAIL_SEEN_MAX, MAIL_FILE_MAX, mailFileValid, otherSide, mailStore, mailUnread, mailRefusalKey,
     inAppBrowser, inAppAdvice, safariUrl, androidIntentUrl,
     CLEAR_TYPES, mayRenderText, mayHandleFrame,
     mayDeliverRecording, mayStartRecording, mayKeepMicOpen,

@@ -314,22 +314,74 @@
     return Uint8Array.from(atob(b64 + "=".repeat((4 - b64.length % 4) % 4)), c => c.charCodeAt(0));
   }
 
-  /** Seals `text` for the other side of the pair: { iv, ct }, both base64url. */
-  async function sealMail(key, { box, from, to, id, at, text }) {
+  /** Seals a waiting message's body for the other side of the pair — a text,
+      `{ text }`, or a file's description, `{ file: { name, type, size } }` —
+      as { iv, ct }, both base64url. */
+  async function sealMailBody(key, { box, from, to, id, at }, body) {
     const iv = globalThis.crypto.getRandomValues(new Uint8Array(12));
     const ct = await subtle.encrypt({ name: "AES-GCM", iv, additionalData: mailAad(box, from, to, id, at) },
-      key, utf8.encode(JSON.stringify({ text })));
+      key, utf8.encode(JSON.stringify(body)));
     return { iv: b64urlBytes(iv), ct: b64urlBytes(new Uint8Array(ct)) };
   }
 
-  /** The text of a waiting message, or null: not sealed with this key, or
-      not for here, from there, with this id and time — or not a text. */
-  async function openMail(key, { box, from, to, id, at, iv, ct }) {
+  /** Seals `text` for the other side of the pair: { iv, ct }, both base64url. */
+  function sealMail(key, { box, from, to, id, at, text }) {
+    return sealMailBody(key, { box, from, to, id, at }, { text });
+  }
+
+  /** A file's description, as one came: a name, a type and a size, nothing else. */
+  function fileMetaValid(file) {
+    return Boolean(file) && typeof file === "object" &&
+           typeof file.name === "string" && file.name.length > 0 && file.name.length <= 255 &&
+           typeof file.type === "string" && file.type.length <= 100 &&
+           Number.isSafeInteger(file.size) && file.size >= 0;
+  }
+
+  /** The body of a waiting message — `{ text }` or `{ file }` — or null: not
+      sealed with this key, not for here, from there, with this id and time,
+      or neither a text nor a file's description. */
+  async function openMailBody(key, { box, from, to, id, at, iv, ct }) {
     try {
       const plain = await subtle.decrypt({ name: "AES-GCM", iv: unb64url(iv), additionalData: mailAad(box, from, to, id, at) },
         key, unb64url(ct));
       const body = JSON.parse(new TextDecoder().decode(plain));
-      return body && typeof body.text === "string" ? body.text : null;
+      if (body && typeof body.text === "string") return { text: body.text };
+      if (body && fileMetaValid(body.file)) return { file: { name: body.file.name, type: body.file.type, size: body.file.size } };
+      return null;
+    } catch (_) { return null; }
+  }
+
+  /** The text of a waiting message, or null — see openMailBody. */
+  async function openMail(key, m) {
+    const body = await openMailBody(key, m);
+    return body && typeof body.text === "string" ? body.text : null;
+  }
+
+  /* A waiting message's file — a photo, a document — goes on its own, after
+     its description, as raw bytes: 12 of IV, then the sealed file. Bound to
+     the same mailbox, sides and id as the message that describes it, so it
+     opens only as that message's file. */
+  function mailFileAad(box, from, to, id) {
+    return sealData(["dc-mailfile-1", box, from, to, id]);
+  }
+
+  async function sealMailFile(key, { box, from, to, id }, bytes) {
+    const iv = globalThis.crypto.getRandomValues(new Uint8Array(12));
+    const ct = new Uint8Array(await subtle.encrypt({ name: "AES-GCM", iv, additionalData: mailFileAad(box, from, to, id) }, key, bytes));
+    const out = new Uint8Array(12 + ct.length);
+    out.set(iv, 0);
+    out.set(ct, 12);
+    return out;
+  }
+
+  /** The file's bytes, or null: not this message's file, or changed. */
+  async function openMailFile(key, { box, from, to, id }, sealed) {
+    try {
+      const all = new Uint8Array(sealed);
+      if (all.length < 12 + 16) return null;
+      const plain = await subtle.decrypt({ name: "AES-GCM", iv: all.subarray(0, 12), additionalData: mailFileAad(box, from, to, id) },
+        key, all.subarray(12));
+      return new Uint8Array(plain);
     } catch (_) { return null; }
   }
 
@@ -349,6 +401,7 @@
     compareBytes, makeSharedVerificationCode, normalizeVerifyCode,
     packChunk, unpackChunk, splitChunkBody, makeTransferId,
     SEAL_ROLES, SEAL_WINDOW, messageAad, chunkAad, confirmAad, sealWindow, takeSeal,
-    mailboxKey, mailAad, makeMailId, sealMail, openMail
+    mailboxKey, mailAad, makeMailId, sealMail, openMail, sealMailBody, openMailBody, fileMetaValid,
+    mailFileAad, sealMailFile, openMailFile
   };
 });

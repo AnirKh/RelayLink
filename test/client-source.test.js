@@ -675,7 +675,7 @@ test("the guest introduces itself first, and each side only once", () => {
      guest ready. An introduction sent then can overtake the confirmation and
      be dropped, and the guest never learns what it is talking to. */
   const fns = topLevelFunctions(withoutComments(appSrc));
-  assert.match(fns.get("e2eActivate"), /if \(!isHost\) \{ sendPeerInfo\(\); shareKnockAddress\(\); \}/,
+  assert.match(fns.get("e2eActivate"), /if \(!isHost\) \{ sendPeerInfo\(\); shareKnockAddress\(\); flushOutbox\(\); \}/,
     "and where to knock for it, the same way");
 
   const send = fns.get("sendPeerInfo");
@@ -818,5 +818,5 @@ test("the host keeps the chat on screen when the guest's link moves to another b
     "the old channel is let go of quietly before the new connection");
   assert.ok(block.indexOf("switchToChat(") < block.indexOf('t("guestReopened")'), "said after the screen is set up, so it is not cleared");
   const sw = topLevelFunctions(withoutComments(appSrc)).get("switchToChat");
-  assert.match(sw, /if \(!keepMessages\) \{\s*\n\s*savedInChat = null;\s*\n\s*closeReactionBar\(\);\s*\n\s*chatMessages\.replaceChildren\(\);/);
+  assert.match(sw, /if \(!keepMessages\) \{\s*\n\s*savedInChat = null;[\s\S]*?closeReactionBar\(\);\s*\n\s*chatMessages\.replaceChildren\(\);/);
 });

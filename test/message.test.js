@@ -59,14 +59,24 @@ function element(tag = "div") {
     removeAttribute: k => { delete el.attrs[k]; },
     appendChild: child => { el.children.push(child); child.remove = () => { el.children.splice(el.children.indexOf(child), 1); }; return child; },
     get childElementCount() { return el.children.length; },
-    get firstElementChild() { return el.children[0]; }
+    get firstElementChild() { return el.children[0]; },
+    /* ".name" only: enough for the bubbles' parts. */
+    querySelector: sel => {
+      const cls = sel.replace(/^\./, "");
+      const walk = n => { for (const c of n.children || []) { if (c.classList && c.classList.contains(cls)) return c; const f = walk(c); if (f) return f; } return null; };
+      return walk(el);
+    },
+    get className() { return [...classes].join(" ") || el._className || ""; },
+    set className(v) { classes.clear(); String(v).split(/\s+/).filter(Boolean).forEach(c => classes.add(c)); }
   };
   return el;
 }
 
 /** One side's chat, with the real functions and stand-in surroundings. */
-function chat({ sendThrows = false, lang = "en" } = {}) {
-  const log = { sent: [], bubbles: [], sys: [], toasts: [], acks: [], noticed: 0, reactable: [], sealedAs: [], openedAs: [] };
+function chat({ sendThrows = false, lang = "en", linkUp = true, hadKey = false, wasGreen = false, secure = true, verified = false, peer = null } = {}) {
+  const log = { sent: [], bubbles: [], sys: [], toasts: [], acks: [], noticed: 0, reactable: [], sealedAs: [], openedAs: [], mailed: [] };
+  const link = { up: linkUp, throws: sendThrows };
+  const sendBtn = { disabled: true };
   const aadOf = aad => JSON.parse(new TextDecoder().decode(aad));
   const messageInput   = element("textarea");
   const messageCounter = element();
@@ -78,38 +88,50 @@ function chat({ sendThrows = false, lang = "en" } = {}) {
     console: { warn() {}, error() {}, log() {} },
     document: { createElement: element, createTextNode: text => ({ text, textContent: text }) },
     messageInput, messageCounter, srAnnouncer, chatMessages,
-    dcReady: () => true, e2eReady: true,
+    dcReady: () => link.up,
     DC, myRole: () => "g", peerRole: () => "h",
     e2eEncrypt: async (text, aad) => { log.sealedAs.push(aadOf(aad)); return { ct: `sealed(${text.length})`, iv: "iv" }; },
     e2eDecrypt: async (ct, iv, aad) => { log.openedAs.push(aadOf(aad)); return ct; },   // the "ciphertext" is the text itself here
-    dataChannel: { send: json => { if (sendThrows) throw new Error("channel closed"); log.sent.push(JSON.parse(json)); } },
+    dataChannel: { send: json => { if (link.throws) throw new Error("channel closed"); log.sent.push(JSON.parse(json)); } },
     dcSend: obj => { if (obj.type === "ack") log.acks.push(obj.msgId); },
     showToast: msg => log.toasts.push(msg),
-    addAckTick() {}, pendingAcks: {}, now: () => "12:00", scrollBottom() {},
+    addAckTick(row, msgId) { const tick = element("span"); tick.className = "ack-tick sent"; tick.textContent = "✓"; tick.msgId = msgId; row.appendChild(tick); },
+    pendingAcks: {}, sentText: new WeakMap(), now: () => "12:00", scrollBottom() {},
+    /* The peer connection, as far as these ask: sound while the link is up. */
+    pc: { get connectionState() { return link.up ? "connected" : "disconnected"; } },
     noticeArrival: () => { log.noticed++; },
-    markReactable: (row, key) => { log.reactable.push({ who: row.className, key }); }
+    markReactable: (row, key) => { log.reactable.push({ who: row.className.replace(" waiting", ""), key }); },
+    chatScreen: element(), sendBtn,
+    people: peer ? [peer] : [], knockPeer: () => peer,
+    sendMail: async (p, text) => { log.mailed.push([p.name, text]); }
   };
   const names = Object.keys(env);
-  const api = new Function(...names, `
+  const api = new Function(...names, "start", `
     let msgIdCounter = 0, e2eSendSeq = 0, e2eRecvSeen = DC.sealWindow(), autoN = 0;
-    ${["announce", "fillMessage", "appendBubble", "appendSys", "updateMessageCounter", "sendTextMessage"].map(fn).join("\n")}
+    let e2eReady = start.ready, e2eSecureMode = start.secure, e2eVerified = start.verified;
+    let outbox = [], chatHadKey = start.hadKey, chatWasGreen = start.wasGreen;
+    ${["announce", "fillMessage", "appendBubble", "appendSys", "updateMessageCounter", "sendTextMessage", "clearMessageBox",
+       "sendSealedText", "chatEndedNow", "canQueue", "drawSendButton", "queueText", "setWaitMark", "flushOutbox", "settleOutbox", "takeBackUnsent"].map(fn).join("\n")}
     /* A frame without a number is given the next one, as the other side would. */
     function deliver(data) { if (data.n === undefined) data = { ...data, n: ++autoN }; switch (data.type) {\n${textCase}\n} }
-    return { sendTextMessage, updateMessageCounter, announce, appendBubble, appendSys, deliver };
-  `)(...names.map(n => env[n]));
+    return { sendTextMessage, updateMessageCounter, announce, appendBubble, appendSys, deliver, flushOutbox, settleOutbox, drawSendButton, takeBackUnsent,
+             waiting: () => outbox.length,
+             set: o => { if ("ready" in o) e2eReady = o.ready; if ("verified" in o) e2eVerified = o.verified; if ("secure" in o) e2eSecureMode = o.secure; } };
+  `)(...names.map(n => env[n]), { ready: linkUp, secure, verified, hadKey, wasGreen });
+  api.link = link;
 
   const type = text => { messageInput.value = text; api.updateMessageCounter(); };
-  const bubbles = who => chatMessages.children.filter(r => r.className === `bubble-row ${who}`)
-                                              .map(r => r.children[0].textContent);
+  const rowsOf = who => chatMessages.children.filter(r => r.classList.contains("bubble-row") && r.classList.contains(who));
+  const bubbles = who => rowsOf(who).map(r => r.children[0].textContent);
   /* A bubble as its parts: words, and links with where they go. */
-  const parts = who => chatMessages.children.filter(r => r.className === `bubble-row ${who}`).map(r => {
+  const parts = who => rowsOf(who).map(r => {
     const b = r.children[0];
     if (!b.children.length) return [b.textContent];
     return b.children.map(c => (c.tag === "a" ? { link: c.textContent, href: c.href, target: c.target, rel: c.rel, title: c.title } : c.text));
   });
   const sys = () => chatMessages.children.filter(r => r.className === "sys-msg").map(r => r.textContent);
   const heard = () => srAnnouncer.children.map(c => c.textContent);
-  return { ...api, log, type, bubbles, parts, sys, heard, messageInput, messageCounter };
+  return { ...api, log, type, bubbles, parts, sys, heard, messageInput, messageCounter, rowsOf, chatMessages, sendBtn, pendingAcks: env.pendingAcks };
 }
 
 /* ══════════════════════════════════════════
@@ -441,4 +463,223 @@ test("the page carries the read-out region and the counter, hidden from view", (
   assert.match(read("style.css"), /\.sr-only\s*\{[^}]*clip:\s*rect\(0,\s*0,\s*0,\s*0\)/);
   assert.match(html, /<textarea id="messageInput"[^>]*aria-describedby="messageCounter"/);
   assert.match(html, /<div id="messageCounter" class="message-counter hidden">/);
+});
+
+/* ══════════════════════════════════════════
+   Messages that wait for the link
+══════════════════════════════════════════ */
+
+const waitMark = row => { const t = row.querySelector(".ack-tick"); return t && t.textContent; };
+
+test("when may a message wait, and when may what waited go", () => {
+  const ok = { chatOpen: true, chatEnded: false, hadKey: true, waiting: 0 };
+  assert.equal(G.mayQueueText(ok), true);
+  assert.equal(G.mayQueueText({ ...ok, hadKey: false }), false, "never connected: nobody known to send it to");
+  assert.equal(G.mayQueueText({ ...ok, chatEnded: true }), false, "the chat is over");
+  assert.equal(G.mayQueueText({ ...ok, chatOpen: false }), false);
+  assert.equal(G.mayQueueText({ ...ok, waiting: G.OUTBOX_MAX - 1 }), true);
+  assert.equal(G.mayQueueText({ ...ok, waiting: G.OUTBOX_MAX }), false, "a hundred at most");
+  assert.equal(G.mayQueueText(null), false);
+  assert.equal(G.mayFlushOutbox({ ready: true, wasGreen: false, green: false }), true);
+  assert.equal(G.mayFlushOutbox({ ready: true, wasGreen: true, green: true }), true);
+  assert.equal(G.mayFlushOutbox({ ready: true, wasGreen: true, green: false }), false, "not from a checked chat into an unchecked link");
+  assert.equal(G.mayFlushOutbox({ ready: false, wasGreen: false, green: false }), false);
+});
+
+test("the link down for a moment: the message waits — shown at once with ⏳, the box cleared, nothing sent", async () => {
+  const c = chat({ linkUp: false, hadKey: true });
+  c.type("on my way");
+  await c.sendTextMessage();
+  assert.deepEqual(c.log.sent, []);
+  assert.deepEqual(c.bubbles("me"), ["on my way"]);
+  assert.ok(c.rowsOf("me")[0].classList.contains("waiting"));
+  assert.equal(waitMark(c.rowsOf("me")[0]), "⏳");
+  assert.equal(c.messageInput.value, "");
+  assert.equal(c.waiting(), 1);
+});
+
+test("a chat never connected yet: nothing waits — the text stays in the box, as before", async () => {
+  const c = chat({ linkUp: false, hadKey: false });
+  c.type("hello?");
+  await c.sendTextMessage();
+  assert.deepEqual(c.bubbles("me"), []);
+  assert.equal(c.messageInput.value, "hello?");
+  assert.equal(c.waiting(), 0);
+});
+
+test("the link back and the key agreed: what waited goes, in order, sealed only now — and gets its tick", async () => {
+  const c = chat({ linkUp: false, hadKey: true });
+  for (const text of ["one", "two", "three"]) { c.type(text); await c.sendTextMessage(); }
+  c.link.up = true;
+  c.set({ ready: true });
+  await c.flushOutbox();
+  assert.deepEqual(c.log.sent.map(m => [m.ct, m.n]), [["sealed(3)", 1], ["sealed(3)", 2], ["sealed(5)", 3]]);
+  assert.deepEqual(c.log.sealedAs.map(a => a[2]), [1, 2, 3], "numbered as they went, under the key agreed then");
+  assert.deepEqual(c.bubbles("me"), ["one", "two", "three"], "the same bubbles — not new ones");
+  for (const row of c.rowsOf("me")) {
+    assert.ok(!row.classList.contains("waiting"));
+    assert.equal(waitMark(row), "✓");
+  }
+  assert.equal(c.log.reactable.length, 3);
+  assert.equal(c.waiting(), 0);
+});
+
+test("a send that fails as it goes waits instead, if it may", async () => {
+  const c = chat({ sendThrows: true, hadKey: true });
+  c.type("hello");
+  await c.sendTextMessage();
+  assert.deepEqual(c.log.toasts, [], "not 'not sent'");
+  assert.equal(c.waiting(), 1);
+  assert.equal(c.messageInput.value, "");
+  c.link.throws = false;
+  await c.flushOutbox();
+  assert.equal(c.log.sent.length, 1);
+});
+
+test("one that fails while what waited goes puts itself and the rest back, in order", async () => {
+  const c = chat({ linkUp: false, hadKey: true });
+  for (const text of ["a", "b"]) { c.type(text); await c.sendTextMessage(); }
+  c.link.up = true;
+  c.link.throws = true;
+  c.set({ ready: true });
+  await c.flushOutbox();
+  assert.equal(c.waiting(), 2);
+  c.link.throws = false;
+  await c.flushOutbox();
+  assert.deepEqual(c.log.sent.map(m => m.ct), ["sealed(1)", "sealed(1)"]);
+  assert.equal(c.waiting(), 0);
+});
+
+test("a chat that was checked does not send what waited into an unchecked link — only once checked again", async () => {
+  const c = chat({ linkUp: false, hadKey: true, wasGreen: true });
+  c.type("private");
+  await c.sendTextMessage();
+  c.link.up = true;
+  c.set({ ready: true, secure: false, verified: false });
+  await c.flushOutbox();
+  assert.deepEqual(c.log.sent, [], "amber now: it keeps waiting");
+  c.set({ verified: true });
+  await c.flushOutbox();
+  assert.equal(c.log.sent.length, 1);
+});
+
+test("the chat ends with messages waiting: to someone saved they go as waiting messages, and it is said", async () => {
+  const anu = { name: "Anu", room: `~${"r".repeat(43)}` };
+  const c = chat({ linkUp: false, hadKey: true, peer: anu });
+  for (const text of ["see you", "at 6"]) { c.type(text); await c.sendTextMessage(); }
+  c.settleOutbox();
+  await new Promise(r => setImmediate(r));
+  assert.deepEqual(c.log.mailed, [["Anu", "see you"], ["Anu", "at 6"]]);
+  assert.deepEqual(c.sys(), [I18N.en.outboxMailed("Anu")]);
+  assert.ok(c.rowsOf("me").every(r => waitMark(r) === "✉"));
+  assert.equal(c.waiting(), 0);
+  c.settleOutbox();
+  assert.equal(c.sys().length, 1, "said once");
+});
+
+test("the chat ends with messages waiting, with someone not saved: marked not sent, and said", async () => {
+  const c = chat({ linkUp: false, hadKey: true });
+  c.type("hello");
+  await c.sendTextMessage();
+  c.settleOutbox();
+  assert.deepEqual(c.log.mailed, []);
+  assert.deepEqual(c.sys(), [I18N.en.outboxNotSent]);
+  assert.equal(waitMark(c.rowsOf("me")[0]), "✕");
+});
+
+test("the send button stays on while a message may wait, and goes off when it may not", async () => {
+  const waiting = chat({ linkUp: false, hadKey: true });
+  waiting.drawSendButton();
+  assert.equal(waiting.sendBtn.disabled, false, "the link down, the chat alive: a message may wait");
+  const fresh = chat({ linkUp: false, hadKey: false });
+  fresh.drawSendButton();
+  assert.equal(fresh.sendBtn.disabled, true, "never connected");
+  const live = chat({ linkUp: true });
+  live.drawSendButton();
+  assert.equal(live.sendBtn.disabled, false);
+  const ended = chat({ linkUp: false, hadKey: true });
+  const over = { classList: { contains: c => c === "reconnect-sys-wrap" }, children: [] };
+  ended.chatMessages.appendChild(over);
+  ended.drawSendButton();
+  assert.equal(ended.sendBtn.disabled, true, "the chat is over");
+});
+
+test("the wiring: what waited goes as the other side starts listening; a chat ending or left settles it; a new chat starts empty", () => {
+  const app = read("app.js");
+  assert.match(fn("e2eActivate"), /chatHadKey\s*= true;/);
+  assert.match(fn("e2eActivate"), /if \(!isHost\) \{ sendPeerInfo\(\); shareKnockAddress\(\); flushOutbox\(\); \}/);
+  assert.match(app, /if \(isHost\) \{ shareKnockAddress\(\); flushOutbox\(\); \}/);
+  assert.match(fn("showReconnectButton"), /settleOutbox\(\);/);
+  const leave = app.slice(app.indexOf("leaveBtn.onclick = (e) => {"), app.indexOf("\n};", app.indexOf("leaveBtn.onclick = (e) => {")));
+  assert.match(leave, /settleOutbox\(\);/);
+  assert.ok(leave.indexOf("settleOutbox()") < leave.indexOf("meeting = null"), "settled while it is still known who it was for");
+  assert.match(fn("switchToChat"), /outbox = \[\];[\s\S]*?chatHadKey = false;[\s\S]*?chatWasGreen = false;/);
+  assert.match(fn("switchToChat"), /drawSendButton\(\);/);
+  assert.match(fn("closePeerConnection"), /drawSendButton\(\);/);
+  assert.match(fn("updateShield"), /if \(state === "ok"\) chatWasGreen = true;/);
+});
+
+test("sent into a link already gone and never confirmed: back in line when a new link comes — ahead of what waited since", async () => {
+  const c = chat({ hadKey: true });
+  for (const text of ["one", "two", "three"]) { c.type(text); await c.sendTextMessage(); }
+  delete c.pendingAcks[c.log.sent[0].msgId];               // "one" was confirmed
+  c.link.up = false;                                        // the other side's page closed; only now is it known
+  c.type("four");
+  await c.sendTextMessage();
+  c.takeBackUnsent();                                       // a new link: e2eActivate
+  assert.deepEqual(c.rowsOf("me").map(waitMark), ["✓", "⏳", "⏳", "⏳"]);
+  assert.ok(!c.rowsOf("me")[0].classList.contains("waiting"), "the confirmed one is left be");
+  c.link.up = true;
+  c.set({ ready: true });
+  c.log.sent.length = 0;
+  await c.flushOutbox();
+  assert.deepEqual(c.log.sent.map(m => m.ct), ["sealed(3)", "sealed(5)", "sealed(4)"], "two, three, then four");
+  assert.deepEqual(c.bubbles("me"), ["one", "two", "three", "four"], "the same bubbles, not new ones");
+  assert.deepEqual(c.rowsOf("me").map(waitMark), ["✓", "✓", "✓", "✓"]);
+  c.takeBackUnsent();
+  assert.equal(c.waiting(), 3, "still unconfirmed on this link too: they would go once more on the next");
+  c.takeBackUnsent();
+  assert.equal(c.waiting(), 3, "each once");
+});
+
+test("the chat ends over a link already gone: what was never confirmed goes to someone saved as waiting messages", async () => {
+  const anu = { name: "Anu", room: `~${"r".repeat(43)}` };
+  const c = chat({ hadKey: true, peer: anu });
+  for (const text of ["are you there?", "hello?"]) { c.type(text); await c.sendTextMessage(); }
+  delete c.pendingAcks[c.log.sent[0].msgId];
+  c.link.up = false;
+  c.settleOutbox();
+  await new Promise(r => setImmediate(r));
+  assert.deepEqual(c.log.mailed, [["Anu", "hello?"]], "only the one never confirmed");
+  assert.deepEqual(c.rowsOf("me").map(waitMark), ["✓", "✉"]);
+  assert.deepEqual(c.sys(), [I18N.en.outboxMailed("Anu")]);
+  const someone = chat({ hadKey: true });
+  someone.type("hi");
+  await someone.sendTextMessage();
+  someone.link.up = false;
+  someone.settleOutbox();
+  assert.equal(waitMark(someone.rowsOf("me")[0]), "✕", "with someone not saved: marked not sent, never left on ✓");
+});
+
+test("leaving with the link still sound takes nothing back — what was just sent has arrived, its ✓✓ not back yet", async () => {
+  const anu = { name: "Anu", room: `~${"r".repeat(43)}` };
+  const c = chat({ hadKey: true, peer: anu });
+  c.type("bye!");
+  await c.sendTextMessage();
+  c.settleOutbox();
+  await new Promise(r => setImmediate(r));
+  assert.deepEqual(c.log.mailed, []);
+  assert.deepEqual(c.sys(), []);
+  assert.equal(waitMark(c.rowsOf("me")[0]), "✓");
+});
+
+test("the wiring: a new link takes back what the last never confirmed; an ended chat leaves that to settleOutbox; a new chat forgets it", () => {
+  const app = read("app.js");
+  assert.match(fn("e2eActivate"), /chatHadKey\s*= true;\s*\n\s*takeBackUnsent\(\);/);
+  assert.match(fn("sendSealedText"), /pendingAcks\[msgId\] = row;\s*\n\s*sentText\.set\(row, text\);/);
+  const onclose = app.slice(app.indexOf("dataChannel.onclose = () => {"), app.indexOf("dataChannel.onerror"));
+  assert.doesNotMatch(onclose, /delete pendingAcks/, "not cleared before showReconnectButton settles them");
+  assert.match(onclose, /showReconnectButton\(\);\s*\n\s*\};/);
+  assert.match(fn("settleOutbox"), /if \(!\(dcReady\(\) && pc && pc\.connectionState === "connected"\)\) takeBackUnsent\(\);/);
+  assert.match(fn("switchToChat"), /outbox = \[\];[^\n]*\n\s*for \(const k of Object\.keys\(pendingAcks\)\) delete pendingAcks\[k\];/);
 });

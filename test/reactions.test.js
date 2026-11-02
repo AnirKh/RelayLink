@@ -384,7 +384,7 @@ test("closed by a touch elsewhere, Esc, or the chat scrolling", () => {
 ══════════════════════════════════════════ */
 
 test("every message both sides can name is made reactable — texts both ways, files both ways", () => {
-  assert.match(fn("sendTextMessage"), /markReactable\(row, G\.reactionKey\("text", msgId\)\);/);
+  assert.match(fn("sendSealedText"), /markReactable\(row, G\.reactionKey\("text", msgId\)\);/, "sent now, or after waiting for the link");
   assert.match(between('    case "text":', '    case "e2e-pubkey":'), /markReactable\(appendBubble\("peer", plain\), G\.reactionKey\("text", data\.msgId\)\);/);
   assert.match(fn("sendBinary"), /attachSendProgress\(id\);\s*\n\s*markReactable\(findTransferRow\(id\), G\.reactionKey\("file", id\)\);/);
   assert.match(fn("handleTransferMeta"), /markReactable\(findTransferRow\(data\.id\), G\.reactionKey\("file", data\.id\)\);/);

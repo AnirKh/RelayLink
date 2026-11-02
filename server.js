@@ -64,6 +64,7 @@ const http       = require("http");
 const crypto     = require("crypto");
 const path       = require("path");
 const fs         = require("fs");
+const { pipeline, Transform } = require("stream");
 const WebSocket  = require("ws");
 const multer     = require("multer");
 const { Resend } = require("resend");
@@ -87,10 +88,13 @@ const KNOCK_TEST_ORIGIN = process.env.KNOCK_TEST_ORIGIN || null;
    file in MAILBOX_DIR, or the directory systemd gives the service
    (STATE_DIRECTORY, on the Pi), so a restart loses none; in memory only
    without either. */
-const { createMailboxes } = require("./mailbox");
+const { createMailboxes, fileAddressValid, FILE_MAX_BYTES: MAIL_FILE_MAX_BYTES } = require("./mailbox");
 const MAILBOX_DIR = process.env.MAILBOX_DIR || (process.env.STATE_DIRECTORY || "").split(":")[0] || null;
-const mail = createMailboxes({ file: MAILBOX_DIR ? path.join(MAILBOX_DIR, "mailbox.json") : null });
-setInterval(() => mail.sweep(), 60 * 60 * 1000).unref();
+/* Photos and files, too — sealed the same way, kept on disk beside it, one
+   file each; none without a directory to keep them in. */
+const mail = createMailboxes({ file: MAILBOX_DIR ? path.join(MAILBOX_DIR, "mailbox.json") : null,
+                               filesDir: MAILBOX_DIR ? path.join(MAILBOX_DIR, "files") : null });
+setInterval(() => mail.sweep(), 5 * 60 * 1000).unref();
 /* Stopping — every update restarts the server — keeps what waits first. */
 for (const signal of ["SIGTERM", "SIGINT"]) process.on(signal, () => { mail.flush(); process.exit(0); });
 
@@ -128,6 +132,9 @@ const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || DEFAULT_ALLOWED_ORIGINS.
   .filter(Boolean);
 
 const API_CLIENT_HEADER = "x-dc-client";
+/* Which waiting file, "box:side:id" — and ":size" when sending one. In a
+   header, not the address: an address can be written down along the way. */
+const MAIL_FILE_HEADER = "x-dc-mail";
 const API_CLIENT_VALUE  = "1";
 
 /* Which build of the client this server shipped with. Read out of app.js, which
@@ -265,7 +272,7 @@ app.use((req, res, next) => {
     res.setHeader("Access-Control-Allow-Origin", origin);
     res.setHeader("Vary", "Origin");
   }
-  res.setHeader("Access-Control-Allow-Headers", `Content-Type, ${API_CLIENT_HEADER}`);
+  res.setHeader("Access-Control-Allow-Headers", `Content-Type, ${API_CLIENT_HEADER}, ${MAIL_FILE_HEADER}`);
   res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
   if (req.method === "OPTIONS") return res.sendStatus(204);
   next();
@@ -289,7 +296,9 @@ app.get("/api/ping", (req, res) => res.json({
   maxLeaveAttachBytes: LEAVE_MESSAGE_MAX_FILE_BYTES,
   /* The public half of the knock keys, for a browser to subscribe with —
      null when this server sends no knocks. */
-  knockKey: KNOCK_KEYS ? KNOCK_KEYS.publicKey : null
+  knockKey: KNOCK_KEYS ? KNOCK_KEYS.publicKey : null,
+  /* Whether a photo or file can wait here for someone away, and how big. */
+  mailFileMaxBytes: mail.filesOn ? MAIL_FILE_MAX_BYTES : 0
 }));
 
 /* ══════════════════════════════════════════════
@@ -465,6 +474,89 @@ app.post("/api/send-message",
     res.status(500).json({ error: "Failed to send email", code: "send-failed" });
   }
 }));
+
+/* ══════════════════════════════════════════════
+   /api/mailbox/file — a photo or file that waits
+══════════════════════════════════════════════
+
+   A waiting message can be a photo or a file (see mailbox.js). The device
+   seals it (protocol.js, sealMailFile), sends it here first, then the
+   message that describes it over the link, as any other (mail-drop, with
+   `file: true`). The other device fetches it when it takes that message, and
+   it goes with the message once they say they have it.
+
+   Named by the pair's mailbox, the side it is for and the message's id, in
+   MAIL_FILE_HEADER — knowing the room name is the way in, as for meeting and
+   for messages. The
+   bytes are sealed: whoever holds the name could fill the mailbox, not read
+   it. Written straight to disk as they come, never held in memory, and
+   counted: one that is longer than it said is cut off. */
+const MAIL_FILE_WINDOW_MS = 10 * 60 * 1000;
+const MAIL_FILE_PUT_MAX   = 40;
+const MAIL_FILE_GET_MAX   = 200;
+const MAIL_FILES_AT_ONCE  = 3;
+const mailFilePutHits = new Map();
+const mailFileGetHits = new Map();
+const mailFilesComing = new Set();   // `${box}:${to}:${id}` being written now
+setInterval(() => {
+  pruneExpired(mailFilePutHits, MAIL_FILE_WINDOW_MS);
+  pruneExpired(mailFileGetHits, MAIL_FILE_WINDOW_MS);
+}, 60_000).unref();
+
+/** "box:side:id[:size]", as MAIL_FILE_HEADER says it. */
+function mailFileNamed(req) {
+  const [box, side, id, size] = String(req.headers[MAIL_FILE_HEADER] || "").split(":");
+  return { box, side, id, size: size === undefined ? NaN : Number(size) };
+}
+
+app.post("/api/mailbox/file", requireClientHeader, (req, res) => {
+  const { box, side: to, id, size } = mailFileNamed(req);
+  const refuse = (status, code) => { if (!res.headersSent) res.status(status).json({ code }); };
+  if (!fileAddressValid(box, to, id) || !Number.isSafeInteger(size)) return refuse(400, "invalid");
+  if (req.headers["content-length"] !== undefined && Number(req.headers["content-length"]) !== size) return refuse(400, "invalid");
+  const here = mail.fileHere(box, to, id);
+  if (here) return here === size ? res.json({ ok: true }) : refuse(409, "invalid");   // sent before the answer was lost
+  const room = mail.fileRoom(box, to, size);
+  if (room !== "ok") return refuse({ "off": 503, "too-large": 413 }[room] || 507, room);
+  if (!slidingAllow(mailFilePutHits, getClientIp(req), MAIL_FILE_PUT_MAX, MAIL_FILE_WINDOW_MS)) return refuse(429, "too-many");
+  const coming = `${box}:${to}:${id}`;
+  if (mailFilesComing.size >= MAIL_FILES_AT_ONCE || mailFilesComing.has(coming)) {
+    res.setHeader("Retry-After", "10");
+    return refuse(503, "busy");
+  }
+  mailFilesComing.add(coming);
+  const target = mail.fileTarget(box, to, id);
+  let got = 0;
+  const count = new Transform({
+    transform(chunk, _enc, done) {
+      got += chunk.length;
+      done(got > size ? Object.assign(new Error("longer than it said"), { code: "too-long" }) : null, chunk);
+    }
+  });
+  pipeline(req, count, fs.createWriteStream(target.part, { mode: 0o600 }), err => {
+    const fail = (status, code) => { mailFilesComing.delete(coming); fs.rm(target.part, { force: true }, () => {}); refuse(status, code); };
+    if (err || got !== size) return fail(err && err.code === "too-long" ? 413 : 400, "upload-failed");
+    fs.rename(target.part, target.path, renameErr => {
+      if (renameErr) return fail(500, "upload-failed");
+      mailFilesComing.delete(coming);
+      mail.fileStored(box, to, id, size);
+      res.json({ ok: true });
+    });
+  });
+});
+
+app.get("/api/mailbox/file", requireClientHeader, (req, res) => {
+  if (!slidingAllow(mailFileGetHits, getClientIp(req), MAIL_FILE_GET_MAX, MAIL_FILE_WINDOW_MS)) {
+    return res.status(429).json({ code: "too-many" });
+  }
+  const { box, side, id } = mailFileNamed(req);
+  const found = mail.fileFor(box, side, id);
+  if (!found) return res.status(404).json({ code: "gone" });
+  res.setHeader("Content-Type", "application/octet-stream");
+  res.setHeader("Content-Length", String(found.size));
+  res.setHeader("Cache-Control", "no-store");
+  pipeline(fs.createReadStream(found.path), res, () => {});
+});
 
 app.use((err, req, res, next) => {
   if (err instanceof multer.MulterError) {
@@ -1365,7 +1457,7 @@ wss.on("connection", (ws, req) => {
         const { box, to, id, at, iv, ct } = data;
         const refuse = code => ws.send(JSON.stringify({ type: "mail-refused", id: typeof id === "string" ? id.slice(0, 32) : null, code }));
         if (!slidingAllow(mailDropHits, clientIp, MAIL_DROP_MAX, MAIL_DROP_WINDOW_MS)) { refuse("too-many"); break; }
-        const result = mail.drop(box, to, { id, at, iv, ct });
+        const result = mail.drop(box, to, { id, at, iv, ct, file: data.file === true });   // a photo or file: sent first, see /api/mailbox/file
         if (result === "invalid" || result === "full" || result === "server-full") { refuse(result); break; }
         ws.send(JSON.stringify({ type: "mail-dropped", id }));
         if (result !== "new") break;                       // sent again: told already

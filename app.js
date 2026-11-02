@@ -27,7 +27,7 @@
 
    APP_BUILD is written by tools/sync-build.js and by nothing else.
 ══════════════════════════════════════════════ */
-const APP_BUILD = "202611010922-98ff500a";
+const APP_BUILD = "202611020212-7972deef";
 
 function refuseToRunInAStalePage() {
   let builtFor = null;
@@ -267,6 +267,8 @@ const mailInput      = document.getElementById("mailInput");
 const mailSendBtn    = document.getElementById("mailSendBtn");
 const mailCloseBtn   = document.getElementById("mailCloseBtn");
 const mailClearBtn   = document.getElementById("mailClearBtn");
+const mailAttachBtn  = document.getElementById("mailAttachBtn");
+const mailFileInput  = document.getElementById("mailFileInput");
 
 /* ── State ───────────────────────────────────── */
 let ws              = null;
@@ -294,6 +296,11 @@ let voiceOpening    = false;  // the mic is being opened — a second press must
 
 let statsInterval   = null;
 let msgIdCounter    = 0;
+/* Messages that wait for the link — see "MESSAGES THAT WAIT". */
+let outbox          = [];      // [{ text, row }] written while the link was down, in order
+let chatHadKey      = false;   // this chat has been connected: a message may wait for it
+let chatWasGreen    = false;   // and was checked then: what waits goes only over a checked link
+const sentText      = new WeakMap();   // a sent message's row → its text, until confirmed (pendingAcks)
 const pendingAcks   = {};
 let typingTimeout   = null;
 let peerTyping      = false;
@@ -608,8 +615,9 @@ function incomingRingTimedOut() {
    Shown in chat when the peer disconnects.    */
 function showReconnectButton() {
   /* Shown whenever a chat has ended, however it ended: nothing left to keep
-     the screen on for. */
+     the screen on for — and what waited for the link has nothing to wait for. */
   keepScreenOn(false);
+  settleOutbox();
   /* The channel closing and the server's notice can both arrive for one
      ending; one button is enough. */
   if (chatMessages.querySelector(".reconnect-sys-wrap")) return;
@@ -777,6 +785,8 @@ function e2eActivate(key, secure) {
   e2eReady      = true;
   e2eSecureMode = secure;
   e2eVerified   = secure;   // the link secret already proves there is no middleman
+  chatHadKey    = true;
+  takeBackUnsent();         // a new link: what the last one never confirmed goes again
   sendBtn.disabled      = false;
   voiceCallBtn.disabled = false;
   videoCallBtn.disabled = false;
@@ -799,8 +809,9 @@ function e2eActivate(key, secure) {
      has sent the confirmation that makes the guest ready, and an envelope that
      overtook the confirmation would be dropped on arrival — the guest would
      never learn what it is talking to. The guest only gets here because the
-     host is already listening. Where to knock for us goes the same way. */
-  if (!isHost) { sendPeerInfo(); shareKnockAddress(); }
+     host is already listening. Where to knock for us goes the same way, and
+     so does whatever waited for the link. */
+  if (!isHost) { sendPeerInfo(); shareKnockAddress(); flushOutbox(); }
 }
 
 /** Tells the other side which system and browser this is — once per channel,
@@ -1176,6 +1187,8 @@ function wakeServer() {
       }
       /* The server sends knocks: the alerts switch can show. */
       if (j && typeof j.knockKey === "string" && /^B[A-Za-z0-9_-]{86}$/.test(j.knockKey)) knockKeyArrived(j.knockKey);
+      /* How big a photo or file may wait there — none, on a server with nowhere to keep them. */
+      if (j && Number.isSafeInteger(j.mailFileMaxBytes)) mailFileMaxBytes = Math.max(0, Math.min(j.mailFileMaxBytes - 28, G.MAIL_FILE_MAX));
     })
     .catch(() => {})
     .finally(() => {
@@ -2481,6 +2494,7 @@ function forgetPerson(p) {
   delete mailStore.threads[p.room];
   delete mailStore.seen[p.room];
   storeMail();
+  forgetMailFiles(p.room);
   if (mailOpenFor === p.room) closeThread();
   drawPeople();
   renewKnockAddress(p);
@@ -2855,7 +2869,9 @@ if (knockSupported) {
    open hears of a new one at once; whoever has alerts on and is away is
    told "Anu sent you a message". Each conversation is kept on this device
    only, up to G.MAIL_THREAD_MAX messages, and goes when the person is
-   forgotten or it is cleared.                                              */
+   forgotten or it is cleared.
+
+   A photo or file can wait too — see "Photos and files" below.             */
 const MAIL_KEY = "dc-mail";
 const mailKeys = new Map();              // room → the pair's key, worked out once
 
@@ -2923,7 +2939,7 @@ async function sendMail(p, text) {
     can tell them a message waits. */
 function dropMail(p, item) {
   wsSend({ type: "mail-drop", box: p.room, to: G.otherSide(p.side), id: item.id, at: item.at, iv: item.iv, ct: item.ct,
-           ...(p.knock ? { knock: p.knock } : {}) });
+           ...(item.file ? { file: true } : {}), ...(p.knock ? { knock: p.knock } : {}) });
 }
 
 /** Each time the link comes up: ours the server has not said it kept, again
@@ -2934,7 +2950,9 @@ function mailAtConnect() {
   if (waitingForUs.size) { waitingForUs.clear(); drawPeople(); }
   for (const p of people) {
     for (const item of (mailStore.threads[p.room] || { items: [] }).items) {
-      if (item.mine && item.state === "sending" && item.iv && item.ct) dropMail(p, item);
+      if (item.mine && item.state === "sending" && item.iv && item.ct) {
+        if (item.file) queueMailFile(p, item); else dropMail(p, item);   // a file: sent first, again
+      }
     }
   }
   fetchMail();
@@ -2974,11 +2992,27 @@ async function takeMail(data) {
   if (!p || !items.length) return;
   const key = await mailKeyFor(p);
   const seen = new Set(mailStore.seen[p.room] || []);
+  const taken = [];                                      // the server may let these go
   let fresh = 0;
+  let lost = 0;
   for (const m of items) {
-    if (seen.has(m.id)) continue;                        // delivered before: shown once
-    const text = await DC.openMail(key, { box: p.room, from: G.otherSide(p.side), to: p.side, id: m.id, at: m.at, iv: m.iv, ct: m.ct });
+    if (seen.has(m.id)) { taken.push(m.id); continue; }  // delivered before: shown once
+    const where = { box: p.room, from: G.otherSide(p.side), to: p.side, id: m.id };
+    const body = await DC.openMailBody(key, { ...where, at: m.at, iv: m.iv, ct: m.ct });
+    const file = body && body.file && G.mailFileValid(body.file) && Number.isSafeInteger(m.at) ? body.file : null;
+    if (file) {
+      const got = await fetchMailFile(p, key, where, file);
+      if (got === "later") continue;                     // no answer: left there, asked for next time
+      seen.add(m.id);
+      taken.push(m.id);
+      if (got === "gone") { lost++; continue; }
+      addToThread(p.room, { id: m.id, at: m.at, mine: false, file });
+      fresh++;
+      continue;
+    }
     seen.add(m.id);                                      // opened or not, never tried again
+    taken.push(m.id);
+    const text = body && typeof body.text === "string" ? body.text : null;
     if (text === null || !G.messageFits(text) || !Number.isSafeInteger(m.at)) continue;
     addToThread(p.room, { id: m.id, at: m.at, mine: false, text });
     fresh++;
@@ -2986,7 +3020,8 @@ async function takeMail(data) {
   mailStore.seen[p.room] = [...seen].slice(-G.MAIL_SEEN_MAX);
   if (mailOpenFor === p.room) threadFor(p.room).read = Date.now();
   storeMail();
-  wsSend({ type: "mail-ack", box: p.room, side: p.side, ids: items.map(m => m.id) });
+  if (taken.length) wsSend({ type: "mail-ack", box: p.room, side: p.side, ids: taken });
+  if (lost) showToast(t("mailFileGone"), "warn");
   if (!fresh) return;
   drawPeople();
   if (mailOpenFor === p.room) { drawThread(); return; }
@@ -2997,6 +3032,7 @@ async function takeMail(data) {
 /* ── The conversation ────────────────────── */
 
 function openThread(p) {
+  if (mailOpenFor !== p.room) letMailUrlsGo();
   mailOpenFor = p.room;
   mailTitle.textContent = p.name;
   mailHint.textContent = t("mailHint");
@@ -3012,8 +3048,10 @@ function openThread(p) {
 }
 
 function closeThread() {
+  closeImageViewer();                                    // its picture is about to be let go of
   mailOverlay.classList.add("hidden");
   mailOpenFor = null;
+  letMailUrlsGo();
   drawPeople();
 }
 
@@ -3036,7 +3074,8 @@ function mailBubble(m) {
   row.className = `mail-item ${m.mine ? "me" : "peer"}`;
   const bubble = document.createElement("div");
   bubble.className = "mail-bubble";
-  fillMessage(bubble, m.text);                           // links tappable, nothing else made of it
+  if (m.file) fillMailFile(bubble, m);
+  else fillMessage(bubble, m.text);                      // links tappable, nothing else made of it
   const meta = document.createElement("div");
   meta.className = m.state === "refused" ? "mail-meta refused" : "mail-meta";
   const when = new Date(m.at).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
@@ -3077,8 +3116,196 @@ mailClearBtn.onclick = () => {
   mailClearBtn.textContent = t("mailClear");
   threadFor(mailOpenFor).items = [];
   storeMail();
+  forgetMailFiles(mailOpenFor);
+  letMailUrlsGo();
   drawThread();
   drawPeople();
+};
+
+/* ── Photos and files ────────────────────────
+   One that waits is sealed here whole (DC.sealMailFile) and sent to the
+   server first — over the web, not the link: it can be 25 MB — then
+   described in a message of its own, sealed like any other ({ file: { name,
+   type, size } }, DC.sealMailBody), which goes as any other. The other
+   device takes that message, fetches the file, opens it, and keeps it.
+
+   Each side keeps its copy in this browser — IndexedDB, "dc-mail-files":
+   the conversation in localStorage has room for words, not pictures — in
+   memory where that is off, and lets it go with the conversation. A copy
+   is only ever given the type presentAs allows, so a file that says it is
+   a page is saved, never opened as one. One that cannot be fetched is asked
+   for again next time; one the server no longer has, or that does not
+   open, is said to be lost, once. */
+const MAIL_FILES_DB = "dc-mail-files";
+const mailFilesHere = new Map();         // `${room}/${id}` → Blob, without IndexedDB
+const mailFilesQueued = new Set();       // ids on their way to the server
+const mailUrls = new Map();              // `${room}/${id}` → address, while that conversation is open
+let mailFileQueue = Promise.resolve();
+let mailFileMaxBytes = G.MAIL_FILE_MAX;  // the server's say, from /api/ping: 0, it keeps none
+
+function mailFilesDb() {
+  return new Promise((resolve, reject) => {
+    if (!window.indexedDB) { reject(new Error("no IndexedDB")); return; }
+    const open = indexedDB.open(MAIL_FILES_DB, 1);
+    open.onupgradeneeded = () => open.result.createObjectStore("files");
+    open.onsuccess = () => resolve(open.result);
+    open.onerror = () => reject(open.error);
+  });
+}
+
+async function mailFilesDo(mode, fn) {
+  const db = await mailFilesDb();
+  try {
+    return await new Promise((resolve, reject) => {
+      const tx = db.transaction("files", mode);
+      const req = fn(tx.objectStore("files"));
+      tx.oncomplete = () => resolve(req.result);
+      tx.onerror = tx.onabort = () => reject(tx.error);
+    });
+  } finally { db.close(); }
+}
+
+async function keepMailFile(room, id, blob) {
+  try { await mailFilesDo("readwrite", store => store.put(blob, `${room}/${id}`)); }
+  catch (_) { mailFilesHere.set(`${room}/${id}`, blob); }
+}
+
+async function mailFileBlob(room, id) {
+  if (mailFilesHere.has(`${room}/${id}`)) return mailFilesHere.get(`${room}/${id}`);
+  try { return (await mailFilesDo("readonly", store => store.get(`${room}/${id}`))) || null; }
+  catch (_) { return null; }
+}
+
+/** A conversation's files, gone from this device. ("0" follows "/".) */
+function forgetMailFiles(room) {
+  for (const key of [...mailFilesHere.keys()]) if (key.startsWith(`${room}/`)) mailFilesHere.delete(key);
+  mailFilesDo("readwrite", store => store.delete(IDBKeyRange.bound(`${room}/`, `${room}0`, false, true))).catch(() => {});
+}
+
+function letMailUrlsGo() {
+  for (const url of mailUrls.values()) URL.revokeObjectURL(url);
+  mailUrls.clear();
+}
+
+/** Ours: kept here, described, shown as on its way, then sent in turn. */
+async function sendMailFile(p, file) {
+  if (!mailFileMaxBytes) { showToast(t("mailFilesOff"), "warn"); return; }
+  if (file.size > mailFileMaxBytes) { showToast(t("mailFileTooBig"), "warn"); return; }
+  const id = DC.makeMailId();
+  const at = Date.now();
+  const meta = { name: String(file.name || "file").slice(0, 255), type: String(file.type || "").slice(0, 100), size: file.size };
+  await keepMailFile(p.room, id, new Blob([file], { type: G.presentAs("image", meta.type).blobType }));
+  const sealed = await DC.sealMailBody(await mailKeyFor(p), { box: p.room, from: p.side, to: G.otherSide(p.side), id, at }, { file: meta });
+  const item = { id, at, mine: true, file: meta, state: "sending", iv: sealed.iv, ct: sealed.ct };
+  addToThread(p.room, item);
+  storeMail();
+  drawThread();
+  return queueMailFile(p, item);
+}
+
+/** One at a time — the server takes only a few at once from everyone. */
+function queueMailFile(p, item) {
+  if (mailFilesQueued.has(item.id)) return mailFileQueue;
+  mailFilesQueued.add(item.id);
+  mailFileQueue = mailFileQueue
+    .then(() => deliverMailFile(p, item))
+    .catch(err => console.error("A file could not be sent:", err))
+    .finally(() => mailFilesQueued.delete(item.id));
+  return mailFileQueue;
+}
+
+/** Its bytes to the server, sealed afresh from the copy kept here, then its
+    message. A server that says no: not sent, and why. No answer at all: it
+    stays on its way, and goes when the link next comes up. */
+async function deliverMailFile(p, item) {
+  if (item.state !== "sending") return;
+  const blob = await mailFileBlob(p.room, item.id);
+  if (!blob) { mailAnswered({ id: item.id, code: "gone" }, false); return; }
+  const to = G.otherSide(p.side);
+  const sealed = await DC.sealMailFile(await mailKeyFor(p), { box: p.room, from: p.side, to, id: item.id },
+                                       new Uint8Array(await blob.arrayBuffer()));
+  let res;
+  try {
+    res = await fetch(`${SERVER_URL}/api/mailbox/file`, {
+      method: "POST",
+      headers: { "X-DC-Client": "1", "Content-Type": "application/octet-stream", "X-DC-Mail": `${p.room}:${to}:${item.id}:${sealed.length}` },
+      body: sealed
+    });
+  } catch (_) { return; }
+  if (!res.ok) {
+    const code = await res.json().then(j => j && j.code, () => null);
+    mailAnswered({ id: item.id, code }, false);
+    return;
+  }
+  dropMail(p, item);
+}
+
+/** Theirs, fetched, opened and kept here: "ok"; "gone" — the server has no
+    such file, or it does not open as this one; or "later" — no answer. */
+async function fetchMailFile(p, key, where, meta) {
+  let res;
+  try {
+    res = await fetch(`${SERVER_URL}/api/mailbox/file`, { headers: { "X-DC-Client": "1", "X-DC-Mail": `${p.room}:${p.side}:${where.id}` } });
+  } catch (_) { return "later"; }
+  if (res.status === 404) return "gone";
+  if (!res.ok) return "later";
+  let sealed;
+  try { sealed = new Uint8Array(await res.arrayBuffer()); } catch (_) { return "later"; }
+  const bytes = await DC.openMailFile(key, where, sealed);
+  if (!bytes || bytes.length !== meta.size) return "gone";
+  await keepMailFile(p.room, where.id, new Blob([bytes], { type: G.presentAs("image", meta.type).blobType }));
+  return "ok";
+}
+
+/** A photo drawn, tap to see it big; a file by its name and size, tap to save
+    it — from the copy kept here, once it is read back. */
+function fillMailFile(bubble, m) {
+  /* DCS.fmtBytes, not fmtBytes: this runs as the page loads, when a tapped
+     "a message waits" opens a conversation — before fmtBytes is declared. */
+  const room = mailOpenFor;
+  const image = G.presentAs("image", m.file.type).kind === "image";
+  const chip = document.createElement("a");
+  chip.className = "mail-file";
+  const info = document.createElement("div");
+  const name = document.createElement("div");
+  name.className = "mail-file-name";
+  name.textContent = m.file.name;
+  const size = document.createElement("div");
+  size.className = "mail-file-size";
+  size.textContent = DCS.fmtBytes(m.file.size);
+  info.append(name, size);
+  chip.append(tablerIcon(image ? "photo" : "file"), info);
+  bubble.replaceChildren(chip);
+  const key = `${room}/${m.id}`;
+  const show = url => {
+    if (!image) { chip.href = url; chip.download = m.file.name; return; }
+    const img = document.createElement("img");
+    img.className = "mail-image";
+    img.alt = m.file.name;
+    img.onclick = () => openImageViewer(url, m.file.name);
+    img.onerror = () => { bubble.classList.remove("has-image"); chip.href = url; chip.download = m.file.name; bubble.replaceChildren(chip); };
+    img.src = url;
+    bubble.classList.add("has-image");
+    bubble.replaceChildren(img);
+  };
+  if (mailUrls.has(key)) { show(mailUrls.get(key)); return; }
+  mailFileBlob(room, m.id).then(blob => {
+    if (mailOpenFor !== room) return;
+    if (!blob) { chip.classList.add("missing"); size.textContent = `${DCS.fmtBytes(m.file.size)} · ${t("mailFileMissing")}`; return; }
+    if (!mailUrls.has(key)) mailUrls.set(key, URL.createObjectURL(blob));
+    show(mailUrls.get(key));
+  });
+}
+
+mailAttachBtn.onclick = () => mailFileInput.click();
+mailFileInput.onchange = () => {
+  const p = people.find(q => q.room === mailOpenFor);
+  const files = [...mailFileInput.files];
+  mailFileInput.value = "";
+  if (!p) return;
+  for (const file of files) {
+    sendMailFile(p, file).catch(err => { console.error("A file could not be sealed:", err); showToast(t("mailNotSent"), "error"); });
+  }
 };
 
 /** "A message waits" tapped: their conversation, and anything newer. */
@@ -3145,7 +3372,7 @@ function closePeerConnection() {
   }
   closeCallPeerConnection();
   dataChannel = null;
-  sendBtn.disabled = true;
+  drawSendButton();                      // off — unless a message may wait for the next link
   stopChatRepair();                      // nothing left to repair
 }
 
@@ -3408,11 +3635,10 @@ function setupDataChannel() {
     /* The server already said they had gone and the chat went on; now the
        channel has closed too, which is them leaving. */
     appendSys(t(serverRoomGone ? "sysPeerLeft" : "sysClosed"));
-    // Clean up unacknowledged messages and incomplete transfers to free memory.
+    // Clean up incomplete transfers to free memory. Unconfirmed messages: settleOutbox, from showReconnectButton below.
     /* Mark them failed in the UI first: clearing the state alone left every
        in-flight bubble showing "Receiving…" with nothing ever to finish it. */
     for (const k of Object.keys(recvBuffers)) failTransfer(k);
-    for (const k of Object.keys(pendingAcks)) delete pendingAcks[k];
     for (const k of Object.keys(recvBuffers)) delete recvBuffers[k];
     for (const k of Object.keys(orphanChunks)) delete orphanChunks[k];
     orphanChunkCount = 0;
@@ -4205,12 +4431,16 @@ function switchToChat(sessionId, { keepMessages = false } = {}) {
   setQuality(`⬤ ${t("connecting")}`, "");
   if (!keepMessages) {
     savedInChat = null;                    // a new chat, perhaps someone else
+    outbox = [];                           // nothing waits for someone else's link
+    for (const k of Object.keys(pendingAcks)) delete pendingAcks[k];
+    chatHadKey = false;
+    chatWasGreen = false;
     closeReactionBar();
     chatMessages.replaceChildren();
     _stickToBottom = true;                 // a new chat starts at its newest
     newMessagesBtn.classList.add("hidden");
   }
-  sendBtn.disabled = true;
+  drawSendButton();                        // the same chat, connecting again: messages may wait
   voiceCallBtn.disabled = true;
   videoCallBtn.disabled = true;
 }
@@ -4225,6 +4455,9 @@ leaveBtn.onclick = (e) => {
   }
   closeImageViewer();               // its picture is about to be let go of
   closeReactionBar();
+  settleOutbox();                   // left with messages waiting: to someone saved, they still go
+  chatHadKey = false;
+  chatWasGreen = false;
   keepScreenOn(false);
   clearConnectWatch();
   forgetHostRoom();
@@ -4411,39 +4644,164 @@ function sendTypingSignal() {
 
 async function sendTextMessage() {
   const text = messageInput.value.trim();
-  if (!text || !dcReady()) return;
-  if (!e2eReady) {
-    appendSys(t("e2eWaiting"));
-    return;
-  }
+  if (!text) return;
   /* Said, not silently dropped: the text stays in the box to be trimmed. */
   if (!G.messageFits(text)) {
     showToast(I18N[LANG].messageTooLong(G.MAX_MESSAGE_CHARS), "warn");
     announce(I18N[LANG].messageTooLong(G.MAX_MESSAGE_CHARS));
     return;
   }
-  const msgId = ++msgIdCounter;
-
-  /* Whatever else fails here — the channel closing as Send is pressed — says
-     so too, and the text stays in the box rather than vanishing. */
-  try {
-    const n = ++e2eSendSeq;
-    const { ct, iv } = await e2eEncrypt(text, DC.messageAad(myRole(), n, "text", msgId));
-    dataChannel.send(JSON.stringify({ type: "text", ct, iv, msgId, n }));
-  } catch (err) {
-    console.error("Message not sent:", err);
-    showToast(t("messageNotSent"), "warn");
+  /* The link is down for a moment: the message waits for it, if it may. */
+  if (!dcReady() || !e2eReady) {
+    if (canQueue()) { queueText(text); clearMessageBox(); return; }
+    if (dcReady()) appendSys(t("e2eWaiting"));
     return;
   }
 
-  const row = appendBubble("me", text);
-  addAckTick(row, msgId);
-  pendingAcks[msgId] = row;
-  markReactable(row, G.reactionKey("text", msgId));
+  /* Whatever else fails here — the channel closing as Send is pressed — the
+     message waits for the link if it may; if not, says so, and the text stays
+     in the box rather than vanishing. */
+  try {
+    await sendSealedText(text);
+  } catch (err) {
+    console.error("Message not sent:", err);
+    if (canQueue()) { queueText(text); clearMessageBox(); return; }
+    showToast(t("messageNotSent"), "warn");
+    return;
+  }
+  clearMessageBox();
+  dcSend({ type: "typing-stop" });
+}
+
+function clearMessageBox() {
   messageInput.value = "";
   messageInput.style.height = "auto";
   updateMessageCounter();
-  dcSend({ type: "typing-stop" });
+}
+
+/** Seals and sends one text — a new one, or one that waited, whose bubble
+    (`row`) is already there — and gives it its tick. Throws if it did not go. */
+async function sendSealedText(text, row = null) {
+  const msgId = ++msgIdCounter;
+  const n = ++e2eSendSeq;
+  const { ct, iv } = await e2eEncrypt(text, DC.messageAad(myRole(), n, "text", msgId));
+  dataChannel.send(JSON.stringify({ type: "text", ct, iv, msgId, n }));
+  if (row) {
+    row.classList.remove("waiting");
+    const waitMark = row.querySelector(".ack-tick");
+    if (waitMark) waitMark.remove();
+  } else {
+    row = appendBubble("me", text);
+  }
+  addAckTick(row, msgId);
+  pendingAcks[msgId] = row;
+  sentText.set(row, text);
+  markReactable(row, G.reactionKey("text", msgId));
+  return row;
+}
+
+/* ── Messages that wait ─────────────────────
+   A message written while the link was down for a moment — a phone between
+   networks, the other side reopening the page — used to go nowhere: the
+   button was off, or "not sent". Now it is shown at once with ⏳ and waits,
+   in order, for the link (G.mayQueueText: only in a chat on screen that has
+   not ended and has been connected once). It is sealed only when it goes,
+   with the key agreed then, and only if that link is checked as well as the
+   chat was (G.mayFlushOutbox). If the chat ends first, what waited for a
+   saved person goes to them as waiting messages (sendMail) — said so — and
+   anything else is marked not sent. */
+function chatEndedNow() {
+  return Boolean(chatMessages.querySelector(".reconnect-sys-wrap"));
+}
+
+function canQueue() {
+  return G.mayQueueText({ chatOpen: !chatScreen.classList.contains("hidden"), chatEnded: chatEndedNow(),
+                          hadKey: chatHadKey, waiting: outbox.length });
+}
+
+/** On when a message can go now — or wait for the link. */
+function drawSendButton() {
+  sendBtn.disabled = !((dcReady() && e2eReady) || canQueue());
+}
+
+function queueText(text) {
+  const row = appendBubble("me", text);
+  row.classList.add("waiting");
+  setWaitMark(row, "⏳", t("outboxWaiting"));
+  outbox.push({ text, row });
+  scrollBottom(true);
+}
+
+function setWaitMark(row, mark, label) {
+  let meta = row.querySelector(".bubble-meta");
+  if (!meta) {
+    meta = document.createElement("div");
+    meta.className = "bubble-meta";
+    row.appendChild(meta);
+  }
+  let tick = meta.querySelector(".ack-tick");
+  if (!tick) { tick = document.createElement("span"); meta.appendChild(tick); }
+  tick.className = "ack-tick waiting";
+  tick.textContent = mark;
+  tick.title = label;
+  tick.setAttribute("aria-label", label);
+}
+
+/** Ours that went but were never confirmed, back in line — oldest first,
+    ahead of what waited since. A link can look open for half a minute after
+    the other side's page has closed: one sent then went nowhere, and used to
+    sit on ✓ for good. Once in a while one arrived and only its ✓✓ was lost;
+    it then shows twice, which is better than not at all. */
+function takeBackUnsent() {
+  const rows = Object.keys(pendingAcks).map(Number).sort((x, y) => x - y).map(id => {
+    const row = pendingAcks[id];
+    delete pendingAcks[id];
+    return row;
+  });
+  for (const row of rows) {
+    row.classList.add("waiting");
+    setWaitMark(row, "⏳", t("outboxWaiting"));
+  }
+  outbox = rows.map(row => ({ text: sentText.get(row), row })).concat(outbox);
+}
+
+/** The key is agreed again: what waited goes, in order. One that fails puts
+    itself and the rest back to wait for the next link. */
+async function flushOutbox() {
+  if (!outbox.length) return;
+  const green = G.shieldState({ ready: e2eReady, secure: e2eSecureMode, verified: e2eVerified }) === "ok";
+  if (!G.mayFlushOutbox({ ready: dcReady() && e2eReady, wasGreen: chatWasGreen, green })) return;
+  const waiting = outbox;
+  outbox = [];
+  for (let i = 0; i < waiting.length; i++) {
+    try {
+      await sendSealedText(waiting[i].text, waiting[i].row);
+    } catch (err) {
+      console.warn("Waiting messages held back again:", err);
+      outbox = waiting.slice(i).concat(outbox);
+      break;
+    }
+  }
+  drawSendButton();
+}
+
+/** The chat is over with messages still waiting. To someone saved, they go
+    as waiting messages, to read when they next open the app; otherwise they
+    are marked not sent. Either way, said once. */
+function settleOutbox() {
+  /* Unconfirmed ones too — unless the link is still sound, as when leaving
+     straight after writing: those have arrived, their ✓✓ just not back yet. */
+  if (!(dcReady() && pc && pc.connectionState === "connected")) takeBackUnsent();
+  if (!outbox.length) return;
+  const waiting = outbox;
+  outbox = [];
+  const peer = knockPeer();
+  const p = peer ? people.find(q => q.room === peer.room) : null;
+  for (const item of waiting) {
+    setWaitMark(item.row, p ? "✉" : "✕", t(p ? "outboxMailedShort" : "outboxNotSentShort"));
+    if (p) sendMail(p, item.text).catch(err => console.error("A waiting message could not be sealed:", err));
+  }
+  appendSys(p ? I18N[LANG].outboxMailed(p.name) : t("outboxNotSent"));
 }
 
 /**
@@ -4582,7 +4940,7 @@ function handleTextMessage(data, sealed = false) {
       peerDevice = { os: data.os, browser: data.browser };
       renderShieldFacts();
       sendPeerInfo();   // the host's answer; a no-op for the guest, who went first
-      if (isHost) shareKnockAddress();   // likewise: the guest is listening now
+      if (isHost) { shareKnockAddress(); flushOutbox(); }   // likewise: the guest is listening now
       if (isHost) quickCallPeerReady();  // and a call asked for from their row can ring there
       break;
 
@@ -5584,6 +5942,7 @@ const SHIELD_LOOK = {
 function updateShield() {
   if (!keyVerifyDropdown || !keyVerifyBtn || !keyVerifyIcon) return;
   const state = G.shieldState({ ready: e2eReady, secure: e2eSecureMode, verified: e2eVerified });
+  if (state === "ok") chatWasGreen = true;     // what waits for the link goes only over a checked one
   for (const name of Object.keys(SHIELD_LOOK)) {
     keyVerifyDropdown.classList.toggle(`verify-${name}`, name === state);
   }
