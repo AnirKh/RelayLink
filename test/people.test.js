@@ -170,7 +170,7 @@ const NAMES = ["G", "DC", "I18N", "LANG", "t", "localStorage", "window", "docume
   "mailOverlay", "mailTitle", "mailHint", "mailList", "mailInput", "mailSendBtn", "mailCloseBtn", "mailClearBtn",
   "fillMessage", "noticeArrival", "typingWithFinger", "env",
   "mailAttachBtn", "mailFileInput", "openImageViewer", "closeImageViewer", "DCS", "fetch", "SERVER_URL", "IDBKeyRange", "URL",
-  "inboxRow", "inboxBtn", "inboxCount", "noteOff", "leaveForm", "ownerLink", "ownerOverlay", "ownerText",
+  "inboxPane", "inboxList", "inboxClearBtn", "panelMail", "lobbyScreen", "inboxCount", "noteOff", "leaveForm", "ownerLink", "ownerOverlay", "ownerText",
   "ownerCodeBox", "ownerLockBox", "ownerCodeInput", "ownerForgetBtn", "ownerCopyBtn", "ownerSetupBtn", "ownerUseBtn", "ownerCloseBtn", "OWNER_LOCK"];
 
 /** A real P-256 public key and a 16-byte secret, as a browser's subscription has. */
@@ -298,7 +298,7 @@ function page({ saved = [], storage = "works", connected = true, checked = true,
                    "knockBtn", "knockIcon", "knockLabel", "installOverlay",
                    "mailOverlay", "mailTitle", "mailHint", "mailList", "mailInput", "mailSendBtn", "mailCloseBtn", "mailClearBtn",
                    "mailAttachBtn", "mailFileInput",
-                   "inboxRow", "inboxBtn", "inboxCount", "noteOff", "leaveForm", "ownerLink", "ownerOverlay", "ownerText",
+                   "inboxPane", "inboxList", "inboxClearBtn", "panelMail", "lobbyScreen", "inboxCount", "noteOff", "leaveForm", "ownerLink", "ownerOverlay", "ownerText",
                    "ownerCodeBox", "ownerLockBox", "ownerCodeInput", "ownerForgetBtn", "ownerCopyBtn", "ownerSetupBtn", "ownerUseBtn", "ownerCloseBtn"]) {
     els[n] = element(n === "saveNameInput" || n === "mailInput" || n === "ownerCodeInput" ? "input" : "div");
   }
@@ -306,7 +306,7 @@ function page({ saved = [], storage = "works", connected = true, checked = true,
   els.saveOverlay.classList.add("hidden");
   els.mailOverlay.classList.add("hidden");
   els.ownerOverlay.classList.add("hidden");
-  for (const n of ["inboxRow", "noteOff"]) els[n].classList.add("hidden");
+  for (const n of ["inboxPane", "noteOff", "panelMail"]) els[n].classList.add("hidden");
   els.knockBtn.classList.add("hidden");
   els.installOverlay.classList.add("hidden");
   if (!inChat) els.chatScreen.classList.add("hidden");
@@ -342,7 +342,7 @@ function page({ saved = [], storage = "works", connected = true, checked = true,
       quickCallPerson, placeQuickCall, quickCallPeerReady,
       openThread, closeThread, sendMail, receiveMail, mailAnswered, mailAtConnect, fetchMail, answerMail, sendFromThread,
       sendMailFile, mailFileBlob, files: () => mailFileQueue,
-      ownerReady: () => ownerReady, ownerHello, ownerAccepted, sendNote, noteAnswered, openInbox, openOwnerDialog,
+      ownerReady: () => ownerReady, ownerHello, ownerAccepted, sendNote, noteAnswered, openInbox, openOwnerDialog, inboxViewed, dayLabel,
       get: () => ({ people, meeting, waitingForUs, personMenuFor, heldOpen, quickCall, pendingMeet, saveOffer, saveAsked, saveDialog, forgetting, currentSession,
                     isConnecting, isHost, hostKey, roomSecret, pendingRoomSecret, roomKind, guestKey,
                     knockKey, knockSub, knockSent, knockShared, savedInChat, knockEarly, mailStore, mailOpenFor,
@@ -374,7 +374,7 @@ function page({ saved = [], storage = "works", connected = true, checked = true,
     (el, text) => { el.textContent = text; }, () => { log.noticed++; }, () => false, env,
     els.mailAttachBtn, els.mailFileInput, (url, name) => log.viewed.push({ url, name }), () => {}, { fmtBytes: n => `${n} B` },
     fakeWeb(env, log), "https://pi.test/dc", IDBKeyRange, URL,
-    els.inboxRow, els.inboxBtn, els.inboxCount, els.noteOff, els.leaveForm, els.ownerLink, els.ownerOverlay, els.ownerText, els.ownerCodeBox, els.ownerLockBox, els.ownerCodeInput, els.ownerForgetBtn, els.ownerCopyBtn, els.ownerSetupBtn, els.ownerUseBtn, els.ownerCloseBtn, owner.lock || null);
+    els.inboxPane, els.inboxList, els.inboxClearBtn, els.panelMail, els.lobbyScreen, els.inboxCount, els.noteOff, els.leaveForm, els.ownerLink, els.ownerOverlay, els.ownerText, els.ownerCodeBox, els.ownerLockBox, els.ownerCodeInput, els.ownerForgetBtn, els.ownerCopyBtn, els.ownerSetupBtn, els.ownerUseBtn, els.ownerCloseBtn, owner.lock || null);
   const rows = () => els.peopleList.children;
   const button = (row, cls) => row.children.find(c => c.classList.contains(cls));
   const stored = () => JSON.parse(store.get("dc-people") || "null");
@@ -1966,7 +1966,7 @@ async function noteFor(o, body, over = {}) {
 test("no lock in the app yet: no note can be left; \"Own this app?\" makes a code, and shows the lock it makes to send", async () => {
   const p = page();
   await p.api.ownerReady();
-  assert.ok(shown(p.els.noteOff) && !shown(p.els.leaveForm) && !shown(p.els.inboxRow));
+  assert.ok(shown(p.els.noteOff) && !shown(p.els.leaveForm) && !shown(p.els.inboxPane));
   assert.deepEqual(await p.api.sendNote({ name: "", text: "hi", file: null }), { ok: false, code: "no-inbox" });
   p.api.openOwnerDialog();
   assert.equal(p.els.ownerText.textContent, I18N.mn.ownerStartText);
@@ -1994,7 +1994,7 @@ test("the app's lock and this device's code: the inbox, not the form — and eac
   const o = await anOwner();
   const p = page({ owner: { lock: o.lock, code: o.code }, knock: { subscribed: true, permission: "granted", registered: true } });
   await p.api.ownerReady();
-  assert.ok(shown(p.els.inboxRow) && !shown(p.els.leaveForm) && !shown(p.els.noteOff));
+  assert.ok(shown(p.els.inboxPane) && !shown(p.els.leaveForm) && !shown(p.els.noteOff));
   assert.ok(p.els.ownerLink.classList.contains("is-owner"));
   assert.equal(p.api.get().ownerBox, o.box);
   p.api.ownerHello("word-1");
@@ -2016,7 +2016,7 @@ test("the app's lock and this device's code: the inbox, not the form — and eac
   visitor.api.ownerHello("word-2");
   await settle();
   assert.ok(!visitor.log.ws.some(m => m.type === "owner-hello"), "a visitor's device says nothing of the sort");
-  assert.ok(shown(visitor.els.leaveForm) && !shown(visitor.els.inboxRow));
+  assert.ok(shown(visitor.els.leaveForm) && !shown(visitor.els.inboxPane));
 });
 
 test("a device of the owner's with alerts off does not undo another's — unless it just turned them off", async () => {
@@ -2070,20 +2070,112 @@ test("a note with a file: fetched, opened, kept — and in the inbox, who left i
   assert.equal(p.log.web.find(r => r.method === "GET").headers["X-DC-Mail"], `${o.box}:a:${n.id}`);
   const copy = await p.api.mailFileBlob(o.box, n.id);
   assert.deepEqual(new Uint8Array(await copy.arrayBuffer()), thePhoto);
-  p.els.inboxBtn.onclick();
-  assert.ok(shown(p.els.mailOverlay) && p.els.mailOverlay.classList.contains("inbox"), "the conversation window, with nothing to write in");
-  assert.equal(p.els.mailTitle.textContent, I18N.mn.inboxTitle);
-  assert.equal(p.els.mailHint.textContent, I18N.mn.inboxHint);
+  p.els.panelMail.classList.remove("hidden");             // the Notes tab looked at
+  p.api.inboxViewed();
+  assert.ok(!shown(p.els.mailOverlay), "no window: the notes are in the tab");
   await settle(); await settle(); await settle();
-  const row = p.els.mailList.children[0];
-  assert.equal(row.querySelector(".mail-from").textContent, "Bat");
-  const bubbles = row.querySelectorAll(".mail-bubble");
-  assert.equal(bubbles.length, 2, "the words, and the picture");
-  assert.equal(bubbles[0].textContent, "the beach");
-  assert.equal(bubbles[1].children[0].className, "mail-image");
+  const day = p.els.inboxList.children[0];
+  const note = day.querySelector(".note-item");
+  assert.equal(note.querySelector(".note-from").textContent, "Bat");
+  assert.equal(note.querySelector(".note-text").textContent, "the beach");
+  assert.equal(note.querySelector(".mail-bubble").children[0].className, "mail-image", "and the picture, drawn");
+  note.querySelector(".mail-bubble").children[0].onclick();
+  assert.equal(p.log.viewed.at(-1).name, "beach.png", "tap to see it big");
   assert.ok(!shown(p.els.inboxCount), "read now");
+  p.api.openThread(await person("Anu"));
   p.api.closeThread();
-  assert.ok(!p.els.mailOverlay.classList.contains("inbox"), "a person's conversation after it can be written in");
+  await settle(); await settle();
+  assert.match(note.querySelector(".mail-bubble").children[0].src, /^blob:/, "a conversation closing lets go of its pictures, not the inbox's");
+});
+
+test("on the owner's device the Notes tab is the inbox itself: day by day, newest first — a day opens to its notes", async () => {
+  const o = await anOwner();
+  const p = page({ owner: { lock: o.lock, code: o.code } });
+  await p.api.ownerReady();
+  assert.equal(p.els.inboxList.children[0].textContent, I18N.mn.inboxEmpty, "nothing yet: said so");
+  const DAY = 24 * 60 * 60 * 1000;
+  const now = Date.now();
+  const notes = [
+    await noteFor(o, { name: "Bat", text: "this morning" }, { at: now - 60_000 }),
+    await noteFor(o, { name: "", text: "earlier today" }, { at: now - 120_000 }),
+    await noteFor(o, { name: "Anu", text: "yesterday's" }, { at: now - DAY }),
+    await noteFor(o, { name: "Bold", text: "last week's" }, { at: now - 6 * DAY })
+  ];
+  await p.api.receiveMail({ type: "mail", box: o.box, side: "a", items: notes });
+  assert.equal(p.els.inboxCount.textContent, "4", "how many are new, on the tab");
+  assert.ok(shown(p.els.inboxCount));
+  p.els.panelMail.classList.remove("hidden");
+  p.api.inboxViewed();
+  const days = p.els.inboxList.children;
+  assert.equal(days.length, 3, "one row a day");
+  const names = days.map(d => d.querySelector(".inbox-day-name").textContent);
+  assert.deepEqual(names.slice(0, 2), [I18N.mn.dayToday, I18N.mn.dayYesterday], "newest first");
+  assert.deepEqual(days.map(d => d.querySelector(".inbox-day-count").textContent), [I18N.mn.notesCount(2), I18N.mn.notesCount(1), I18N.mn.notesCount(1)]);
+  assert.deepEqual(days.map(d => d.querySelector(".inbox-day-new").textContent), [I18N.mn.notesNew(2), I18N.mn.notesNew(1), I18N.mn.notesNew(1)]);
+  assert.ok(days.every(d => d.classList.contains("open")), "a day with new notes is open when looked at");
+  const today = days[0].querySelectorAll(".note-item");
+  assert.deepEqual(today.map(n => [n.querySelector(".note-from").textContent, n.querySelector(".note-text").textContent]),
+                   [["Bat", "this morning"], [I18N.mn.noteAnonymous, "earlier today"]], "newest first within the day, a name or Anonymous");
+  assert.match(today[0].querySelector(".note-time").textContent, /\d/);
+  assert.ok(today.every(n => n.classList.contains("new")));
+  assert.ok(!shown(p.els.inboxCount), "read now: the tab's count goes");
+  const lastWeek = () => p.els.inboxList.children[2];
+  lastWeek().querySelector(".inbox-day-btn").onclick();
+  assert.ok(!lastWeek().classList.contains("open"), "tapped: it closes");
+  assert.equal(lastWeek().querySelector(".inbox-day-notes"), null);
+  assert.equal(lastWeek().querySelector(".inbox-day-btn").attrs["aria-expanded"], "false");
+  lastWeek().querySelector(".inbox-day-btn").onclick();
+  assert.ok(lastWeek().classList.contains("open"), "and opens again");
+  p.api.inboxViewed();
+  assert.equal(p.els.inboxList.children[0].querySelector(".inbox-day-new"), null, "looked at again: nothing new");
+});
+
+test("a day's name: Today, Yesterday, or its date — with the year only if not this one", () => {
+  const p = page();
+  const now = new Date(2026, 10, 2, 9, 0).getTime();
+  assert.equal(p.api.dayLabel(new Date(2026, 10, 2, 0, 5).getTime(), now), I18N.mn.dayToday);
+  assert.equal(p.api.dayLabel(new Date(2026, 10, 1, 23, 59).getTime(), now), I18N.mn.dayYesterday);
+  assert.equal(p.api.dayLabel(new Date(2026, 9, 28, 12).getTime(), now),
+               new Date(2026, 9, 28, 12).toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" }));
+  assert.match(p.api.dayLabel(new Date(2025, 9, 28, 12).getTime(), now), /2025/);
+  assert.equal(p.api.dayLabel(new Date(2026, 0, 1, 0, 30).getTime(), new Date(2026, 0, 2, 8).getTime()), I18N.mn.dayYesterday, "across a new year");
+});
+
+test("a note arriving with the Notes tab on screen: there at once, marked new — no toast, nothing left to count", async () => {
+  const o = await anOwner();
+  const p = page({ owner: { lock: o.lock, code: o.code } });
+  await p.api.ownerReady();
+  p.els.panelMail.classList.remove("hidden");
+  p.api.inboxViewed();
+  await p.api.receiveMail({ type: "mail", box: o.box, side: "a", items: [await noteFor(o, { name: "Bat", text: "hello!" }, { at: Date.now() + 1000 })] });
+  assert.deepEqual(p.log.toasts, []);
+  assert.ok(!shown(p.els.inboxCount));
+  const note = p.els.inboxList.children[0].querySelector(".note-item");
+  assert.equal(note.querySelector(".note-text").textContent, "hello!");
+  assert.ok(note.classList.contains("new"));
+  p.els.lobbyScreen.classList.add("hidden");                // in a chat now
+  await p.api.receiveMail({ type: "mail", box: o.box, side: "a", items: [await noteFor(o, { name: "Anu", text: "later" }, { at: Date.now() + 2000 })] });
+  assert.deepEqual(p.log.toasts, [I18N.mn.noteArrived("Anu")], "not on screen: said, and counted");
+  assert.equal(p.els.inboxCount.textContent, "1");
+});
+
+test("clearing the inbox takes two taps — and keeps the ids, so nothing cleared comes back", async () => {
+  const o = await anOwner();
+  const p = page({ owner: { lock: o.lock, code: o.code } });
+  await p.api.ownerReady();
+  const n = await noteFor(o, { name: "", text: "", file: { name: "a.png", type: "image/png", size: thePhoto.length } });
+  p.env.uploads.set(`${o.box}:a:${n.id}`, await DC.sealNoteFile(o.lock, { box: o.box, id: n.id }, thePhoto));
+  await p.api.receiveMail({ type: "mail", box: o.box, side: "a", items: [n] });
+  p.els.inboxClearBtn.onclick();
+  assert.equal(p.els.inboxClearBtn.textContent, I18N.mn.mailClearSure);
+  assert.equal(p.api.get().mailStore.threads[o.box].items.length, 1, "one tap is not enough");
+  p.els.inboxClearBtn.onclick();
+  await settle(); await settle();
+  assert.equal(p.api.get().mailStore.threads[o.box].items.length, 0);
+  assert.equal(p.files.size, 0);
+  assert.equal(p.els.inboxList.children[0].textContent, I18N.mn.inboxEmpty);
+  await p.api.receiveMail({ type: "mail", box: o.box, side: "a", items: [n] });
+  assert.equal(p.api.get().mailStore.threads[o.box].items.length, 0, "delivered again: not shown again");
 });
 
 test("a note whose file has no answer yet is left on the server for next time — the words with it", async () => {
@@ -2163,7 +2255,7 @@ test("an owner code typed in: not a code, or not this app's — said, and nothin
   await p.els.ownerUseBtn.onclick();
   assert.ok(p.api.get().ownerKeysHere);
   assert.equal(p.els.ownerText.textContent, I18N.mn.ownerReadyText);
-  assert.ok(shown(p.els.inboxRow) && !shown(p.els.leaveForm));
+  assert.ok(shown(p.els.inboxPane) && !shown(p.els.leaveForm));
 });
 
 test("taken off this device: two taps — the code, the notes and their files all go", async () => {
@@ -2184,19 +2276,21 @@ test("taken off this device: two taps — the code, the notes and their files al
   assert.equal(p.store.get("dc-owner"), undefined);
   assert.equal(p.api.get().mailStore.threads[o.box], undefined);
   assert.equal(p.files.size, 0);
-  assert.ok(!shown(p.els.inboxRow) && shown(p.els.leaveForm));
+  assert.ok(!shown(p.els.inboxPane) && shown(p.els.leaveForm));
 });
 
-test("\"a note waits\" tapped: the inbox opens — on the owner's device", async () => {
+test("\"a note waits\" tapped: the Notes tab opens — on the owner's device", async () => {
   const o = await anOwner();
   const p = page({ owner: { lock: o.lock, code: o.code }, hash: `#mail=${o.box}` });
   await p.api.ownerReady();
-  await until(() => shown(p.els.mailOverlay));
-  assert.ok(p.els.mailOverlay.classList.contains("inbox"));
+  await until(() => p.log.tabs.includes("mail"));
+  assert.deepEqual(p.log.tabs, ["mail"]);
+  assert.ok(!shown(p.els.mailOverlay), "the tab, not a window");
   const visitor = page({ owner: { lock: o.lock }, hash: `#mail=${o.box}` });
   await visitor.api.ownerReady();
   await settle();
-  assert.ok(!shown(visitor.els.mailOverlay));
+  assert.deepEqual(visitor.log.tabs, []);
+  assert.match(app.slice(app.indexOf("function showLobbyTab(")), /if \(name === "mail"\) inboxViewed\(\);/, "the tab looked at is the inbox looked at");
 });
 
 test("the wiring: the hello's word, the server's yes, waiting notes, answers to ours, the form — and no email anywhere", () => {
@@ -2209,7 +2303,7 @@ test("the wiring: the hello's word, the server's yes, waiting notes, answers to 
   assert.match(app.slice(app.indexOf("leaveSendBtn.onclick = async () => {")), /await sendNote\(\{ name: senderName\.value\.trim\(\)\.slice\(0, DC\.NOTE_NAME_MAX\), text: msg, file: lf \|\| null \}\)/);
   assert.ok(!/send-message|maxLeaveAttach|resend/i.test(app.replace(/\/\*[\s\S]*?\*\//g, "")), "no email left in the page");
   assert.ok(!/require\("(multer|resend)"\)/.test(server));
-  for (const id of ["inboxRow", "inboxBtn", "inboxCount", "noteOff", "leaveForm", "ownerLink", "ownerOverlay", "ownerText", "ownerCodeBox",
+  for (const id of ["inboxPane", "inboxList", "inboxClearBtn", "inboxCount", "noteOff", "leaveForm", "ownerLink", "ownerOverlay", "ownerText", "ownerCodeBox",
                     "ownerLockBox", "ownerCodeInput", "ownerForgetBtn", "ownerCopyBtn", "ownerSetupBtn", "ownerUseBtn", "ownerCloseBtn"]) {
     assert.ok(html.includes(`id="${id}"`), id);
   }

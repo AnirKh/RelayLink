@@ -1473,7 +1473,8 @@
   /** A note in the owner's inbox says who left it — as they wrote it, maybe
       nothing — and only a note may hold words and a file together. */
   function noteFromValid(m) {
-    return m.from === undefined || (m.mine === false && typeof m.from === "string" && m.from.length <= 200);
+    return (m.from === undefined || (m.mine === false && typeof m.from === "string" && m.from.length <= 200)) &&
+           (m.got === undefined || Number.isSafeInteger(m.got));
   }
 
   /**
@@ -1506,7 +1507,13 @@
   /** Their messages not yet read. */
   function mailUnread(thread) {
     if (!thread || !Array.isArray(thread.items)) return 0;
-    return thread.items.filter(m => !m.mine && m.at > (thread.read || 0)).length;
+    return thread.items.filter(m => !m.mine && arrivedAt(m) > (thread.read || 0)).length;
+  }
+
+  /** When a message reached this device: `got`, where it was noted — a note's
+      `at` is the sender's clock, which may be off — or else its `at`. */
+  function arrivedAt(m) {
+    return Number.isSafeInteger(m.got) ? m.got : m.at;
   }
 
   const MAIL_REFUSALS = Object.freeze({ "full": "mailBoxFull", "server-full": "mailServerFull", "too-many": "mailTooMany",
@@ -1667,7 +1674,7 @@
     SAVED_SECRET, SAVED_ROOM, PERSON_NAME_MAX, SAVED_PEOPLE_MAX,
     personName, savedPeople, mayOfferSave, saveOfferValid, keepTheirOffer, mayUsePlainKey,
     knockAddressValid, knockState,
-    MAIL_THREAD_MAX, MAIL_SEEN_MAX, MAIL_FILE_MAX, mailFileValid, otherSide, mailStore, mailUnread, mailRefusalKey,
+    MAIL_THREAD_MAX, MAIL_SEEN_MAX, MAIL_FILE_MAX, mailFileValid, otherSide, mailStore, mailUnread, arrivedAt, mailRefusalKey,
     inAppBrowser, inAppAdvice, safariUrl, androidIntentUrl,
     CLEAR_TYPES, mayRenderText, mayHandleFrame,
     mayDeliverRecording, mayStartRecording, mayKeepMicOpen,

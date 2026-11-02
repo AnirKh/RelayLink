@@ -27,7 +27,7 @@
 
    APP_BUILD is written by tools/sync-build.js and by nothing else.
 ══════════════════════════════════════════════ */
-const APP_BUILD = "202611020715-5ec629bc";
+const APP_BUILD = "202611020733-c010c1d3";
 
 function refuseToRunInAStalePage() {
   let builtFor = null;
@@ -269,9 +269,11 @@ const mailCloseBtn   = document.getElementById("mailCloseBtn");
 const mailClearBtn   = document.getElementById("mailClearBtn");
 const mailAttachBtn  = document.getElementById("mailAttachBtn");
 const mailFileInput  = document.getElementById("mailFileInput");
-const inboxRow       = document.getElementById("inboxRow");          // see "OWNER INBOX"
-const inboxBtn       = document.getElementById("inboxBtn");
+const inboxPane      = document.getElementById("inboxPane");         // see "OWNER INBOX"
+const inboxList      = document.getElementById("inboxList");
+const inboxClearBtn  = document.getElementById("inboxClearBtn");
 const inboxCount     = document.getElementById("inboxCount");
+const panelMail      = document.getElementById("panelMail");
 const noteOff        = document.getElementById("noteOff");
 const leaveForm      = document.getElementById("leaveForm");
 const ownerLink      = document.getElementById("ownerLink");
@@ -1692,6 +1694,8 @@ function showLobbyTab(name) {
   }
   /* The list may be minutes old; looking at it is the moment to refresh it. */
   if (name === "rooms" && arriving) requestSessionList();
+  /* On the owner's device, the notes: looked at now. */
+  if (name === "mail") inboxViewed();
 }
 
 /** Which tab an arrow, Home or End key moves to from tab `index` of `count`
@@ -3056,7 +3060,6 @@ async function takeMail(data) {
 function openThread(p) {
   if (mailOpenFor !== p.room) letMailUrlsGo();
   mailOpenFor = p.room;
-  mailOverlay.classList.remove("inbox");                 // a conversation: written in, too
   mailTitle.textContent = p.name;
   mailHint.textContent = t("mailHint");
   mailClearBtn.classList.remove("asking");
@@ -3073,11 +3076,9 @@ function openThread(p) {
 function closeThread() {
   closeImageViewer();                                    // its picture is about to be let go of
   mailOverlay.classList.add("hidden");
-  mailOverlay.classList.remove("inbox");
   mailOpenFor = null;
   letMailUrlsGo();
   drawPeople();
-  drawOwner();
 }
 
 function drawThread() {
@@ -3097,24 +3098,11 @@ function drawThread() {
 function mailBubble(m) {
   const row = document.createElement("div");
   row.className = `mail-item ${m.mine ? "me" : "peer"}`;
-  if (m.from !== undefined) {                            // a note: who left it, as they wrote it
-    const who = document.createElement("div");
-    who.className = "mail-from";
-    who.textContent = m.from || t("noteAnonymous");
-    row.appendChild(who);
-  }
-  if (m.text !== undefined) {
-    const bubble = document.createElement("div");
-    bubble.className = "mail-bubble";
-    fillMessage(bubble, m.text);                         // links tappable, nothing else made of it
-    row.appendChild(bubble);
-  }
-  if (m.file) {                                          // a note may have both
-    const bubble = document.createElement("div");
-    bubble.className = "mail-bubble";
-    fillMailFile(bubble, m);
-    row.appendChild(bubble);
-  }
+  const bubble = document.createElement("div");
+  bubble.className = "mail-bubble";
+  if (m.file) fillMailFile(bubble, m);
+  else fillMessage(bubble, m.text);                      // links tappable, nothing else made of it
+  row.appendChild(bubble);
   const meta = document.createElement("div");
   meta.className = m.state === "refused" ? "mail-meta refused" : "mail-meta";
   const when = new Date(m.at).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
@@ -3159,7 +3147,6 @@ mailClearBtn.onclick = () => {
   letMailUrlsGo();
   drawThread();
   drawPeople();
-  drawOwner();
 };
 
 /* ── Photos and files ────────────────────────
@@ -3305,10 +3292,10 @@ async function fetchSealedFile(named, open, meta, room, id) {
 
 /** A photo drawn, tap to see it big; a file by its name and size, tap to save
     it — from the copy kept here, once it is read back. */
-function fillMailFile(bubble, m) {
+function fillMailFile(bubble, m, room = mailOpenFor, urls = mailUrls) {
   /* DCS.fmtBytes, not fmtBytes: this runs as the page loads, when a tapped
-     "a message waits" opens a conversation — before fmtBytes is declared. */
-  const room = mailOpenFor;
+     "a message waits" opens a conversation — before fmtBytes is declared.
+     `room` and `urls`: a conversation's, or the owner's inbox's. */
   const image = G.presentAs("image", m.file.type).kind === "image";
   const chip = document.createElement("a");
   chip.className = "mail-file";
@@ -3334,12 +3321,12 @@ function fillMailFile(bubble, m) {
     bubble.classList.add("has-image");
     bubble.replaceChildren(img);
   };
-  if (mailUrls.has(key)) { show(mailUrls.get(key)); return; }
+  if (urls.has(key)) { show(urls.get(key)); return; }
   mailFileBlob(room, m.id).then(blob => {
-    if (mailOpenFor !== room) return;
+    if (urls === mailUrls && mailOpenFor !== room) return;   // the conversation closed meanwhile
     if (!blob) { chip.classList.add("missing"); size.textContent = `${DCS.fmtBytes(m.file.size)} · ${t("mailFileMissing")}`; return; }
-    if (!mailUrls.has(key)) mailUrls.set(key, URL.createObjectURL(blob));
-    show(mailUrls.get(key));
+    if (!urls.has(key)) urls.set(key, URL.createObjectURL(blob));
+    show(urls.get(key));
   });
 }
 
@@ -3379,7 +3366,8 @@ drawPeople();
    from then on the server hands it the notes, lets them go when it says so,
    and alerts it where it says (owner-alert). A note is kept here as a
    conversation is (mailStore, under the inbox's name; a file in IndexedDB),
-   and read in the same window, with nothing to write in.
+   and read in the Notes tab itself — asked for: no button, no window, just
+   the notes, day by day, a day opening to its own.
 
    Set up from "Own this app?": a fresh code, to be saved, and the lock it
    makes, to be written into protocol.js. Until that is this code's lock,
@@ -3392,6 +3380,10 @@ let ownerLockHere = null;         // the lock that code makes
 let ownerNonce = null;            // this connection's word, from the server's hello
 let ownerConfirmed = false;       // the server takes this connection for the owner's
 let ownerForgetting = false;
+let inboxClearing = false;
+let inboxNewSince = 0;            // notes after this were new when the tab was last looked at
+const inboxOpenDays = new Set();  // the days opened, by dayKey
+const inboxUrls = new Map();      // `${room}/${id}` → address, for the inbox's pictures
 const noteAnswers = new Map();    // a note's id → what to do with the server's answer
 const NOTE_ANSWER_MS = 20_000;
 
@@ -3486,19 +3478,18 @@ async function takeNotes(data) {
     seen.add(m.id);                                      // opened or not, never tried again
     taken.push(m.id);
     if (!note || !Number.isSafeInteger(m.at)) continue;
-    addToThread(ownerBox, { id: m.id, at: m.at, mine: false, from: note.name,
+    addToThread(ownerBox, { id: m.id, at: m.at, got: Date.now(), mine: false, from: note.name,
                             ...(note.text ? { text: note.text } : {}), ...(note.file ? { file: note.file } : {}) });
     last = note;
     fresh++;
   }
   mailStore.seen[ownerBox] = [...seen].slice(-G.MAIL_SEEN_MAX);
-  if (mailOpenFor === ownerBox) threadFor(ownerBox).read = Date.now();
   storeMail();
   if (taken.length) wsSend({ type: "mail-ack", box: ownerBox, side: "a", ids: taken });
   if (lost) showToast(t("mailFileGone"), "warn");
+  if (!fresh) { drawOwner(); return; }
+  if (inboxShowing()) { inboxViewed(); return; }       // there on screen: shown at once, no toast
   drawOwner();
-  if (!fresh) return;
-  if (mailOpenFor === ownerBox) { drawThread(); return; }
   showToast(I18N[LANG].noteArrived(last.name || t("noteAnonymous")), "info");
   noticeArrival();
 }
@@ -3548,35 +3539,175 @@ function noteAnswered(data, kept) {
 /* ── On screen ───────────────────────────── */
 
 /** The panel: the inbox on the owner's devices, the form to leave a note
-    everywhere else — or a word that it is not ready, with no lock yet. */
+    everywhere else — or a word that it is not ready, with no lock yet. And
+    on the tab, how many notes are new. */
 function drawOwner() {
   const owner = Boolean(ownerKeysHere);
-  inboxRow.classList.toggle("hidden", !owner);
+  inboxPane.classList.toggle("hidden", !owner);
   leaveForm.classList.toggle("hidden", owner || !OWNER_LOCK);
   noteOff.classList.toggle("hidden", owner || Boolean(OWNER_LOCK));
   ownerLink.classList.toggle("is-owner", owner);
   const unread = owner ? G.mailUnread(mailStore.threads[ownerBox]) : 0;
   inboxCount.classList.toggle("hidden", !unread);
   inboxCount.textContent = unread > 9 ? "9+" : String(unread);
+  if (owner) drawInbox();
   if (!ownerOverlay.classList.contains("hidden")) drawOwnerDialog();
 }
 
-function openInbox() {
+/** Is the inbox on screen — the Notes tab, in the lobby? */
+function inboxShowing() {
+  return Boolean(ownerKeysHere) && !panelMail.classList.contains("hidden") && !lobbyScreen.classList.contains("hidden");
+}
+
+/** The Notes tab looked at, on the owner's device: what came since last time
+    is marked new while it is on screen, and its day opens; all of it counts
+    as read now. New and read go by when a note reached this device (`got`),
+    not by the sender's clock. */
+function inboxViewed() {
   if (!ownerKeysHere) return;
-  if (mailOpenFor !== ownerBox) letMailUrlsGo();
-  mailOpenFor = ownerBox;
-  mailOverlay.classList.add("inbox");
-  mailTitle.textContent = t("inboxTitle");
-  mailHint.textContent = t("inboxHint");
-  mailClearBtn.classList.remove("asking");
-  mailClearBtn.textContent = t("mailClear");
-  threadFor(ownerBox).read = Date.now();
+  const thread = threadFor(ownerBox);
+  inboxNewSince = thread.read || 0;
+  for (const m of thread.items) if (G.arrivedAt(m) > inboxNewSince) inboxOpenDays.add(dayKey(m.at));
+  thread.read = Date.now();
   storeMail();
-  mailOverlay.classList.remove("hidden");
-  drawThread();
   drawOwner();
   fetchInbox();                                          // anything newer
 }
+
+/** A day, as the device's calendar has it: "2026-11-02". */
+function dayKey(at) {
+  const d = new Date(at);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+/** "Today", "Yesterday", or the date — with the year, if not this one's. */
+function dayLabel(at, now = Date.now()) {
+  if (dayKey(at) === dayKey(now)) return t("dayToday");
+  const yesterday = new Date(now);
+  yesterday.setDate(yesterday.getDate() - 1);
+  if (dayKey(at) === dayKey(yesterday.getTime())) return t("dayYesterday");
+  const d = new Date(at);
+  return d.toLocaleDateString([], { weekday: "short", month: "short", day: "numeric",
+                                    ...(d.getFullYear() !== new Date(now).getFullYear() ? { year: "numeric" } : {}) });
+}
+
+/** The notes, day by day, newest first. A day shows how many it holds, and
+    how many are new; tapped, it opens to them — and closes again. */
+function drawInbox() {
+  const items = (mailStore.threads[ownerBox] || { items: [] }).items.slice().sort((x, y) => y.at - x.at);
+  if (!items.length) {
+    const empty = document.createElement("p");
+    empty.className = "inbox-empty";
+    empty.textContent = t("inboxEmpty");
+    inboxList.replaceChildren(empty);
+    return;
+  }
+  const days = new Map();
+  for (const m of items) {
+    const key = dayKey(m.at);
+    if (!days.has(key)) days.set(key, []);
+    days.get(key).push(m);
+  }
+  inboxList.replaceChildren(...[...days].map(([key, notes]) => inboxDay(key, notes)));
+}
+
+function inboxDay(key, notes) {
+  const open = inboxOpenDays.has(key);
+  const day = document.createElement("div");
+  day.className = open ? "inbox-day open" : "inbox-day";
+  const head = document.createElement("button");
+  head.type = "button";
+  head.className = "inbox-day-btn";
+  head.setAttribute("aria-expanded", String(open));
+  const name = document.createElement("span");
+  name.className = "inbox-day-name";
+  name.textContent = dayLabel(notes[0].at);
+  const count = document.createElement("span");
+  count.className = "inbox-day-count";
+  count.textContent = I18N[LANG].notesCount(notes.length);
+  head.append(tablerIcon(open ? "chevron-down" : "chevron-right"), name);
+  const fresh = notes.filter(m => G.arrivedAt(m) > inboxNewSince).length;
+  if (fresh) {
+    const badge = document.createElement("span");
+    badge.className = "inbox-day-new";
+    badge.textContent = I18N[LANG].notesNew(fresh);
+    head.appendChild(badge);
+  }
+  head.appendChild(count);
+  head.onclick = () => {
+    if (inboxOpenDays.has(key)) inboxOpenDays.delete(key); else inboxOpenDays.add(key);
+    drawInbox();
+  };
+  day.appendChild(head);
+  if (open) {
+    const list = document.createElement("div");
+    list.className = "inbox-day-notes";
+    list.append(...notes.map(noteRow));
+    day.appendChild(list);
+  }
+  return day;
+}
+
+/** One note: when, who, the words — links tappable, nothing else made of
+    them — and a photo drawn or a file to save. */
+function noteRow(m) {
+  const row = document.createElement("div");
+  row.className = G.arrivedAt(m) > inboxNewSince ? "note-item new" : "note-item";
+  const head = document.createElement("div");
+  head.className = "note-head";
+  const time = document.createElement("span");
+  time.className = "note-time";
+  time.textContent = new Date(m.at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  const who = document.createElement("span");
+  who.className = "note-from";
+  who.textContent = m.from || t("noteAnonymous");
+  head.append(time, who);
+  row.appendChild(head);
+  if (m.text) {
+    const words = document.createElement("div");
+    words.className = "note-text";
+    fillMessage(words, m.text);
+    row.appendChild(words);
+  }
+  if (m.file) {
+    const file = document.createElement("div");
+    file.className = "mail-bubble";
+    fillMailFile(file, m, ownerBox, inboxUrls);
+    row.appendChild(file);
+  }
+  return row;
+}
+
+function letInboxUrlsGo() {
+  for (const url of inboxUrls.values()) URL.revokeObjectURL(url);
+  inboxUrls.clear();
+}
+
+/** "A note waits" tapped: the Notes tab, where the inbox is. */
+function openInbox() {
+  if (ownerKeysHere) showLobbyTab("mail");
+}
+
+/* Clear: a second tap, so one is not enough to lose them. The ids taken are
+   kept, so nothing cleared comes back. */
+inboxClearBtn.onclick = () => {
+  if (!ownerBox) return;
+  if (!inboxClearing) {
+    inboxClearing = true;
+    inboxClearBtn.classList.add("asking");
+    inboxClearBtn.textContent = t("mailClearSure");
+    return;
+  }
+  inboxClearing = false;
+  inboxClearBtn.classList.remove("asking");
+  inboxClearBtn.textContent = t("mailClear");
+  threadFor(ownerBox).items = [];
+  storeMail();
+  forgetMailFiles(ownerBox);
+  letInboxUrlsGo();
+  inboxOpenDays.clear();
+  drawOwner();
+};
 
 function openOwnerDialog() {
   ownerForgetting = false;
@@ -3624,7 +3755,6 @@ async function useOwnerCode(code) {
 }
 
 ownerLink.onclick = openOwnerDialog;
-inboxBtn.onclick = openInbox;
 ownerCloseBtn.onclick = closeOwnerDialog;
 ownerOverlay.onclick = e => { if (e.target === ownerOverlay) closeOwnerDialog(); };
 ownerSetupBtn.onclick = () => useOwnerCode(DC.makeOwnerCode());
@@ -3655,13 +3785,14 @@ ownerCopyBtn.onclick = () => {
 ownerForgetBtn.onclick = () => {
   if (!ownerForgetting) { ownerForgetting = true; drawOwnerDialog(); return; }
   ownerForgetting = false;
-  if (mailOpenFor && mailOpenFor === ownerBox) closeThread();
   if (ownerBox) {
     delete mailStore.threads[ownerBox];
     delete mailStore.seen[ownerBox];
     storeMail();
     forgetMailFiles(ownerBox);
   }
+  letInboxUrlsGo();
+  inboxOpenDays.clear();
   storeOwnerCode(null);
   ownerConfirmed = false;
   ownerFromCode().then(() => drawOwnerDialog());

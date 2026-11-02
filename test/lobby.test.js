@@ -166,15 +166,15 @@ function stand() {
     tabs.push({ dataset: { tab: t.name }, tabIndex: 0, attrs,
                 getAttribute: k => attrs[k], setAttribute: (k, v) => { attrs[k] = v; } });
   }
-  let listRequests = 0;
-  const run = new Function("lobbyTabs", "document", "requestSessionList", `
+  let listRequests = 0, inboxLooks = 0;
+  const run = new Function("lobbyTabs", "document", "requestSessionList", "inboxViewed", `
     let activeLobbyTab = "rooms";
     ${fn("showLobbyTab")}
     return { showLobbyTab, active: () => activeLobbyTab };
-  `)(tabs, { getElementById: id => panels[id] }, () => { listRequests++; });
+  `)(tabs, { getElementById: id => panels[id] }, () => { listRequests++; }, () => { inboxLooks++; });
   const showing = () => TABS.filter(t => !panels[t.panel].classList.contains("hidden")).map(t => t.name);
   const selected = () => tabs.filter(t => t.attrs["aria-selected"] === "true").map(t => t.dataset.tab);
-  return { ...run, tabs, showing, selected, listRequests: () => listRequests };
+  return { ...run, tabs, showing, selected, listRequests: () => listRequests, inboxLooks: () => inboxLooks };
 }
 
 test("choosing a tab shows its panel and hides the other two", () => {
@@ -186,6 +186,15 @@ test("choosing a tab shows its panel and hides the other two", () => {
     assert.equal(s.active(), t.name);
     assert.deepEqual(s.tabs.map(x => x.tabIndex), TABS.map(x => (x.name === t.name ? 0 : -1)));
   }
+});
+
+test("the Notes tab looked at is the owner's inbox looked at — every time, and only that tab", () => {
+  const s = stand();
+  s.showLobbyTab("create");
+  assert.equal(s.inboxLooks(), 0);
+  s.showLobbyTab("mail");
+  s.showLobbyTab("mail");
+  assert.equal(s.inboxLooks(), 2, "looked at again: what came since is read too");
 });
 
 test("a name that is not a tab changes nothing", () => {

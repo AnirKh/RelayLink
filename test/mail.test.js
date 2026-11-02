@@ -401,3 +401,16 @@ test("a restart keeps each file with its message — counted again, and handed o
   assert.equal(M.createMailboxes({ file: path.join(dir, "mailbox.json") }).fileFor(BOX, "b", id(1)), null, "no place for files: none handed over");
   done();
 });
+
+test("new is judged by when a note reached this device — a sender's clock that runs fast or slow changes nothing", () => {
+  const room = `~${"r".repeat(43)}`;
+  const ahead = { id: id(1), at: 9_000, got: 1_000, mine: false, from: "", text: "sent from a fast clock" };
+  const behind = { id: id(2), at: 10, got: 3_000, mine: false, from: "", text: "sent from a slow clock" };
+  assert.equal(G.arrivedAt(ahead), 1_000);
+  assert.equal(G.arrivedAt({ at: 5 }), 5, "noted nowhere: its own time");
+  assert.equal(G.mailUnread({ read: 2_000, items: [ahead, behind] }), 1, "only the one that came after it was read");
+  assert.deepEqual(G.mailStore({ v: 1, threads: { [room]: { items: [ahead] } } }).threads[room].items, [ahead], "kept");
+  for (const got of ["1000", 1.5, null]) {
+    assert.deepEqual(G.mailStore({ v: 1, threads: { [room]: { items: [{ ...ahead, got }] } } }).threads[room].items, [], String(got));
+  }
+});

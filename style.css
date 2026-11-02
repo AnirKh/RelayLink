@@ -626,14 +626,32 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
 .mail-item.me .mail-bubble { background: var(--accent); color: var(--on-accent); }
 .mail-bubble a { color: inherit; text-decoration: underline; }
 .mail-meta { font-size: 11px; color: var(--muted); margin-top: 3px; }
-/* A note in the owner's inbox: who left it, then what — words, a file, or both. */
-.mail-from { font-size: 12px; font-weight: 600; color: var(--muted); margin-bottom: 3px; }
-.mail-item .mail-bubble + .mail-bubble { margin-top: 4px; }
-.overlay.inbox .mail-compose { display: none; }
-
-/* "Leave a note": the owner's way in, and on their devices the inbox. */
-.inbox-row button { width: 100%; display: flex; align-items: center; justify-content: center; gap: 8px; }
-.inbox-row .mail-count { position: static; }
+/* The owner's inbox, in the Notes tab itself: day by day, newest first; a
+   day opens to its notes — the time, who left it, the words, a photo or file. */
+.tab-count.new { background: var(--danger); color: #fff; }
+.lobby-tab[aria-selected="true"] .tab-count.new { background: var(--danger); color: #fff; }
+.inbox-head { display: flex; align-items: center; gap: 8px; }
+.inbox-head h3 { flex: 1; margin: 0; font-size: 17px; }
+.inbox-list { display: flex; flex-direction: column; gap: 6px; margin-top: 4px; }
+.inbox-empty { color: var(--muted); font-size: 14px; text-align: center; padding: 18px 0 6px; }
+.inbox-day { border-radius: 12px; background: var(--input-bg); overflow: hidden; }
+.inbox-day-btn {
+  width: 100%; display: flex; align-items: center; gap: 8px; padding: 11px 12px;
+  background: none; border: 0; border-radius: 0; color: var(--text); font-size: 14.5px; text-align: left; cursor: pointer;
+}
+.inbox-day-btn .ti { font-size: 18px; color: var(--muted); flex-shrink: 0; }
+.inbox-day-name { flex: 1; font-weight: 600; }
+.inbox-day-count { font-size: 12.5px; color: var(--muted); }
+.inbox-day-new { font-size: 11px; font-weight: 700; color: #fff; background: var(--danger); border-radius: 9px; padding: 1px 7px; }
+.inbox-day-notes { display: flex; flex-direction: column; gap: 2px; padding: 0 8px 8px; }
+.note-item { padding: 9px 10px; border-radius: 10px; background: var(--card); }
+.note-item.new { box-shadow: inset 3px 0 0 var(--accent); }
+.note-head { display: flex; align-items: baseline; gap: 8px; margin-bottom: 3px; }
+.note-time { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.note-from { font-size: 13.5px; font-weight: 600; overflow-wrap: anywhere; }
+.note-text { font-size: 14px; line-height: 1.45; white-space: pre-wrap; overflow-wrap: anywhere; }
+.note-text a { color: inherit; text-decoration: underline; }
+.note-item .mail-bubble { margin-top: 6px; display: inline-block; max-width: 100%; }
 .owner-link {
   display: block; margin: 14px auto 0; background: none; border: 0; padding: 4px 8px;
   color: var(--muted); font-size: 12.5px; text-decoration: underline; cursor: pointer;
