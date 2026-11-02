@@ -159,6 +159,11 @@ const { slidingAllow, pruneExpired, safeLabel, joinVerdict } = require("./rateli
 
 const app    = express();
 const server = http.createServer(app);
+/* A whole request may take this long to arrive. Node's own five minutes cut
+   off a 50 MB photo or file sent over a slow phone connection (under about
+   1.4 Mbit/s); the headers still have Node's minute, and uploads are few at
+   once and limited per network. */
+server.requestTimeout = 20 * 60 * 1000;
 
 /* Mounted under a path by a proxy that passes the path on as it came — say
    Tailscale Funnel at /dc, should it not take it off itself (see deploy/pi).

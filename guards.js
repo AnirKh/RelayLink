@@ -1454,7 +1454,7 @@
   const MAIL_SEEN_MAX   = 500;    // ids remembered per person, so none is shown twice
   const MAIL_ID = /^[A-Za-z0-9_-]{22}$/;
   const MAIL_STATES = ["sending", "kept", "refused"];
-  const MAIL_FILE_MAX = 25 * 1024 * 1024;   // a photo or file that waits: the Pi keeps this much, sealed
+  const MAIL_FILE_MAX = 50 * 1024 * 1024;   // a photo or file that waits: the Pi keeps this much, sealed
 
   /** A waiting photo or file, as described in its message: a name to show, a
       type (only ever believed as presentAs allows), its size in bytes. */

@@ -39,8 +39,8 @@ const BOX_MAX_CHARS  = 2_000_000;                 // the sealed text's length, s
 const ALL_MAX_CHARS  = 50_000_000;
 const CT_MAX_CHARS   = 65_536;                    // a 10 000-character message, sealed, fits
 const SAVE_DELAY_MS  = 2000;
-const FILE_MAX_BYTES     = 25 * 1024 * 1024 + 28; // a 25 MB file, sealed: 12 of IV, 16 of tag
-const BOX_MAX_FILE_BYTES = 200 * 1024 * 1024;
+const FILE_MAX_BYTES     = 50 * 1024 * 1024 + 28; // a 50 MB file, sealed: 12 of IV, 16 of tag
+const BOX_MAX_FILE_BYTES = 400 * 1024 * 1024;     // eight of the largest, waiting for one person
 const ALL_MAX_FILE_BYTES = 2 * 1024 * 1024 * 1024;
 const ORPHAN_MS          = 10 * 60 * 1000;        // a file sent and never described
 

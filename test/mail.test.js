@@ -345,7 +345,9 @@ test("a file is kept only with the message that describes it — sent first, tak
   });
 });
 
-test("files: 25 MB each, 200 MB a mailbox, 2 GB in all — and none where there is nowhere to keep them", () => {
+test("files: 50 MB each, 400 MB a mailbox, 2 GB in all — and none where there is nowhere to keep them", () => {
+  assert.equal(M.FILE_MAX_BYTES, 50 * 1024 * 1024 + 28);
+  assert.equal(G.MAIL_FILE_MAX, 50 * 1024 * 1024, "the page and the server agree");
   const { box, done } = withFiles();
   assert.equal(M.createMailboxes().fileRoom(BOX, "b", 100), "off");
   assert.equal(M.createMailboxes().filesOn, false);

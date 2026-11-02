@@ -164,7 +164,7 @@ test("turned away: without the app's header, misnamed, too big, or not the size 
     const res = await request({ method: "POST", body: bytes, headers: { ...CLIENT, "x-dc-mail": named } });
     assert.deepEqual([res.status, res.json.code], [400, "invalid"], named);
   }
-  const big = await upload(b, "b", newId(), bytes, { size: 25 * 1024 * 1024 + 29, chunked: true });
+  const big = await upload(b, "b", newId(), bytes, { size: 50 * 1024 * 1024 + 29, chunked: true });
   assert.deepEqual([big.status, big.json.code], [413, "too-large"], "said before a byte is read");
   const tiny = await upload(b, "b", newId(), Buffer.alloc(10));
   assert.deepEqual([tiny.status, tiny.json.code], [413, "too-large"], "smaller than any sealed file");
@@ -189,7 +189,7 @@ test("asked from the app's page: the browser is told it may send the file's name
 
 test("the server says how big a file can wait here", async () => {
   const ping = await request({ url: "/api/ping" });
-  assert.equal(ping.json.mailFileMaxBytes, 25 * 1024 * 1024 + 28);
+  assert.equal(ping.json.mailFileMaxBytes, 50 * 1024 * 1024 + 28, "50 MB, sealed");
 });
 
 test("sending files is limited per network", async () => {

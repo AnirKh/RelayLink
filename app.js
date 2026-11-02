@@ -27,7 +27,7 @@
 
    APP_BUILD is written by tools/sync-build.js and by nothing else.
 ══════════════════════════════════════════════ */
-const APP_BUILD = "202611020733-c010c1d3";
+const APP_BUILD = "202611020756-b4b4f8c2";
 
 function refuseToRunInAStalePage() {
   let builtFor = null;
@@ -3151,7 +3151,7 @@ mailClearBtn.onclick = () => {
 
 /* ── Photos and files ────────────────────────
    One that waits is sealed here whole (DC.sealMailFile) and sent to the
-   server first — over the web, not the link: it can be 25 MB — then
+   server first — over the web, not the link: it can be 50 MB — then
    described in a message of its own, sealed like any other ({ file: { name,
    type, size } }, DC.sealMailBody), which goes as any other. The other
    device takes that message, fetches the file, opens it, and keeps it.
