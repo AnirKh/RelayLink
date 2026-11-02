@@ -1494,7 +1494,10 @@ wss.on("connection", (ws, req) => {
           if (!mailListeners.has(key)) mailListeners.set(key, new Set());
           mailListeners.get(key).add(ws);
           mailFetchedAt.set(key, Date.now());
-          const items = mail.take(b.box, b.side);
+          /* A photo or file only to a page that says it can take one. An app
+             from before them opened its message as no text, took it for
+             garbled — and said it had it, so it was gone for good. */
+          const items = mail.take(b.box, b.side).filter(m => !m.file || data.files === true);
           if (items.length) ws.send(JSON.stringify({ type: "mail", box: b.box, side: b.side, items }));
           /* Someone already waiting in the room for this side: said now, not
              only when the next one starts (see tellSavedWaiting). */

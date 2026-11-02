@@ -171,12 +171,20 @@ test("opened from both kinds of picture bubble; closed before a chat is left", (
   assert.match(back, /if \(action === "close"\) \{ closeImageViewer\(\); armBackGuard\(\); return; \}/);
 });
 
-test("the viewer is a dialog over the call and under the questions, with named buttons", () => {
+test("the viewer is a dialog over the call and every window — the offline messages it opens from among them — under only an incoming call", () => {
   assert.match(html, /<div id="imageViewer" class="image-viewer hidden" role="dialog" aria-modal="true"/);
   assert.match(html, /<a id="imageViewerSave"[^>]*download data-i18n-aria="imageSave"/);
   assert.match(html, /<button id="imageViewerClose"[^>]*data-i18n-aria="imageClose"/);
-  const z = Number(css.match(/\.image-viewer \{[^}]*z-index:\s*(\d+)/)[1]);
-  assert.ok(z > 250 && z < 999, `z-index ${z}: over the call and the drop hint, under the incoming-call question`);
+  /* The z-index of the rule that starts a line with `sel {`. */
+  const layer = sel => {
+    const rule = css.slice(css.indexOf(`\n${sel} {`) + 1);
+    return Number(rule.slice(0, rule.indexOf("}")).match(/z-index:\s*(\d+)/)[1]);
+  };
+  const z = layer(".image-viewer");
+  assert.ok(z > layer(".overlay"), `z-index ${z}: over every window, the offline messages among them`);
+  assert.ok(z > layer(".author") && z > layer(".lang-switcher"), "and over the corner buttons");
+  assert.ok(z < layer("#callRequestModal"), "under an incoming call's question, which still comes first");
+  assert.match(html, /<div id="callRequestModal" class="overlay hidden">/);
 });
 
 /* ══════════════════════════════════════════

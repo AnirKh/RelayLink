@@ -856,7 +856,7 @@ test("each link that comes up asks afresh: a wait that ended while it was down i
   p.api.theyWait(anu.room, true);
   p.api.mailAtConnect();
   assert.ok(!p.rows()[0].classList.contains("knocking"));
-  assert.deepEqual(p.log.ws.at(-1), { type: "mail-fetch", boxes: [{ box: anu.room, side: anu.side }] },
+  assert.deepEqual(p.log.ws.at(-1), { type: "mail-fetch", files: true, boxes: [{ box: anu.room, side: anu.side }] },
     "and asked again, with the mailboxes — the server says again who still waits");
 });
 
@@ -1540,7 +1540,8 @@ test("sent again at each connection until the server says it has it — then nev
   p.log.ws.length = 0;
   p.api.mailAtConnect();
   assert.deepEqual(p.log.ws.filter(m => m.type === "mail-drop").map(m => m.id), [first.id, second.id], "the link was down: both again, the same ids");
-  assert.deepEqual(p.log.ws.find(m => m.type === "mail-fetch"), { type: "mail-fetch", boxes: [{ box: anu.room, side: "a" }] });
+  assert.deepEqual(p.log.ws.find(m => m.type === "mail-fetch"), { type: "mail-fetch", files: true, boxes: [{ box: anu.room, side: "a" }] },
+    "saying it can take photos and files");
   p.api.mailAnswered({ type: "mail-dropped", id: first.id }, true);
   p.log.ws.length = 0;
   p.api.mailAtConnect();

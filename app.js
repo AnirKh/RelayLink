@@ -27,7 +27,7 @@
 
    APP_BUILD is written by tools/sync-build.js and by nothing else.
 ══════════════════════════════════════════════ */
-const APP_BUILD = "202611020542-b1224920";
+const APP_BUILD = "202611020554-04e7068e";
 
 function refuseToRunInAStalePage() {
   let builtFor = null;
@@ -2958,7 +2958,7 @@ function mailAtConnect() {
 }
 
 function fetchMail() {
-  if (people.length) wsSend({ type: "mail-fetch", boxes: people.map(p => ({ box: p.room, side: p.side })) });
+  if (people.length) wsSend({ type: "mail-fetch", files: true, boxes: people.map(p => ({ box: p.room, side: p.side })) });
 }
 
 /** The server kept ours — or would not, and why. */

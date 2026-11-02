@@ -102,7 +102,7 @@ test("a file sent, described, fetched by the other side exactly as sent — and 
   a.send_({ type: "mail-drop", box: b, to: "b", ...describe(id) });
   assert.deepEqual(await waitFor(a, "mail-dropped"), { type: "mail-dropped", id });
   const them = await client();
-  them.send_({ type: "mail-fetch", boxes: [{ box: b, side: "b" }] });
+  them.send_({ type: "mail-fetch", files: true, boxes: [{ box: b, side: "b" }] });
   const got = await waitFor(them, "mail");
   assert.deepEqual(got.items.map(m => [m.id, m.file]), [[id, bytes.length]], "its size said with it");
   const file = await download(b, "b", id);
@@ -118,6 +118,24 @@ test("a file sent, described, fetched by the other side exactly as sent — and 
   await sleep(300);
   assert.equal((await download(b, "b", id)).status, 404, "gone once they have it");
   assert.equal(fs.readdirSync(FILES).filter(name => fs.statSync(path.join(FILES, name)).size === bytes.length).length, 0, "gone from disk");
+});
+
+test("an app from before photos and files is not handed one — so it cannot throw it away — and the words still reach it", async () => {
+  const b = box("oldapp"), fileId = newId(), textId = newId();
+  assert.equal((await upload(b, "b", fileId, crypto.randomBytes(500))).status, 200);
+  const a = await client();
+  a.send_({ type: "mail-drop", box: b, to: "b", ...describe(fileId) });
+  a.send_({ type: "mail-drop", box: b, to: "b", ...describe(textId, { file: undefined }) });
+  await sleep(300);
+  const old = await client();
+  old.send_({ type: "mail-fetch", boxes: [{ box: b, side: "b" }] });
+  assert.deepEqual((await waitFor(old, "mail")).items.map(m => m.id), [textId], "the words only");
+  old.send_({ type: "mail-ack", box: b, side: "b", ids: [textId] });
+  await sleep(200);
+  const updated = await client();
+  updated.send_({ type: "mail-fetch", files: true, boxes: [{ box: b, side: "b" }] });
+  assert.deepEqual((await waitFor(updated, "mail")).items.map(m => [m.id, m.file]), [[fileId, 500]], "the photo still waits for an app that can take it");
+  assert.equal((await download(b, "b", fileId)).status, 200);
 });
 
 test("a message for a file that was never sent is refused", async () => {

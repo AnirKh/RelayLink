@@ -1243,10 +1243,12 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
 
 /* ── PICTURE VIEWER ────────────────────────── */
 /* A picture from the chat, over it — see "PICTURE VIEWER" in app.js. Above
-   the call (200) and the dropped-file hint, under the dialogs (999), so an
-   incoming call's question still comes first. */
+   the call (200), the dropped-file hint, the dialogs (999) — a photo is opened
+   from the offline messages, which is one, and opened behind it — and the
+   corner buttons (1001). Under only an incoming call's question (1003), which
+   still comes first. */
 .image-viewer {
-  position: fixed; inset: 0; z-index: 900;
+  position: fixed; inset: 0; z-index: 1002;
   height: var(--app-height);
   background: rgba(0,0,0,0.94);
   display: flex; flex-direction: column;
@@ -1390,6 +1392,7 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
 .save-sys .reconnect-sys-btn i { font-size: 17px; color: var(--accent-text); }
 
 /* ── INCOMING CALL MODAL ───────────────────── */
+#callRequestModal { z-index: 1003; }    /* over a picture being looked at, too */
 #callRequestModal .modal { text-align: center; }
 #callRequestModal .call-modal-actions {
   display: flex; gap: 10px; margin-top: 16px;
