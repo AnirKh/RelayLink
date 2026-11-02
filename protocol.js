@@ -405,8 +405,10 @@
      could not slip in a lock of its own and read what visitors write next.
   ══════════════════════════════════════════ */
 
-  /** The owner's lock, or null: no inbox yet, and no note can be left. */
-  const OWNER_LOCK = null;
+  /** The owner's lock, or null: no inbox yet, and no note can be left. Made
+      on the owner's phone on 2 November 2026 ("Set up my inbox"). */
+  const OWNER_LOCK = "BDRmy1TQYlYIUgo-54R6aoaHGYhnhV9vdXsDYpLKouOVbi8Nuw7doVwwA5qmGbyLLBA-XTrTqsQLD6VKW8SmoKs." +
+                     "BM3jwvOzvxX9DGn4Vwv9baDKnfcsoO0-34WJ_MWqZgIUZ2dtp_2X2G3OT0qRdvHNYTE9meauONZo3AwhHQHpAM8";
 
   const OWNER_CODE_ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";   // Crockford's: no I, L, O or U to misread
   const OWNER_CODE_CHARS    = 24;                                   // 5 bits each: 120
