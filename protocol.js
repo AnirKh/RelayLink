@@ -594,6 +594,41 @@
     return b64urlBytes(new Uint8Array(sig));
   }
 
+  /* ══════════════════════════════════════════
+     "Where are you?" — asked by the owner only
+     The owner's device signs the question with the lock's signing key, bound
+     to this chat's code and a one-time word, and the other side opens it only
+     if OWNER_LOCK checks it. A hidden button would stop nobody: a page of
+     anyone's own could still send the question. Bound to the chat, a signed
+     question one person was given cannot be passed on to someone else.
+  ══════════════════════════════════════════ */
+
+  /** The question's one-time word: 16 random bytes, base64url (22 characters). */
+  function makeWhereNonce() {
+    return b64urlBytes(globalThis.crypto.getRandomValues(new Uint8Array(16)));
+  }
+
+  /** What the owner signs: this chat's code, and the word. */
+  function whereAskData(code, nonce) {
+    return sealData(["dc-where-1", code, nonce]);
+  }
+
+  /** ECDSA P-256 over SHA-256 — r‖s, 64 bytes, in base64url. */
+  async function signWhereAsk(keys, code, nonce) {
+    const sig = await subtle.sign({ name: "ECDSA", hash: "SHA-256" }, keys.sign.key, whereAskData(code, nonce));
+    return b64urlBytes(new Uint8Array(sig));
+  }
+
+  /** Was this question signed by the key the lock names, for this chat? */
+  async function checkWhereAsk(lock, code, nonce, sig) {
+    const keys = parseLock(lock);
+    if (!keys || typeof code !== "string" || !code || typeof nonce !== "string" || typeof sig !== "string") return false;
+    try {
+      const key = await subtle.importKey("raw", keys.sign, { name: "ECDSA", namedCurve: "P-256" }, false, ["verify"]);
+      return await subtle.verify({ name: "ECDSA", hash: "SHA-256" }, key, unb64url(sig), whereAskData(code, nonce));
+    } catch (_) { return false; }
+  }
+
   /** UUID v4 shape, used as the transfer id. */
   function makeTransferId() {
     return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, c => {
@@ -614,6 +649,7 @@
     mailFileAad, sealMailFile, openMailFile,
     OWNER_LOCK, OWNER_CODE_CHARS, NOTE_NAME_MAX, NOTE_TEXT_MAX, NOTE_SEAL_EXTRA,
     makeOwnerCode, normalizeOwnerCode, ownerKeys, parseLock, inboxName,
-    sealNote, openNote, sealNoteFile, openNoteFile, ownerProofData, proveOwner
+    sealNote, openNote, sealNoteFile, openNoteFile, ownerProofData, proveOwner,
+    makeWhereNonce, whereAskData, signWhereAsk, checkWhereAsk
   };
 });

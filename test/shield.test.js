@@ -55,11 +55,13 @@ function element() {
 function draw({ ready = false, secure = false, verified = false, path = null, addresses = null,
                 peer = null, mine = { os: "android", browser: "chrome" }, keyAgreement = "ECDH" } = {}) {
   const dom = Object.fromEntries(ELEMENTS.map(name => [name, element()]));
-  const names  = ["G", "DCS", "t", "e2eReady", "e2eSecureMode", "e2eVerified", "_lastPath", "_lastAddresses", "peerDevice", "MY_DEVICE", "keyAgreement", ...ELEMENTS];
-  const values = [G, DCS, key => key, ready, secure, verified, path, addresses, peer, mine, keyAgreement, ...ELEMENTS.map(n => dom[n])];
+  let whereDrawn = 0;      // the owner's "Where are you?" button follows the shield — see where.test.js
+  const names  = ["G", "DCS", "t", "e2eReady", "e2eSecureMode", "e2eVerified", "_lastPath", "_lastAddresses", "peerDevice", "MY_DEVICE", "keyAgreement", "drawWhereBtn", ...ELEMENTS];
+  const values = [G, DCS, key => key, ready, secure, verified, path, addresses, peer, mine, keyAgreement, () => { whereDrawn++; }, ...ELEMENTS.map(n => dom[n])];
   new Function(...names, `${SOURCE}\nupdateShield();`)(...values);
   return {
     dom,
+    whereDrawn,
     shield:   ["idle", "warn", "ok"].filter(s => dom.keyVerifyDropdown.classList.has(`verify-${s}`)),
     icon:     dom.keyVerifyIcon.className,
     label:    dom.keyVerifyBtn.attributes["aria-label"],
@@ -108,6 +110,7 @@ test("the sentence and the shield agree in every situation", () => {
     assert.equal(seen.sentence, { idle: "factReadIdle", warn: "factReadWarn", ok: "factReadOk" }[state], `sentence wrong for ${where}`);
     assert.equal(seen.sentence === "factReadOk", state === "ok", `"only the two of you" shown when the shield is ${state}: ${where}`);
     assert.ok(seen.label, `no readable label for ${where}`);
+    assert.equal(seen.whereDrawn, 1, `the owner's "Where are you?" button is not redrawn for ${where}`);
   }
 });
 

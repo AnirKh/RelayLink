@@ -325,6 +325,8 @@ function page({ saved = [], storage = "works", connected = true, checked = true,
     /* The chat's call: what the row's call buttons end in, stood in for. */
     const callRequestModal = env.callRequestModal;
     function requestCall(video) { env.calls.push(video); }
+    /* The owner's "Where are you?" button, redrawn when the code changes — see where.test.js. */
+    function drawWhereBtn() { env.whereDrawn = (env.whereDrawn || 0) + 1; }
     let currentSession = null, isConnecting = false, listJoinId = null, pinJoinInFlight = false, isHost = false;
     let hostKey = null, reclaimPending = false, roomSecret = null, pendingRoomSecret = null, pakeCode = null;
     let roomKind = env.kind, guestKey = null, seatPending = false, dataChannel = null;

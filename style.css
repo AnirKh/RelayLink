@@ -1442,6 +1442,18 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
 }
 .save-sys .reconnect-sys-btn { display: flex; align-items: center; gap: 8px; }
 .save-sys .reconnect-sys-btn i { font-size: 17px; color: var(--accent-text); }
+/* "Where are you?" — the question's two buttons, and the card both sides see.
+   See askWhere() in app.js. */
+.where-sys-actions { display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; }
+.where-card {
+  align-self: center; width: min(360px, 92%); margin: 8px 0; padding: 10px 14px;
+  border: 1px solid var(--border); border-radius: 12px; background: var(--input-bg);
+  font-size: 12.5px; line-height: 1.45;
+}
+.where-card-title { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; color: var(--text); font-weight: 600; }
+.where-card-title i { font-size: 16px; color: var(--accent-text); }
+.where-card dl { margin: 0; }
+.where-card a { color: var(--accent-text); }
 
 /* ── INCOMING CALL MODAL ───────────────────── */
 #callRequestModal { z-index: 1003; }    /* over a picture being looked at, too */

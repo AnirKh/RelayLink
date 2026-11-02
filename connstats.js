@@ -110,6 +110,28 @@
   const isV6 = address => typeof address === "string" && address.indexOf(":") !== -1;
 
   /**
+   * An address on the open internet — the only kind a city can be looked up
+   * for. A home network's (10/8, 172.16/12, 192.168/16), a mobile carrier's
+   * shared one (100.64/10), loopback, link-local, multicast and IPv6's local
+   * and unique-local ranges are not; IPv6 counts only as global unicast (2000::/3).
+   */
+  function isPublicAddress(address) {
+    if (typeof address !== "string") return false;
+    const v4 = address.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+    if (v4) {
+      const [a, b, c, d] = v4.slice(1).map(Number);
+      if ([a, b, c, d].some(n => n > 255)) return false;
+      if (a === 0 || a === 10 || a === 127 || a >= 224) return false;
+      if (a === 100 && b >= 64 && b <= 127) return false;
+      if (a === 169 && b === 254) return false;
+      if (a === 172 && b >= 16 && b <= 31) return false;
+      if (a === 192 && b === 168) return false;
+      return true;
+    }
+    return isV6(address) && /^[0-9a-f:]+$/i.test(address) && /^[23][0-9a-f]{0,3}:/i.test(address);
+  }
+
+  /**
    * This device's public address, as a STUN server reported it.
    *
    * Needed because the route in use almost never names it. ICE files a
@@ -388,7 +410,7 @@
   return {
     RTT_GOOD, RTT_FAIR,
     selectedCandidatePair, describePath,
-    usableAddress, pathAddresses,
+    usableAddress, pathAddresses, isPublicAddress,
     OS_NAMES, BROWSER_NAMES, describeDevice, deviceLabel,
     qualityFromRtt, trafficTotals, callVideoStats, callAudioStats, fmtBytes, timeAgo
   };

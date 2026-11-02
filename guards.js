@@ -1571,6 +1571,85 @@
   }
 
   /* ══════════════════════════════════════════
+     "Where are you?" — the owner asks, the other side chooses
+  ══════════════════════════════════════════ */
+
+  const WHERE_NONCE = /^[A-Za-z0-9_-]{22}$/;      // 16 bytes, base64url
+  const WHERE_SIG   = /^[A-Za-z0-9_-]{86}$/;      // ECDSA P-256 r‖s, 64 bytes
+  /* What the browser's network information may say, and nothing else. */
+  const WHERE_NET_TYPES  = Object.freeze(["wifi", "cellular", "ethernet", "bluetooth", "wimax", "other", "none", "unknown"]);
+  const WHERE_NET_SPEEDS = Object.freeze(["slow-2g", "2g", "3g", "4g"]);
+  const WHERE_LOC_ERRORS = Object.freeze(["denied", "unavailable", "timeout", "unsupported"]);
+
+  /** May this device ask where the other side is? The owner's only — its code
+      makes the app's lock — and only in a checked chat: the answer says where
+      someone is, and an unchecked chat may have a middleman. */
+  function mayAskWhere(o) {
+    return Boolean(o) && o.owner === true && o.green === true;
+  }
+
+  /** A question in the shape of one. Whether the owner signed it, for this
+      chat, DC.checkWhereAsk says. */
+  function whereAskValid(d) {
+    return Boolean(d) && typeof d.nonce === "string" && WHERE_NONCE.test(d.nonce)
+      && typeof d.sig === "string" && WHERE_SIG.test(d.sig);
+  }
+
+  const within = (v, lo, hi) => typeof v === "number" && Number.isFinite(v) && v >= lo && v <= hi;
+
+  /**
+   * The answer to the question we asked — the one word must match — kept to
+   * what it may say, or null. Everything in it is what the other phone says
+   * about itself; a part that is not in shape is dropped, not the answer.
+   * The model and language are the phone's own words, so they are held to
+   * letters, digits and a few marks, and shown as text.
+   *
+   * @returns {{loc: {lat: number, lon: number, acc: number}|null, locError: string|null,
+   *            battery: {level: number, charging: boolean}|null, os: string|null, browser: string|null,
+   *            model: string, osVersion: string, net: string|null, speed: string|null,
+   *            lang: string, screen: {w: number, h: number}|null}|null}
+   */
+  function whereAnswer(d, nonce) {
+    if (!d || typeof nonce !== "string" || !WHERE_NONCE.test(nonce) || d.nonce !== nonce) return null;
+    const code = v => (typeof v === "string" && /^[a-z]{1,12}$/.test(v) ? v : null);
+    const loc = d.loc && typeof d.loc === "object" ? d.loc : null;
+    const placed = loc && within(loc.lat, -90, 90) && within(loc.lon, -180, 180) && within(loc.acc, 0, 1e6);
+    const model = typeof d.model === "string" ? d.model.trim() : "";
+    const screen = d.screen && typeof d.screen === "object" ? d.screen : null;
+    return {
+      loc: placed ? { lat: loc.lat, lon: loc.lon, acc: Math.round(loc.acc) } : null,
+      locError: placed ? null : (loc && WHERE_LOC_ERRORS.includes(loc.err) ? loc.err : "unavailable"),
+      battery: d.battery && within(d.battery.level, 0, 1) && typeof d.battery.charging === "boolean"
+        ? { level: d.battery.level, charging: d.battery.charging } : null,
+      os: code(d.os), browser: code(d.browser),
+      model: /^[\p{L}\p{N}][\p{L}\p{N} ._()+/-]{0,59}$/u.test(model) ? model : "",
+      osVersion: typeof d.osVersion === "string" && /^\d{1,3}(\.\d{1,5}){0,3}$/.test(d.osVersion) ? d.osVersion : "",
+      net: WHERE_NET_TYPES.includes(d.net) ? d.net : null,
+      speed: WHERE_NET_SPEEDS.includes(d.speed) ? d.speed : null,
+      lang: typeof d.lang === "string" && d.lang.length <= 35 && /^[A-Za-z]{2,3}(-[A-Za-z0-9]{1,8}){0,3}$/.test(d.lang) ? d.lang : "",
+      screen: screen && Number.isInteger(screen.w) && Number.isInteger(screen.h) && within(screen.w, 1, 20000) && within(screen.h, 1, 20000)
+        ? { w: screen.w, h: screen.h } : null
+    };
+  }
+
+  /**
+   * The city, region, country and provider from the address lookup (ipinfo's
+   * reply) — or null when it says nothing usable, or that the address is a
+   * private one. Words only, without control characters, and short; the
+   * provider without its network number ("AS15169 Google LLC" → "Google LLC").
+   */
+  function ipPlace(j) {
+    if (!j || typeof j !== "object" || j.bogon === true) return null;
+    const word = v => (typeof v === "string" ? v.replace(/[\u0000-\u001f\u007f]/g, "").trim().slice(0, 80) : "");
+    const place = {
+      city: word(j.city), region: word(j.region),
+      country: typeof j.country === "string" && /^[A-Z]{2}$/.test(j.country) ? j.country : "",
+      provider: word(j.org).replace(/^AS\d+\s+/, "")
+    };
+    return place.city || place.region || place.country || place.provider ? place : null;
+  }
+
+  /* ══════════════════════════════════════════
      The server's refusals, in the user's language
   ══════════════════════════════════════════ */
 
@@ -1680,6 +1759,7 @@
     SAVED_SECRET, SAVED_ROOM, PERSON_NAME_MAX, SAVED_PEOPLE_MAX,
     personName, savedPeople, mayOfferSave, saveOfferValid, keepTheirOffer, mayUsePlainKey,
     knockAddressValid, knockState,
+    WHERE_NET_TYPES, WHERE_NET_SPEEDS, WHERE_LOC_ERRORS, mayAskWhere, whereAskValid, whereAnswer, ipPlace,
     MAIL_THREAD_MAX, MAIL_SEEN_MAX, MAIL_FILE_MAX, mailFileValid, otherSide, mailStore, mailUnread, arrivedAt, mailRefusalKey,
     inAppBrowser, inAppAdvice, safariUrl, androidIntentUrl,
     CLEAR_TYPES, mayRenderText, mayHandleFrame,

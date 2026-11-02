@@ -27,7 +27,7 @@
 
    APP_BUILD is written by tools/sync-build.js and by nothing else.
 ══════════════════════════════════════════════ */
-const APP_BUILD = "202611020826-c2c4c297";
+const APP_BUILD = "202611021120-4cbe77c9";
 
 function refuseToRunInAStalePage() {
   let builtFor = null;
@@ -208,6 +208,7 @@ const fileInput        = document.getElementById("fileInput");
 const voiceRecordBtn   = document.getElementById("voiceRecordBtn");
 const voiceCallBtn     = document.getElementById("voiceCallBtn");
 const videoCallBtn     = document.getElementById("videoCallBtn");
+const whereBtn         = document.getElementById("whereBtn");
 const callOverlay      = document.getElementById("callOverlay");
 const callStatusLabel  = document.getElementById("callStatusLabel");
 const remoteVideo      = document.getElementById("remoteVideo");
@@ -3424,6 +3425,7 @@ async function ownerFromCode() {
     if (keys && keys.lock === OWNER_LOCK) ownerKeysHere = keys;
   }
   drawOwner();
+  drawWhereBtn();
   ownerConnect();
 }
 
@@ -3909,6 +3911,8 @@ function closePeerConnection() {
   if (saveDialog && saveDialog.mode !== "rename") closeSaveDialog();
   knockShared = false;                     // a new channel is told again
   knockEarly = null;
+  whereAsked = null;                       // a question, and its answer, belong to the channel too
+  whereAskedHere = null;
   e2eVerifyCode = "";
   e2eVerified = false;
   e2eLocalPubRaw = null;
@@ -5585,6 +5589,19 @@ function handleTextMessage(data, sealed = false) {
       receiveKnockAddress(data);
       break;
 
+    /* "Where are you?" — sealed only, like everything after the handshake. */
+    case "where-ask":
+      receiveWhereAsk(data);
+      break;
+
+    case "where-answer":
+      receiveWhereAnswer(data);
+      break;
+
+    case "where-decline":
+      receiveWhereDecline(data);
+      break;
+
     case "transfer-meta":
       handleTransferMeta(data);
       break;
@@ -6591,6 +6608,7 @@ function updateShield() {
   /* The panel's first line says in a sentence what the shield says in a
      colour, so the two are redrawn together and cannot disagree. */
   renderShieldFacts();
+  drawWhereBtn();                              // the owner's question waits for green
 }
 
 /* What the chat is encrypted with. Written out rather than read from the keys,
@@ -8531,6 +8549,236 @@ function scrollBottom(force = false) {
   newMessagesBtn.classList.remove("hidden");
 }
 newMessagesBtn.onclick = () => scrollBottom(true);
+
+/* ══════════════════════════════════════════════
+   WHERE ARE YOU — ASKED BY THE OWNER
+══════════════════════════════════════════════ */
+
+/* Asked for: the app's owner, talking with their child, wanted a button that
+   asks where the child is right now — the place, the battery, the phone.
+   Only the owner's device shows it, and the question is signed with the
+   owner's key (DC.signWhereAsk), so the other side shows it only if the
+   app's own lock checks it: a page of anyone else's making cannot ask.
+   The other side always chooses — Share or Not now — and the phone asks for
+   the location itself as well. The answer travels sealed in the chat and is
+   drawn on both sides, so they see exactly what they shared. Only in a
+   checked chat: an unchecked one may have a middleman, and the answer says
+   where someone is. */
+const WHERE_LOCATION_WAIT_MS = 20000;
+const WHERE_LOOKUP_WAIT_MS   = 8000;
+/* City and internet provider from the other side's address, looked up by the
+   owner's browser; the only place it goes. Allowed in csp.js. */
+const WHERE_LOOKUP = "https://ipinfo.io";
+let whereAsked = null;        // ours: { nonce } until they answer or say no
+let whereAskedHere = null;    // theirs: { nonce } while the choice is on screen
+
+function chatGreen() {
+  return G.shieldState({ ready: e2eReady, secure: e2eSecureMode, verified: e2eVerified }) === "ok";
+}
+
+/** The button: on the owner's device, in a checked chat. */
+function drawWhereBtn() {
+  if (!whereBtn) return;
+  whereBtn.classList.toggle("hidden", !G.mayAskWhere({ owner: Boolean(ownerKeysHere), green: chatGreen() }));
+}
+
+async function askWhere() {
+  if (!G.mayAskWhere({ owner: Boolean(ownerKeysHere), green: chatGreen() })) { showToast(t("whereNotGreen"), "warn"); return; }
+  const code = e2eVerifyCode;
+  const nonce = DC.makeWhereNonce();
+  let sig;
+  try { sig = await DC.signWhereAsk(ownerKeysHere, code, nonce); }
+  catch (_) { showToast(t("messageNotSent"), "error"); return; }
+  if (code !== e2eVerifyCode) return;                  // another chat by now
+  if (!await dcSendE2e({ type: "where-ask", nonce, sig })) { showToast(t("messageNotSent"), "error"); return; }
+  whereAsked = { nonce };
+  appendSys(t("whereAsked"));
+}
+
+/** Theirs: shown only if the owner signed it, for this chat. */
+async function receiveWhereAsk(data) {
+  if (!G.whereAskValid(data)) return;
+  const code = e2eVerifyCode;
+  if (!await DC.checkWhereAsk(OWNER_LOCK, code, data.nonce, data.sig)) return;   // not the owner's: nothing shown
+  if (code !== e2eVerifyCode) return;
+  if (!chatGreen()) { dcSendE2e({ type: "where-decline", nonce: data.nonce, reason: "unverified" }).catch(() => {}); return; }
+  whereAskedHere = { nonce: data.nonce };
+  drawWhereChoice("ask");
+  noticeArrival();
+}
+
+/** The line in the chat: the question with its two buttons, then what became of it. */
+function drawWhereChoice(state) {
+  let line = chatMessages.querySelector(".where-sys");
+  if (state === "ask") {
+    if (line) line.remove();                           // asked again: the line moves down
+    line = document.createElement("div");
+    line.className = "save-sys where-sys";
+    chatMessages.appendChild(line);
+  }
+  if (!line) return;
+  const text = document.createElement("span");
+  text.textContent = t({ ask: "whereAskText", finding: "whereFinding", shared: "whereSharedLine",
+                         declined: "whereNotSharedLine", over: "whereOver" }[state]);
+  if (state !== "ask") { line.replaceChildren(text); return; }
+  const share = document.createElement("button");
+  share.type = "button";
+  share.className = "reconnect-sys-btn";
+  share.append(tablerIcon("map-pin"), document.createTextNode(t("whereShare")));
+  share.onclick = shareWhere;
+  const no = document.createElement("button");
+  no.type = "button";
+  no.className = "reconnect-sys-btn";
+  no.textContent = t("whereNotNow");
+  no.onclick = declineWhere;
+  const actions = document.createElement("div");
+  actions.className = "where-sys-actions";
+  actions.append(share, no);
+  line.replaceChildren(text, actions);
+  scrollBottom();
+}
+
+async function shareWhere() {
+  const asked = whereAskedHere;
+  if (!asked) { drawWhereChoice("over"); return; }
+  drawWhereChoice("finding");
+  const answer = await whereAboutHere();
+  if (whereAskedHere !== asked) return;               // the chat ended, or they asked again
+  whereAskedHere = null;
+  if (!await dcSendE2e({ type: "where-answer", nonce: asked.nonce, ...answer })) { drawWhereChoice("over"); return; }
+  drawWhereChoice("shared");
+  drawWhereCard(G.whereAnswer({ nonce: asked.nonce, ...answer }, asked.nonce), "mine");
+}
+
+function declineWhere() {
+  const asked = whereAskedHere;
+  whereAskedHere = null;
+  if (asked) dcSendE2e({ type: "where-decline", nonce: asked.nonce }).catch(() => {});
+  drawWhereChoice(asked ? "declined" : "over");
+}
+
+/** What this phone can say about itself. Each part is asked on its own, and
+    one the browser does not have is left out, never guessed: an iPhone gives
+    no battery and no model. */
+async function whereAboutHere() {
+  const [loc, battery, hints] = await Promise.all([whereLocation(), whereBattery(), whereHints()]);
+  const conn = navigator.connection || {};
+  return {
+    loc, battery,
+    os: MY_DEVICE.os, browser: MY_DEVICE.browser,
+    model: hints.model || "", osVersion: hints.platformVersion || "",
+    net: conn.type || null, speed: conn.effectiveType || null,
+    lang: navigator.language || "",
+    screen: { w: screen.width, h: screen.height }
+  };
+}
+
+function whereLocation() {
+  return new Promise(resolve => {
+    if (!navigator.geolocation) { resolve({ err: "unsupported" }); return; }
+    navigator.geolocation.getCurrentPosition(
+      p => resolve({ lat: p.coords.latitude, lon: p.coords.longitude, acc: p.coords.accuracy }),
+      e => resolve({ err: e && e.code === 1 ? "denied" : e && e.code === 3 ? "timeout" : "unavailable" }),
+      { enableHighAccuracy: true, timeout: WHERE_LOCATION_WAIT_MS, maximumAge: 0 });
+  });
+}
+
+async function whereBattery() {
+  try {
+    if (!navigator.getBattery) return null;
+    const b = await navigator.getBattery();
+    return { level: b.level, charging: b.charging };
+  } catch (_) { return null; }
+}
+
+async function whereHints() {
+  try {
+    const ua = navigator.userAgentData;
+    return ua && ua.getHighEntropyValues ? await ua.getHighEntropyValues(["model", "platformVersion"]) : {};
+  } catch (_) { return {}; }
+}
+
+/** Ours, answered: kept only if it answers the question we asked. */
+function receiveWhereAnswer(data) {
+  if (!whereAsked) return;
+  const info = G.whereAnswer(data, whereAsked.nonce);
+  if (!info) return;
+  whereAsked = null;
+  const card = drawWhereCard(info, "theirs");
+  lookUpPlace(card.querySelector(".where-place"), _lastAddresses && _lastAddresses.remote);
+  noticeArrival();
+}
+
+function receiveWhereDecline(data) {
+  if (!whereAsked || !data || data.nonce !== whereAsked.nonce) return;
+  whereAsked = null;
+  appendSys(t(data.reason === "unverified" ? "whereDeclinedUnverified" : "whereDeclined"));
+}
+
+/** The card: the same on both sides, with the place looked up on the owner's.
+    Every value goes in as text — the model and language are the other
+    phone's own words. */
+function drawWhereCard(info, whose) {
+  const card = document.createElement("div");
+  card.className = `where-card ${whose}`;
+  const title = document.createElement("div");
+  title.className = "where-card-title";
+  title.append(tablerIcon("map-pin"), document.createTextNode(`${t(whose === "mine" ? "whereMine" : "whereTheirs")} · ${now()}`));
+  const list = document.createElement("dl");
+  const row = (label, value, extra) => {
+    const item = document.createElement("div");
+    item.className = "fact";
+    const dt = document.createElement("dt");
+    dt.textContent = label;
+    const dd = document.createElement("dd");
+    dd.textContent = value;
+    if (extra) dd.append(" ", extra);
+    item.append(dt, dd);
+    list.append(item);
+    return dd;
+  };
+  const none = t("whereNotAvailable");
+  if (info.loc) {
+    const map = document.createElement("a");
+    map.href = `https://www.google.com/maps?q=${info.loc.lat.toFixed(6)},${info.loc.lon.toFixed(6)}`;
+    map.target = "_blank";
+    map.rel = "noopener noreferrer";
+    map.textContent = t("whereMap");
+    row(t("whereLocation"), `${info.loc.lat.toFixed(5)}, ${info.loc.lon.toFixed(5)} (${I18N[LANG].whereAccuracy(info.loc.acc)})`, map);
+  } else {
+    row(t("whereLocation"), t({ denied: "whereLocDenied", timeout: "whereLocTimeout" }[info.locError] || "whereLocUnavailable"));
+  }
+  if (whose === "theirs") row(t("wherePlace"), t("whereLookingUp")).classList.add("where-place");
+  row(t("whereBattery"), info.battery
+    ? `${Math.round(info.battery.level * 100)}%${info.battery.charging ? ` · ${t("whereCharging")}` : ""}` : none);
+  row(t("wherePhone"), [DCS.deviceLabel({ os: info.os, browser: info.browser }), info.osVersion, info.model].filter(Boolean).join(" · ") || none);
+  row(t("whereNetwork"), [info.net && t(`whereNet_${info.net}`), info.speed].filter(Boolean).join(" · ") || none);
+  row(t("whereLanguage"), info.lang || none);
+  row(t("whereScreen"), info.screen ? `${info.screen.w}×${info.screen.h}` : none);
+  card.append(title, list);
+  chatMessages.appendChild(card);
+  scrollBottom();
+  return card;
+}
+
+/** The city and provider for their address, as this side sees it — never one
+    they sent. A private address has none to look up. */
+async function lookUpPlace(dd, ip) {
+  if (!dd) return;
+  if (!DCS.isPublicAddress(ip)) { dd.textContent = t(ip ? "wherePlaceLocal" : "whereNotAvailable"); return; }
+  try {
+    const r = await fetch(`${WHERE_LOOKUP}/${encodeURIComponent(ip)}/json`, {
+      credentials: "omit", referrerPolicy: "no-referrer", cache: "no-store",
+      ...(AbortSignal.timeout ? { signal: AbortSignal.timeout(WHERE_LOOKUP_WAIT_MS) } : {})
+    });
+    const place = r.ok ? G.ipPlace(await r.json()) : null;
+    dd.textContent = place
+      ? `${[...new Set([place.city, place.region, place.country].filter(Boolean))].join(", ")}${place.provider ? ` · ${place.provider}` : ""} (${ip})`
+      : `${t("whereNotAvailable")} (${ip})`;
+  } catch (_) { dd.textContent = `${t("whereNotAvailable")} (${ip})`; }
+}
+
+if (whereBtn) whereBtn.onclick = askWhere;
 
 /* ══════════════════════════════════════════════
    LEAVE A MESSAGE

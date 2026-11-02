@@ -41,6 +41,11 @@ const DEFAULT_ALLOWED_ORIGINS = [
   "http://127.0.0.1:3000"
 ];
 
+/* Reached by the page and by nothing else — not an origin the server lets in.
+   ipinfo.io: the owner's "Where are you?" looks up the city and internet
+   provider for the other side's address (WHERE_LOOKUP in app.js). */
+const LOOKUP_ORIGINS = ["https://ipinfo.io"];
+
 function wsOriginFor(origin) {
   return origin.replace(/^https:/, "wss:").replace(/^http:/, "ws:");
 }
@@ -51,7 +56,7 @@ function wsOriginFor(origin) {
  * @param {{ asHeader: boolean }} opts  header form also carries frame-ancestors
  */
 function buildCsp(origins, { asHeader }) {
-  const connect = new Set(["'self'", ...origins, ...origins.map(wsOriginFor)]);
+  const connect = new Set(["'self'", ...origins, ...origins.map(wsOriginFor), ...LOOKUP_ORIGINS]);
   return [
     "default-src 'self'",
     "script-src 'self'",
@@ -84,6 +89,7 @@ module.exports = {
   buildCsp,
   wsOriginFor,
   DEFAULT_ALLOWED_ORIGINS,
+  LOOKUP_ORIGINS,
   META_CSP,
   META_TAG_PATTERN
 };
