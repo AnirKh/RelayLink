@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 /*
   Makes the key pair knocks are signed with, and prints it as the two lines
-  to add to the server's environment — on Render, the service's Environment
-  page:
+  to add to the server's environment — on the Pi, /etc/direct-connection.env
+  (see deploy/pi/SETUP.md):
 
       node tools/knock-keys.js
 

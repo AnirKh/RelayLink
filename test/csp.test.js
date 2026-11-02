@@ -73,7 +73,7 @@ test("the frame check refuses to run the app inside a frame", () => {
 test("the server serves the frame check", () => {
   const serverSrc = fs.readFileSync(path.join(__dirname, "..", "server.js"), "utf8");
   assert.ok(/["']\/framebust\.js["']/.test(serverSrc),
-    "server.js does not serve framebust.js — the Render build would 404 on it");
+    "server.js does not serve framebust.js — its own copy of the page would 404 on it");
 });
 
 test("the two forms differ only by frame-ancestors", () => {
@@ -156,7 +156,7 @@ test("the page and the server both serve it", () => {
   assert.match(indexHtml, /<link rel="stylesheet" href="vendor\/tabler\/tabler-icons\.min\.css\?v=[^"]+">/);
   const serverSrc = fs.readFileSync(path.join(__dirname, "..", "server.js"), "utf8");
   for (const file of ["/vendor/tabler/tabler-icons.min.css", "/vendor/tabler/fonts/tabler-icons.woff2"]) {
-    assert.ok(serverSrc.includes(`"${file}"`), `server.js does not serve ${file} — the Render build would show no icons`);
+    assert.ok(serverSrc.includes(`"${file}"`), `server.js does not serve ${file} — its own copy of the page would show no icons`);
   }
   const attributes = fs.readFileSync(path.join(__dirname, "..", ".gitattributes"), "utf8");
   assert.match(attributes, /^vendor\/tabler\/\*\* -text$/m, "kept byte for byte by git, so the hash above holds on every checkout");

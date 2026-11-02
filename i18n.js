@@ -259,7 +259,7 @@ const I18N = {
     sysCallSecure:   "Дуудлага холбогдлоо — аудио/видео WebRTC-ээр шифрлэгдэнэ (сервер уншихгүй).",
     callNeedLink:    "Эхлээд харилцагчтай холбогдохыг хүлээнэ үү (холбоос ногоон болмогц дахин оролдоно уу).",
     // Server wake
-    serverWaking:    "Сервер асаж байна, түр хүлээнэ үү…",
+    serverConnecting: "Сервертэй холбогдож байна, түр хүлээнэ үү…",
     serverReady:     "Сервер бэлэн боллоо.",
     // P2P file size
     fileTooLargeP2P: (mb) => `Файлын хэмжээ ${mb}МБ-аас их байна. Жижиг файл ашиглана уу.`,
@@ -582,7 +582,7 @@ const I18N = {
     sysCallSecure:   "Call connected — audio/video encrypted by WebRTC (server cannot listen in).",
     callNeedLink:    "Wait until you are connected to your contact (green status), then try again.",
     // Server wake
-    serverWaking:    "Server is waking up, please wait…",
+    serverConnecting: "Connecting to the server, please wait…",
     serverReady:     "Server is ready.",
     // P2P file size
     fileTooLargeP2P: (mb) => `File too large (max ${mb} MB). Please use a smaller file.`,

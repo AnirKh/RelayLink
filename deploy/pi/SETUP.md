@@ -1,7 +1,7 @@
 # Running the server on the Raspberry Pi
 
-The server on the Pi at home instead of Render: it never sleeps, so the first
-connection after a quiet hour is instant. Tailscale Funnel gives it its public
+The server on the Pi at home — the app's one server. It never sleeps, so the
+first connection after a quiet hour is instant. Tailscale Funnel gives it its public
 address, `https://raspberrypi.vulture-manta.ts.net/dc` — the path `/dc`,
 because Funnel's root `/` already serves something else on port 8080, which
 this leaves alone.
@@ -51,10 +51,10 @@ sudo install -m 640 -o root -g dc deploy/pi/direct-connection.env.example /etc/d
 ```
 
 Then **the person at the Pi** opens it — `sudo nano /etc/direct-connection.env`
-— and pastes the four values from Render's Environment page:
-`KNOCK_PUBLIC_KEY`, `KNOCK_PRIVATE_KEY` (the same pair, so alerts already
-turned on keep working), `RESEND_API_KEY` and `MAIL_TO`. Leave the rest as it
-is.
+— and fills in the four values: `KNOCK_PUBLIC_KEY` and `KNOCK_PRIVATE_KEY`
+(made once with `node tools/knock-keys.js`; moving to a new Pi, copy the pair
+from the old one's file, so alerts already turned on keep working),
+`RESEND_API_KEY` and `MAIL_TO`. Leave the rest as it is.
 
 ## 4. Start it, and keep it up to date
 
@@ -125,8 +125,9 @@ The hash in the last "Client connected" line should match the **last** one
 - `journalctl -u direct-connection -n 15 --no-pager`
 - anything that did not go as written
 
-The app itself still talks to Render until its address is changed to the
-Pi's — that is done in the repository once this report says everything works.
+The app talks to the address in `DEFAULT_SERVER_URL` (app.js). A Pi at a new
+address needs it changed there — in the repository, once this report says
+everything works.
 
 ## 8. When the service file changes
 

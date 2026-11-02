@@ -31,7 +31,8 @@
   - Optional PUBLIC_SESSION_LIST=0 to hide active room names from the lobby
   ─────────────────────────────────────────────
 
-  Render environment variables required:
+  Environment — on the Pi, /etc/direct-connection.env (see deploy/pi).
+  For "leave a message" by email:
     RESEND_API_KEY  Resend API key
     MAIL_TO         recipient email address
 
@@ -1717,7 +1718,7 @@ server.listen(PORT, HOST, () => {
   warnIfCspDrifted();
   console.log(`Trusting ${TRUSTED_PROXY_HOPS} proxy hop(s) for client addresses`);
   if (TRUSTED_PROXY_HOPS > 0 && process.env.TRUSTED_PROXY_HOPS === undefined) {
-    console.log("  (default: correct behind Render/Fly/Heroku/nginx.");
+    console.log("  (default: correct behind one proxy — Tailscale Funnel on the Pi, nginx.");
     console.log("   Set TRUSTED_PROXY_HOPS=0 if this process is exposed directly,");
     console.log("   otherwise clients can forge their address and evade rate limits.)");
   }

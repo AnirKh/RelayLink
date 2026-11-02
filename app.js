@@ -27,7 +27,7 @@
 
    APP_BUILD is written by tools/sync-build.js and by nothing else.
 ══════════════════════════════════════════════ */
-const APP_BUILD = "202611020436-85ddd849";
+const APP_BUILD = "202611020542-b1224920";
 
 function refuseToRunInAStalePage() {
   let builtFor = null;
@@ -1127,10 +1127,8 @@ function dcSendCallSignal(obj) {
   return dcSendE2e(obj);
 }
 
-/* The Raspberry Pi at home, through Tailscale Funnel (see deploy/pi): it never
-   sleeps, so nobody waits for it to wake. Render still runs the same server
-   and is the way back — https://direct-connection.onrender.com — should the
-   Pi be gone for long. */
+/* The Raspberry Pi at home, through Tailscale Funnel (see deploy/pi) — the
+   app's one server. It never sleeps, so nobody waits for it to wake. */
 const DEFAULT_SERVER_URL = "https://raspberrypi.vulture-manta.ts.net/dc";
 const SERVER_URL = window.DIRECT_CONNECTION_SERVER_URL ||
   (["localhost", "127.0.0.1"].includes(location.hostname)
@@ -1155,11 +1153,12 @@ function leaveAttachMaxMbRounded() {
 /* ══════════════════════════════════════════════
    SERVER WAKE-UP
    ─────────────────────────────────────────────
-   Render free tier sleeps after ~15 min idle.
-   On page load we hit /api/ping immediately so
-   the server is warm by the time the user acts.
-   If it takes >2s we surface a notice so the
-   user knows to wait rather than retry-spam.
+   On page load we ask /api/ping at once: the
+   server's limits and its knock key. (It once
+   woke Render's free tier as well; the Pi never
+   sleeps.) If it takes >2s a notice says we are
+   connecting, so the user waits rather than
+   retry-spams.
 ══════════════════════════════════════════════ */
 
 let _serverWoke = false;
@@ -1170,11 +1169,11 @@ function wakeServer() {
     const msg = document.createElement("span");
     msg.className = "server-wake-status";
     msg.style.color = "var(--orange)";
-    msg.textContent = `⏳ ${t("serverWaking")}`;
+    msg.textContent = `⏳ ${t("serverConnecting")}`;
     lobbyStatus.replaceChildren(msg);
   }, 2000);
 
-  // Abort if server doesn't respond within 60s (Render cold start max)
+  // Given up on after a minute
   const controller = new AbortController();
   const timeout    = setTimeout(() => controller.abort(), 60_000);
 
@@ -1512,8 +1511,8 @@ function requestSessionList() { wsSend({ type: "list-sessions" }); }
 refreshBtn.onclick = requestSessionList;
 
 /* A create the server has not answered yet. wsSend drops a message while the
-   link is down, so a Create pressed then — while Render woke up, or just after
-   a drop — sent nothing, and the page sat on "Creating…" with every create
+   link is down, so a Create pressed then — before the server answered, or just
+   after a drop — sent nothing, and the page sat on "Creating…" with every create
    button disabled for good. It is kept until answered, and sent (again) each
    time the link comes up.
 

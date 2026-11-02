@@ -2,7 +2,7 @@
   The host's own room — lost, made again, and shown in the list.
 
   - A room waiting for its guest went with the host's link to the server
-    (power button, Wi-Fi switching, Render restarting), and nothing said so:
+    (power button, Wi-Fi switching, the server restarting), and nothing said so:
     the PIN and link stayed on screen for a room that no longer existed.
     Now the host is told, with a one-tap "Create again".
   - A Create pressed while that link was down sent nothing, and the page sat

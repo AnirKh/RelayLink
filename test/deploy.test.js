@@ -91,5 +91,6 @@ test("the page talks to the Pi, under /dc — and may, by its own rules", () => 
   assert.match(read("app.js"), /^const DEFAULT_SERVER_URL = "https:\/\/raspberrypi\.vulture-manta\.ts\.net\/dc";$/m);
   assert.ok(DEFAULT_ALLOWED_ORIGINS.includes("https://raspberrypi.vulture-manta.ts.net"));
   assert.match(META_CSP, /wss:\/\/raspberrypi\.vulture-manta\.ts\.net/);
-  assert.ok(DEFAULT_ALLOWED_ORIGINS.includes("https://direct-connection.onrender.com"), "and Render stays allowed: the way back");
+  assert.ok(!DEFAULT_ALLOWED_ORIGINS.some(o => /onrender\.com/.test(o)), "Render is gone: no copy there may talk to the Pi");
+  assert.doesNotMatch(META_CSP, /onrender\.com/, "nor is the page let reach it");
 });

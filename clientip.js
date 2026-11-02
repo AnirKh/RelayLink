@@ -17,8 +17,8 @@
   count in from the right instead, by however many proxies we actually sit
   behind.
 
-    TRUSTED_PROXY_HOPS=1  (default)  one proxy in front — Render, Fly, Heroku,
-                                     nginx. Uses the last entry in the chain.
+    TRUSTED_PROXY_HOPS=1  (default)  one proxy in front — Tailscale Funnel on
+                                     the Pi, nginx. Uses the last entry in the chain.
     TRUSTED_PROXY_HOPS=0             no proxy: ignore the header entirely and
                                      use the TCP peer. Set this if the process
                                      is exposed directly, or clients can forge

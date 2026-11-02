@@ -190,7 +190,7 @@ test("the manifest has what Chrome needs before it will offer to install", () =>
   assert.ok(manifest.icons.some(i => i.purpose === "maskable"), "an icon Android may crop to its own shape");
 });
 
-test("every address in the manifest is relative, so it works on GitHub Pages' sub-path and on Render alike", () => {
+test("every address in the manifest is relative, so it works on GitHub Pages' sub-path and on the server's own copy alike", () => {
   for (const u of [manifest.start_url, manifest.scope, ...manifest.icons.map(i => i.src)]) {
     assert.ok(!/^(\/|https?:)/.test(u), `${u} is not relative`);
   }

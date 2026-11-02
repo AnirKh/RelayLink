@@ -26,7 +26,7 @@ function req(forwardedFor, remoteAddress = "10.9.9.9") {
 ══════════════════════════════════════════ */
 
 test("behind one proxy, the address the proxy observed is used", () => {
-  /* Render appends the real client address, so it is the last entry. */
+  /* The proxy in front (Tailscale Funnel on the Pi) appends the real client address, so it is the last entry. */
   assert.equal(getClientIp(req("203.0.113.7"), 1), "203.0.113.7");
 });
 

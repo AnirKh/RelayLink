@@ -6,7 +6,7 @@
   Stops the app being operated inside someone else's page.
 
   server.js sends `X-Frame-Options: DENY` and `frame-ancestors 'none'`, which
-  covers the Render deployment. Neither reaches the GitHub Pages build: Pages
+  covers the copy the server serves itself. Neither reaches the GitHub Pages build: Pages
   serves static files and cannot set headers, and browsers ignore
   frame-ancestors in a <meta> tag. So on Pages there was nothing at all — the
   page could be framed invisibly and its buttons clicked through, including

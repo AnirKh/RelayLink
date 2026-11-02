@@ -7,7 +7,7 @@
 
   The check form is the one to run before deploying: the meta tag is the only
   policy the GitHub Pages build gets, so a stale one there is a real bug that
-  the Render deployment will not reveal.
+  the server's own copy will not reveal.
 */
 
 "use strict";

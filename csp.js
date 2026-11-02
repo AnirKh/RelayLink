@@ -6,7 +6,7 @@
 
   The policy has to exist in two forms, and neither can be dropped:
 
-    - as a response header from server.js — covers the Render deployment, and is
+    - as a response header from server.js — covers the copy it serves itself, and is
       the only form that can carry frame-ancestors (meta tags ignore it)
     - as a <meta> tag in index.html — GitHub Pages serves static files and
       cannot set headers, so the static deployment has no other option
@@ -34,7 +34,6 @@
    fonts come from 'self' only. */
 
 const DEFAULT_ALLOWED_ORIGINS = [
-  "https://direct-connection.onrender.com",
   /* The Raspberry Pi at home, through Tailscale Funnel — see deploy/pi. */
   "https://raspberrypi.vulture-manta.ts.net",
   "https://anirkh.github.io",

@@ -23,7 +23,7 @@ App: https://anirkh.github.io/RelayLink/ · Code: https://github.com/AnirKh/Rela
 | `server.js` | Signaling, PIN/token auth, rate limits, `/api/send-message`. |
 | `knock.js` | Sending a knock: Web Push to a saved person's device — RFC 8291 encryption (checked against the RFC's own example), VAPID signing, and the push services it may send to. Node's own crypto, no dependency. See "Knocks". |
 | `mailbox.js` | Messages, photos and files waiting for a saved person who is away: kept sealed — never read — in a file (the files beside it) or in memory, with their limits and their week. See "Waiting messages". |
-| `deploy/pi/` | Running the server on a Raspberry Pi behind Tailscale Funnel instead of Render: the systemd service, an updater and its timer, the settings file, and `SETUP.md`. See "On a Raspberry Pi at home". |
+| `deploy/pi/` | Running the server — its one home — on a Raspberry Pi behind Tailscale Funnel: the systemd service, an updater and its timer, the settings file, and `SETUP.md`. See "On a Raspberry Pi at home". |
 | `sw.js` | The service worker, for knocks only: shows one by the name this device gave the person, and opens the app to them when tapped. Answers no requests, so nothing is ever cached. |
 
 Adding a string means adding it to **both** languages in `i18n.js` — `t()` falls back to the key name, so a missing translation shows up as raw text in the UI.
@@ -258,7 +258,7 @@ To send the link, the host copies it and switches to a messaging app. The phone 
 
 Checked with two tabs on a local server: each side's link to the server cut mid-chat (the seat taken back on the new link, the chat never interrupted, the other side seeing `peer-away` then `peer-back`); a guest's ask (both sides took new ICE credentials and stayed connected); the repair itself, on each side, with the link made to read `disconnected` and `failed` (an ask, or an offer, at two seconds, then stopping once back up); and the server restarted mid-chat (both pages told the room was gone, the chat going on, a message still arriving).
 
-**Still not covered:** a network that blocks a direct link outright — that needs a relay (TURN); see the end of "A call whose link drops tries again". And the server keeps rooms in memory: a restart, or Render's free tier going to sleep, loses every seat at once. A chat whose direct link is up carries on regardless.
+**Still not covered:** a network that blocks a direct link outright — that needs a relay (TURN); see the end of "A call whose link drops tries again". And the server keeps rooms in memory: a restart (every update is one) loses every seat at once. A chat whose direct link is up carries on regardless.
 
 ## Opened inside another app's browser
 
@@ -296,9 +296,9 @@ Some networks block direct connections, and with no relay server two such device
 
 The app is **Өртөө** in Mongolian and **RelayLink** in English — one key, `appName` in `i18n.js`. The lobby heading, the about panel and the tab's title follow the language chosen, and the tab is renamed the moment the language is switched (`applyI18n` calls `drawTitle`). What cannot change with the language puts the Mongolian name first: the installed app (`short_name` "Өртөө", full name "Өртөө — RelayLink"), the page's `<title>` before the script runs, and the link-preview card. The email a left message arrives as says RelayLink.
 
-The repository is `AnirKh/RelayLink`, so the app is at `https://anirkh.github.io/RelayLink/` — capital R and L: GitHub Pages tells the two apart, and `/relaylink/` is not found. The old `/direct-connection/` address stopped working with the rename; saved people and rooms survive it, since the browser keeps them per site (`anirkh.github.io`), not per address. GitHub still forwards the old repository address, so `git` on the Pi and Render go on fetching.
+The repository is `AnirKh/RelayLink`, so the app is at `https://anirkh.github.io/RelayLink/` — capital R and L: GitHub Pages tells the two apart, and `/relaylink/` is not found. The old `/direct-connection/` address stopped working with the rename; saved people and rooms survive it, since the browser keeps them per site (`anirkh.github.io`), not per address — except in an iPhone Home Screen app installed before the rename, which keeps its own storage behind its dead icon. The Pi fetches from `AnirKh/RelayLink` directly; GitHub's forwarding of the old repository address is not relied on.
 
-What keeps `direct-connection`: the Pi's services, folders and settings file (`deploy/pi/`), the Render service, and the labels the keys for saved people and the mailbox are made from. Those labels are part of the keys — renaming them would orphan every saved person.
+What keeps `direct-connection`: the Pi's services, folders and settings file (`deploy/pi/`), and the labels the keys for saved people and the mailbox are made from. Those labels are part of the keys — renaming them would orphan every saved person.
 
 ## Installable as an app
 
@@ -321,7 +321,7 @@ An **Install app** button sits at the bottom left of the lobby, and only where i
 
 A shared link used to arrive bare in Messenger, Telegram, Facebook or WhatsApp. `index.html` now carries `og:*` lines (read by all of those), `twitter:*` lines and a `description` for search engines, so a link shows the name, one line of what it is, and `icons/link-preview-relaylink.png`.
 
-- **Every address is absolute** and points at GitHub Pages, the address people share — preview fetchers do not resolve relative ones. The Render copy of the page says the same, and `<link rel="canonical">` tells search engines which of the two is the main one. `test/csp.test.js` lets exactly that tag through without an integrity hash, since it loads nothing.
+- **Every address is absolute** and points at GitHub Pages, the address people share — preview fetchers do not resolve relative ones. The server's own copy of the page (the Pi's) says the same, and `<link rel="canonical">` tells search engines which of the two is the main one. `test/csp.test.js` lets exactly that tag through without an integrity hash, since it loads nothing.
 - **An invite link previews as the same card.** Its secret is in the `#fragment`, which no fetcher ever sends, and nothing in the card is built from the live address.
 - **The picture** is 1200×630, the shape the big cards are drawn in, with the icon and name in the middle so a square crop keeps them, and under 300 KB, past which WhatsApp drops it. It is rendered from an HTML page; the services cache it by address, so a redrawn picture needs a new file name to show up.
 
@@ -682,7 +682,7 @@ What it costs, said plainly: the push service the browser uses carries each knoc
 A chat needs both people there at once. **A saved person who is away can now be written to**: the message waits on the server — the Pi at home — until they open the app, and they can write back the same way. The envelope by each saved name opens the conversation and counts what is new from them; it is there while waiting for them too, for a word left instead.
 
 - **Sealed before it leaves** (`DC.sealMail`, protocol.js): AES-256-GCM with a key the two devices work out from the secret only they share (`DC.mailboxKey`, HKDF labelled for this one use) — a secret the server has never had. Bound, as additional data, to where it belongs: the pair's mailbox, who wrote it, to whom, its id and its time. One handed back to its writer, moved to another mailbox, re-dated or changed does not open. The text never reaches the server, nor the secret; the room's name (a hash of it) is the mailbox's address, as for meeting.
-- **Kept, not read** (`mailbox.js`): `mail-drop` leaves one (`{ box, to, id, at, iv, ct }`, and the recipient's knock address if they get alerts), kept once by its id however often it is sent; `mail-fetch` asks after a device's mailboxes and keeps the link listening to them; `mail-ack` lets them go. Kept in a file — on the Pi, the service's state directory (`StateDirectory=`, so `STATE_DIRECTORY`), or `MAILBOX_DIR` — written whole and moved into place, so a restart (every update is one) loses nothing; in memory only without either (the Render standby). A week, then gone unread. At most 100 messages or two million characters a mailbox, fifty million in all, 60 left from one network in ten minutes; whatever the file holds is checked again as it is read back.
+- **Kept, not read** (`mailbox.js`): `mail-drop` leaves one (`{ box, to, id, at, iv, ct }`, and the recipient's knock address if they get alerts), kept once by its id however often it is sent; `mail-fetch` asks after a device's mailboxes and keeps the link listening to them; `mail-ack` lets them go. Kept in a file — on the Pi, the service's state directory (`StateDirectory=`, so `STATE_DIRECTORY`), or `MAILBOX_DIR` — written whole and moved into place, so a restart (every update is one) loses nothing; in memory only without either. A week, then gone unread. At most 100 messages or two million characters a mailbox, fifty million in all, 60 left from one network in ten minutes; whatever the file holds is checked again as it is read back.
 - **Delivered**: whoever has the app open hears at once (`mail-waiting`), and fetches. Whoever is away and has alerts on is told "Anu sent you a message" (a push of `{"t":"mail","room":…}`, once a minute a mailbox) — not if they are there already. Tapped, it opens their conversation (`#mail=<room>`, or a word to the open page).
 - **Taken here** one delivery at a time: opened with the pair's key as from the other side, to this one — or not shown at all — then the server is told it may let them go, opened or not. The ids taken are remembered (`G.MAIL_SEEN_MAX`), so a message delivered again is never shown twice, and one cleared never comes back. A message of ours goes again at each connection until the server says it has kept it, so one written with the link down is not lost; a refusal is said in our words (`G.mailRefusalKey`).
 - **Kept on the device** (`dc-mail`, checked by `G.mailStore` as it is read): each person's conversation, up to `G.MAIL_THREAD_MAX` messages. Clear takes two taps; forgetting someone takes their conversation with them.
@@ -892,7 +892,7 @@ Measured against a headerless static server standing in for Pages, framed in a s
 | Lobby rendered | yes | removed |
 | Clickable controls | Approve, Create room, Send message | none |
 
-`server.js` must keep serving `/framebust.js`, or the Render build 404s on it and every page stays hidden — `test/csp.test.js` checks that, along with the load order and the hide-first style.
+`server.js` must keep serving `/framebust.js`, or the copy it serves itself 404s on it and every page stays hidden — `test/csp.test.js` checks that, along with the load order and the hide-first style.
 
 ### Icon font
 
@@ -900,7 +900,7 @@ The Tabler icons are served from here: `vendor/tabler/` holds release 3.31.0's s
 
 - **The stylesheet is the release's own, byte for byte.** It still hashes to the integrity value the page used to demand of the CDN's copy (`sha384-XAeMOW3g…`), and `test/csp.test.js` checks that, so an accidental edit, or a re-save with other line endings, fails. `.gitattributes` keeps git from converting it (`vendor/tabler/** -text`).
 - **Only the WOFF2 font is kept.** The stylesheet names WOFF2 first, and every browser this app can run in reads it; the WOFF and TTF copies (3.6 MB) exist for browsers far older than WebRTC. The test checks the font is a whole WOFF2 file, not an error page saved under its name.
-- **The stylesheet is in the build stamp** (`tools/sync-build.js`), loaded as `?v=<build>` like every other file; the font is fetched by the stylesheet at its own `?v3.31.0`, and changes only with it. `server.js` serves both, or the Render copy would show no icons.
+- **The stylesheet is in the build stamp** (`tools/sync-build.js`), loaded as `?v=<build>` like every other file; the font is fetched by the stylesheet at its own `?v3.31.0`, and changes only with it. `server.js` serves both, or its own copy would show no icons.
 - **Another version:** take the release's `dist/tabler-icons.min.css` and `dist/fonts/tabler-icons.woff2` from the npm package `@tabler/icons-webfont`, replace both, and put the new stylesheet's sha384 in the test. `test/csp.test.js` fails if anything is loaded from another site again — and if it ever truly must be, it needs `integrity` and `crossorigin`.
 
 ### Node version
@@ -908,7 +908,7 @@ The Tabler icons are served from here: `vendor/tabler/` holds release 3.31.0's s
 `package.json` declares **`"node": ">=22"`**. Two reasons, and the second is the one that bites:
 
 - `node --test` only accepts glob patterns from Node 21, and both test scripts rely on them — that is what keeps a new test file in the right suite by where it sits rather than by someone remembering to list it.
-- **Render picks its own Node version when nothing says otherwise**, and can pick a different one on any redeploy. `engines` pins it.
+- **`engines` says which Node the server needs** (22 or newer), for any host that picks its own version — and can pick a different one on any redeploy.
 
 22 rather than 21 because Node 21 is end-of-life. Nothing in the app itself needs anything newer than Node 18 — the floor comes from the tooling.
 
@@ -935,7 +935,7 @@ git config core.hooksPath .githooks
 | `pre-commit` | `check-csp` + `check-build` + `npm run test:fast` | ~1s |
 | `pre-push` | `npm test` (adds the server integration tests) | ~7s |
 
-The split keeps committing instant — a hook slow enough to be annoying is a hook you start bypassing. The slower half runs before code leaves the machine, which is the last moment a failure is free: pushing redeploys Render and republishes GitHub Pages.
+The split keeps committing instant — a hook slow enough to be annoying is a hook you start bypassing. The slower half runs before code leaves the machine, which is the last moment a failure is free: pushing updates the Pi within two minutes and republishes GitHub Pages.
 
 Bypass a single run with `git commit --no-verify` or `git push --no-verify`.
 
@@ -943,7 +943,7 @@ Bypass a single run with `git commit --no-verify` or `git push --no-verify`.
 
 The policy is defined once, in **`csp.js`**. It reaches the browser two ways and both are needed:
 
-- `server.js` sends it as a response header (Render deployment; also the only form that can carry `frame-ancestors`)
+- `server.js` sends it as a response header (the copy it serves itself; also the only form that can carry `frame-ancestors`)
 - `index.html` carries a `<meta>` copy, because GitHub Pages serves static files and cannot set headers
 
 After editing `csp.js`, regenerate the meta tag:
@@ -952,14 +952,14 @@ After editing `csp.js`, regenerate the meta tag:
 npm run sync-csp
 ```
 
-`npm run check-csp` reports drift and exits non-zero without changing anything — worth running before a deploy, since a stale meta tag only affects the static build and the Render deployment will look fine. The server also warns on startup if the two have drifted.
+`npm run check-csp` reports drift and exits non-zero without changing anything — worth running before a deploy, since a stale meta tag only affects the static build and the server's own copy will look fine. The server also warns on startup if the two have drifted.
 
-## Server configuration (Render or self-hosted)
+## Server configuration
 
 Set **`ALLOWED_ORIGINS`** to a comma-separated list of every **browser origin** that loads the app and talks to this API (WebSocket + `fetch`). Examples:
 
 - Static site on GitHub Pages: `https://YOURNAME.github.io`
-- App and API on Render: `https://direct-connection.onrender.com`
+- The server on the Pi, through Tailscale Funnel: `https://raspberrypi.vulture-manta.ts.net`
 - Local dev: `http://localhost:3000`, `http://127.0.0.1:3000`
 
 If an origin is missing, the browser will block CORS and **WebSocket connections will be rejected** during the upgrade (except non-production loopback without an `Origin` header).
@@ -968,7 +968,7 @@ Optional:
 
 - **`PUBLIC_SESSION_LIST=0`** — the lobby never receives other users’ room names (only empty lists). Hosts still share PIN or invite link as usual.
 - **`RESEND_API_KEY`**, **`MAIL_TO`** — required for “leave a message” email; `POST /api/send-message` also requires a custom header (`X-DC-Client: 1`) sent by the bundled client so drive-by form posts cannot abuse the endpoint.
-- **`TRUSTED_PROXY_HOPS`** — how many proxies sit in front of this process (default **1**). Every rate limit keys on the client address, and `X-Forwarded-For` is only trustworthy as far back as the proxies you control, so the address is read that many entries from the **right**. Leave at 1 behind Render/Fly/Heroku/nginx. **Set to 0 if the process is exposed directly** — otherwise a client can send its own `X-Forwarded-For` and pick a fresh identity for every request, evading the PIN lockout, the room-creation cap and the email limit. The server logs the value it is using on startup.
+- **`TRUSTED_PROXY_HOPS`** — how many proxies sit in front of this process (default **1**). Every rate limit keys on the client address, and `X-Forwarded-For` is only trustworthy as far back as the proxies you control, so the address is read that many entries from the **right**. Leave at 1 behind one proxy — Tailscale Funnel on the Pi, or nginx. **Set to 0 if the process is exposed directly** — otherwise a client can send its own `X-Forwarded-For` and pick a fresh identity for every request, evading the PIN lockout, the room-creation cap and the email limit. The server logs the value it is using on startup.
 - **`HOST_AWAY_MS`** — how long a seat is kept for a side whose link dropped — a waiting room's host, or either side of a chat — in ms (default **600000**, ten minutes; accepted range 1000–3600000). See "A room that waits for its host" and "A chat survives a dropped link to the server".
 - **`HEARTBEAT_MS`** — how often the server pings each WebSocket client, in ms (default **30000**, accepted range 1000–300000). A client that misses a sweep is dropped, which frees its room and tells the other peer. Lower it only for testing; every client answers every sweep, so short intervals mean constant traffic.
 - **`LEAVE_ATTACH_MAX_BYTES`** — optional max attachment size for the main-page email form (default **28 MB**). Resend rejects emails over **~40 MB** total after encoding, so do not set this above **35 MB** unless you use another mail provider.
@@ -981,4 +981,4 @@ Optional:
 
 ### On a Raspberry Pi at home
 
-`deploy/pi/` runs the server on a Pi behind Tailscale Funnel instead of Render, so it never sleeps: a service running as its own user with nothing it does not need (`direct-connection.service`), listening on `127.0.0.1` in production; a timer that checks GitHub every two minutes and restarts it when there is something new (`update.sh`, installed as a fixed copy so what is pulled never runs as root, and npm installing with `--ignore-scripts`); and the settings file, whose secrets the person at the Pi fills in. `deploy/pi/SETUP.md` is the steps, written so Claude on the Pi can follow them, ending in checks that the public address answers, the live link opens through Funnel, and each visitor is seen by their own address rather than Funnel's. `test/deploy.test.js` keeps those files to what they promise; `test/integration/pi.test.js` runs the server with `HOST` and `BASE_PATH`.
+`deploy/pi/` runs the server on a Pi behind Tailscale Funnel — the app's one server; it never sleeps: a service running as its own user with nothing it does not need (`direct-connection.service`), listening on `127.0.0.1` in production; a timer that checks GitHub every two minutes and restarts it when there is something new (`update.sh`, installed as a fixed copy so what is pulled never runs as root, and npm installing with `--ignore-scripts`); and the settings file, whose secrets the person at the Pi fills in. `deploy/pi/SETUP.md` is the steps, written so Claude on the Pi can follow them, ending in checks that the public address answers, the live link opens through Funnel, and each visitor is seen by their own address rather than Funnel's. `test/deploy.test.js` keeps those files to what they promise; `test/integration/pi.test.js` runs the server with `HOST` and `BASE_PATH`.

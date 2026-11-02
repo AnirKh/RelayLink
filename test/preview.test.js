@@ -82,7 +82,7 @@ test("the large card is asked for, with the same picture", () => {
   assert.equal(tw("image"), og("image"));
 });
 
-test("the Render copy serves the picture too", () => {
+test("the server's own copy serves the picture too", () => {
   const server = fs.readFileSync(path.join(ROOT, "server.js"), "utf8");
   assert.ok(server.includes(`"/${og("image").slice(SITE.length)}"`), "server.js does not serve the preview picture");
 });
