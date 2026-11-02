@@ -428,6 +428,14 @@ In a video call, a share button puts the screen in the camera's place. **Only wh
 
 Checked with two browsers through a local server and stand-in tones — 300 Hz for the voice, 1000 Hz for the screen — measured on the receiving side: before sharing only the voice arrived; sharing with sound, both; muted while sharing, only the screen's; after stopping, only the voice, in its own sender again. Checked with two browsers through a local server, a stand-in screen and cameras: the other side saw camera, then screen, then camera again, in the same senders.
 
+## The other person's voice, loud and steady
+
+Reported: on an Android phone, an iPhone's voice was loud and clear in one call and far and quiet in the next — or within one. How loud a voice leaves a phone changes with how far it is held from the mouth, and with the phone's own clean-up (echo, noise, loudness), which turns a voice down while it works. Nothing on the listening side evened that out.
+
+**Now it is evened out as it arrives** (`levelVoice`, `G.VOICE_LEVELLER`): a compressor brings quiet and loud parts closer and lifts them both by its own make-up gain, and a limiter keeps the loudest from distorting. Measured in Edge's own Web Audio with a voice-like sound: arriving anywhere from -40 to -6 dB (34 dB apart), it comes out between -24 and -13 (11 dB apart); ordinary speech 6 dB louder, a far voice 13 dB louder. In a real call between two Edge tabs, a voice arriving at -40 dB was heard at -27. The picture still plays in the `<video>`, muted, so the voice is heard once; a silent `<audio>` also plays it, since Chrome hands a received voice to Web Audio only then. A phone that will not start the sound without a tap shows "Tap to hear", as before.
+
+What it costs, said plainly: the hiss between words is lifted too, by the same make-up gain — the threshold is no lower for that reason. Not on an iPhone or iPad (`G.mayLevelVoice`): a page's sound while its microphone is open is the phone's own business there, and a call has gone silent on one before for less; the voice plays as it came. Where Web Audio will not start, likewise. Tested in `test/remotevideo.test.js`.
+
 ## Headphones connected mid-call
 
 Reported: Bluetooth headphones connected during a video call on an iPhone, and the other person went on coming out of the phone's speaker. On an iPhone a call's sound goes wherever its microphone is, and the call's microphone was the phone's own — opened when the call began, before the headphones arrived. Headphones connected before the call were never a problem: the call opened theirs from the start.

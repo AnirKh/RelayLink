@@ -27,7 +27,7 @@
 
    APP_BUILD is written by tools/sync-build.js and by nothing else.
 ══════════════════════════════════════════════ */
-const APP_BUILD = "202611020212-7972deef";
+const APP_BUILD = "202611020436-85ddd849";
 
 function refuseToRunInAStalePage() {
   let builtFor = null;
@@ -3477,9 +3477,84 @@ function showRemoteTracks() {
    stream (AbortError) is not that, and the next play() follows anyway. */
 function playRemoteCallMedia() {
   if (!remoteVideo.srcObject) showRemoteTracks();
+  levelVoice();
   remoteVideo.play()
-    .then(() => callTapToHear.classList.add("hidden"))
+    .then(() => { callTapToHear.classList.add("hidden"); checkVoiceHeard(); })
     .catch(err => { if (err && err.name === "NotAllowedError") callTapToHear.classList.remove("hidden"); });
+}
+
+/* ── The other person's voice, loud and steady ──
+   Reported: on an Android phone, an iPhone's voice was loud and clear in one
+   call and far and quiet in the next — or within one. How loud a voice
+   leaves a phone changes with how far it is held from the mouth, and with
+   the phone's own clean-up (echo, noise, loudness), which turns a voice down
+   while it works; nothing on this side evened that out. Now it is evened out
+   as it arrives (G.VOICE_LEVELLER): quiet and loud parts brought closer and
+   lifted, the loudest kept from distorting. The picture still plays in the
+   <video>, muted; the sound is played from here.
+
+   Not on an iPhone or iPad (G.mayLevelVoice). Where it cannot start, the
+   voice plays as it came, as before. A phone that will not start the sound
+   without a tap shows "Tap to hear", as for the <video>.                   */
+let voiceLeveller = null;     // { ctx, holder, track } while a voice is evened out
+let voiceHeardTimer = null;
+
+function levelVoice() {
+  const track = remoteCallStream ? remoteCallStream.getAudioTracks()[0] : null;
+  const Ctx = window.AudioContext || window.webkitAudioContext;
+  if (!G.mayLevelVoice({ webAudio: Boolean(Ctx), hasAudio: Boolean(track), os: MY_DEVICE.os })) { stopLevellingVoice(); return; }
+  if (voiceLeveller && voiceLeveller.track === track) { voiceLeveller.ctx.resume().catch(() => {}); return; }
+  stopLevellingVoice();
+  try {
+    const ctx = new Ctx();
+    /* Chrome hands a received voice to Web Audio only while a media element
+       plays it as well: this one, silent, does. */
+    const holder = document.createElement("audio");
+    holder.muted = true;
+    holder.srcObject = new MediaStream([track]);
+    holder.play().catch(() => {});
+    const L = G.VOICE_LEVELLER;
+    const even = ctx.createDynamicsCompressor();
+    even.threshold.value = L.threshold;
+    even.knee.value = L.knee;
+    even.ratio.value = L.ratio;
+    even.attack.value = L.attack;
+    even.release.value = L.release;
+    const limit = ctx.createDynamicsCompressor();
+    limit.threshold.value = L.limit;
+    limit.knee.value = 0;
+    limit.ratio.value = L.limitRatio;
+    limit.attack.value = L.limitAttack;
+    limit.release.value = L.limitRelease;
+    ctx.createMediaStreamSource(new MediaStream([track])).connect(even).connect(limit).connect(ctx.destination);
+    ctx.onstatechange = () => { if (ctx.state === "running") callTapToHear.classList.add("hidden"); };
+    voiceLeveller = { ctx, holder, track };
+    remoteVideo.muted = true;
+    ctx.resume().catch(() => {});
+  } catch (err) {
+    console.warn("The voice could not be evened out — played as it came:", err);
+    stopLevellingVoice();
+  }
+}
+
+/** Still not started a moment on: the phone wants a tap first. */
+function checkVoiceHeard() {
+  clearTimeout(voiceHeardTimer);
+  if (!voiceLeveller) return;
+  const ctx = voiceLeveller.ctx;
+  voiceHeardTimer = setTimeout(() => {
+    if (voiceLeveller && voiceLeveller.ctx === ctx && ctx.state !== "running" && inCall) callTapToHear.classList.remove("hidden");
+  }, 1500);
+}
+
+function stopLevellingVoice() {
+  clearTimeout(voiceHeardTimer);
+  remoteVideo.muted = false;
+  if (!voiceLeveller) return;
+  voiceLeveller.ctx.onstatechange = null;
+  voiceLeveller.holder.srcObject = null;
+  voiceLeveller.ctx.close().catch(() => {});
+  voiceLeveller = null;
 }
 
 function closeCallPeerConnection() {
@@ -6316,6 +6391,7 @@ async function handleIncomingCallOffer(data) {
 
 function stopCallMedia(clearOverlay = true) {
   stopLocalCallMedia();
+  stopLevellingVoice();
   remoteVideo.srcObject = null;
   isMuted = false;
   isCamOff = false;
@@ -7195,7 +7271,8 @@ callMicNote.onclick = () => {
 };
 
 callTapToHear.onclick = () => {
-  remoteVideo.play().then(() => callTapToHear.classList.add("hidden")).catch(() => {});
+  if (voiceLeveller) voiceLeveller.ctx.resume().then(() => callTapToHear.classList.add("hidden")).catch(() => {});
+  remoteVideo.play().then(() => { if (!voiceLeveller) callTapToHear.classList.add("hidden"); }).catch(() => {});
 };
 
 /** A call track that ends while the page is showing — the phone took the

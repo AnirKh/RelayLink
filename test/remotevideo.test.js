@@ -35,17 +35,20 @@ const grab = name => {
   assert.ok(m, `${name} not found as a top-level function in app.js`);
   return m[0];
 };
-const SOURCE = ["createCallPeerConnection", "closeCallPeerConnection", "showRemoteTracks", "playRemoteCallMedia"]
+const G = require("../guards.js");
+const SOURCE = ["createCallPeerConnection", "closeCallPeerConnection", "showRemoteTracks", "playRemoteCallMedia",
+                "levelVoice", "checkVoiceHeard", "stopLevellingVoice"]
   .map(grab).join("\n");
 
 class MediaStream {
   constructor(tracks = []) { this.tracks = [...tracks]; }
   getTracks() { return [...this.tracks]; }
+  getAudioTracks() { return this.tracks.filter(t => t.kind === "audio"); }
   addTrack(track) { this.tracks.push(track); }
 }
 
 /** Starts a call's connection with the real code and hands back the controls. */
-function call({ inCall = true, refusePlay = null } = {}) {
+function call({ inCall = true, refusePlay = null, os = "android", webAudio = true, ctxState = "running", ctxThrows = false } = {}) {
   const video = {
     srcObject: "left over from the last call", videoWidth: 0, plays: 0, attached: [], refusePlay,
     play() {
@@ -65,17 +68,44 @@ function call({ inCall = true, refusePlay = null } = {}) {
   let connection = null;
   class RTCPeerConnection { constructor() { connection = this; } close() {} }
 
+  /* Web Audio, as far as the leveller uses it: each context and what was made in it. */
+  const contexts = [];
+  const node = (ctx, kind) => {
+    const param = () => ({ value: null });
+    const n = { kind, to: null, threshold: param(), knee: param(), ratio: param(), attack: param(), release: param(),
+                connect(next) { n.to = next; return next; } };
+    ctx.nodes.push(n);
+    return n;
+  };
+  class AudioContext {
+    constructor() {
+      if (ctxThrows) throw new Error("no audio here");
+      this.state = ctxState; this.nodes = []; this.closed = false; this.resumes = 0; this.onstatechange = null;
+      this.destination = { kind: "speakers" };
+      contexts.push(this);
+    }
+    createMediaStreamSource(stream) { const n = node(this, "source"); n.stream = stream; return n; }
+    createDynamicsCompressor() { return node(this, "compressor"); }
+    resume() { this.resumes++; return ctxState === "running" ? Promise.resolve() : new Promise(() => {}); }
+    close() { this.closed = true; return Promise.resolve(); }
+  }
+  const timers = [];
+  const holders = [];
+  const document = { createElement: tag => { const el = { tag, muted: false, srcObject: null, plays: 0, play() { el.plays++; return Promise.resolve(); } }; holders.push(el); return el; } };
+
   const run = new Function(
     "MediaStream", "RTCPeerConnection", "remoteVideo", "callStatusLabel", "t",
     "ICE_CONFIG", "currentSession", "dcSendCallSignal", "endCall", "inCall", "callTapToHear",
-    `let callPc = null, remoteCallStream = null;\nconst stopCallRecovery = () => {}, watchCallLink = () => {};\n${SOURCE}\ncreateCallPeerConnection();\nreturn { playRemoteCallMedia };`
+    "G", "window", "MY_DEVICE", "document", "setTimeout", "clearTimeout", "console",
+    `let callPc = null, remoteCallStream = null, voiceLeveller = null, voiceHeardTimer = null;\nconst stopCallRecovery = () => {}, watchCallLink = () => {};\n${SOURCE}\ncreateCallPeerConnection();\nreturn { playRemoteCallMedia, stopLevellingVoice, createCallPeerConnection, leveller: () => voiceLeveller };`
   );
   const api = run(MediaStream, RTCPeerConnection, video, { textContent: "" }, key => key,
-      {}, null, () => {}, () => {}, inCall, tapToHear);
+      {}, null, () => {}, () => {}, inCall, tapToHear,
+      G, webAudio ? { AudioContext } : {}, { os }, document, (f, ms) => { timers.push({ f, ms }); return timers.length; }, () => {}, { warn() {} });
 
   const track = kind => ({ kind, id: `${kind}-1` });
   const arrive = t => connection.ontrack({ track: t });
-  return { video, track, arrive, ...api, tapShown: () => !hidden.has("hidden") };
+  return { video, track, arrive, ...api, tapShown: () => !hidden.has("hidden"), contexts, holders, timers };
 }
 
 const kinds = stream => stream.getTracks().map(t => t.kind);
@@ -186,4 +216,101 @@ test("sound that starts by itself: nothing to tap", async () => {
   c.arrive(c.track("audio"));
   await settled();
   assert.equal(c.tapShown(), false);
+});
+
+/* ── The other person's voice, loud and steady ──
+   Reported: on an Android phone, an iPhone's voice was loud and clear in one
+   call and far and quiet in the next. Now it is evened out as it arrives. */
+
+const chain = ctx => {
+  const source = ctx.nodes.find(n => n.kind === "source");
+  const out = [];
+  for (let n = source; n; n = n.to) out.push(n);
+  return out;
+};
+
+test("the voice is evened out as it arrives: a compressor, then a limiter, then the speakers — the picture muted", async () => {
+  const c = call();
+  const audio = c.track("audio");
+  c.arrive(audio);
+  c.arrive(c.track("video"));
+  await settled();
+  assert.equal(c.contexts.length, 1, "one for the call, not one per track");
+  const [source, even, limit, speakers] = chain(c.contexts[0]);
+  assert.deepEqual(source.stream.getTracks(), [audio], "the voice alone");
+  const L = G.VOICE_LEVELLER;
+  assert.deepEqual([even.threshold.value, even.knee.value, even.ratio.value, even.attack.value, even.release.value],
+                   [L.threshold, L.knee, L.ratio, L.attack, L.release]);
+  assert.deepEqual([limit.threshold.value, limit.knee.value, limit.ratio.value, limit.attack.value, limit.release.value],
+                   [L.limit, 0, L.limitRatio, L.limitAttack, L.limitRelease]);
+  assert.equal(speakers.kind, "speakers");
+  assert.equal(c.video.muted, true, "heard once, from the leveller — not twice");
+  const holder = c.holders.at(-1);
+  assert.deepEqual([holder.tag, holder.muted, holder.srcObject.getTracks()[0], holder.plays], ["audio", true, audio, 1],
+                   "a silent element plays the voice too: Chrome hands it to Web Audio only then");
+  c.timers.at(-1).f();
+  assert.equal(c.tapShown(), false, "started by itself: nothing to tap, then or a moment on");
+});
+
+test("the same voice again is left as it is; a new one is evened out afresh, the old let go", () => {
+  const c = call();
+  c.arrive(c.track("audio"));
+  c.playRemoteCallMedia();
+  c.playRemoteCallMedia();
+  assert.equal(c.contexts.length, 1);
+  c.createCallPeerConnection();                       // the call's connection made afresh mid-call
+  const fresh = { kind: "audio", id: "audio-2" };
+  c.arrive(fresh);
+  assert.equal(c.contexts.length, 2);
+  assert.equal(c.contexts[0].closed, true, "the old one let go");
+  assert.deepEqual(chain(c.contexts[1])[0].stream.getTracks(), [fresh]);
+  c.stopLevellingVoice();
+  assert.equal(c.contexts[1].closed, true);
+  assert.equal(c.video.muted, false, "heard from the picture again");
+  assert.ok(c.holders.every(h => h.srcObject === null), "the silent elements let the voice go");
+  assert.equal(c.leveller(), null);
+});
+
+test("on an iPhone or iPad, or without Web Audio, or if it will not start: the voice plays as it came", () => {
+  for (const opts of [{ os: "iphone" }, { os: "ipad" }, { webAudio: false }, { ctxThrows: true }]) {
+    const c = call(opts);
+    c.arrive(c.track("audio"));
+    assert.equal(c.leveller(), null, JSON.stringify(opts));
+    assert.equal(c.video.muted, false, JSON.stringify(opts));
+    assert.equal(c.video.plays > 0, true);
+  }
+  for (const os of ["android", "windows", "macos", "linux", "chromeos", "other"]) {
+    assert.equal(G.mayLevelVoice({ webAudio: true, hasAudio: true, os }), true, os);
+  }
+  assert.equal(G.mayLevelVoice({ webAudio: true, hasAudio: false, os: "android" }), false, "no voice yet: nothing to even out");
+  assert.equal(G.mayLevelVoice(null), false);
+});
+
+test("a picture alone is not a voice: nothing evened out until the voice arrives", () => {
+  const c = call();
+  c.arrive(c.track("video"));
+  assert.equal(c.contexts.length, 0);
+  assert.equal(c.video.muted, false);
+});
+
+test("a phone that will not start the evened-out voice: Tap to hear, a moment on — and gone once it starts", async () => {
+  const c = call({ ctxState: "suspended" });
+  c.arrive(c.track("audio"));
+  await settled();
+  assert.equal(c.tapShown(), false, "not at once: a context can take a moment to start");
+  const wait = c.timers.at(-1);
+  assert.equal(wait.ms, 1500);
+  wait.f();
+  assert.equal(c.tapShown(), true);
+  const ctx = c.contexts[0];
+  ctx.state = "running";
+  ctx.onstatechange();
+  assert.equal(c.tapShown(), false);
+});
+
+test("the wiring: the call's end lets the leveller go; Tap to hear starts it", () => {
+  const stop = app.match(/^function stopCallMedia\([^)]*\)\s*\{[\s\S]*?^\}/m)[0];
+  assert.match(stop, /stopLocalCallMedia\(\);\s*\n\s*stopLevellingVoice\(\);/);
+  const tap = app.slice(app.indexOf("callTapToHear.onclick = () => {"), app.indexOf("};", app.indexOf("callTapToHear.onclick = () => {")));
+  assert.match(tap, /if \(voiceLeveller\) voiceLeveller\.ctx\.resume\(\)/);
 });

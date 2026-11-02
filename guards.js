@@ -1001,6 +1001,33 @@
   }
 
   /**
+   * The other person's voice, evened out as it arrives: a compressor brings
+   * the quiet and the loud parts closer and lifts them both — by its own
+   * make-up gain, which the Web Audio standard defines from these numbers
+   * (about 17 dB here) — and a limiter keeps the loudest from distorting.
+   * Measured in Edge's own Web Audio, with a voice-like sound: arriving
+   * anywhere from -40 to -6 dB (34 dB apart) it comes out between -24 and -13
+   * (11 dB apart), its peaks far from distorting; ordinary speech, -24 in,
+   * comes out 6 dB louder, a far voice, -35 in, 13 dB louder. The hiss
+   * between words is lifted by the make-up gain too, which is why the
+   * threshold is no lower.
+   */
+  const VOICE_LEVELLER = Object.freeze({ threshold: -40, knee: 12, ratio: 4, attack: 0.01, release: 0.3,
+                                         limit: -3, limitRatio: 20, limitAttack: 0.002, limitRelease: 0.1 });
+
+  /**
+   * Is the other person's voice evened out here? Wherever Web Audio is, and
+   * there is a voice — but not on an iPhone or iPad, where a page's sound while
+   * its microphone is open is the phone's own business, and a call has gone
+   * silent there before for less: the plain way stays.
+   *
+   * @param {{webAudio: boolean, hasAudio: boolean, os: string}} o
+   */
+  function mayLevelVoice(o) {
+    return Boolean(o) && o.webAudio === true && o.hasAudio === true && o.os !== "iphone" && o.os !== "ipad";
+  }
+
+  /**
    * Should the call show the loudspeaker button?
    *
    * On an iPhone or iPad a page has no way to choose the loudspeaker over the
@@ -1624,7 +1651,7 @@
     MAX_MESSAGE_CHARS, messageFits, draftState, enterSends, OUTBOX_MAX, mayQueueText, mayFlushOutbox,
     isAppleTouchDevice, installOffer,
     LINK_ALIVE, serverLeaveEndsChat, linkLostForGood,
-    tracksToRestart, mayFlipCamera, flipCameraOffered, mayMoveMic, micChangeAction, speakerOffered,
+    tracksToRestart, mayFlipCamera, flipCameraOffered, mayMoveMic, micChangeAction, speakerOffered, VOICE_LEVELLER, mayLevelVoice,
     mayShareScreen, shareOffered, callChromeMayHide, callPauseNote, MIC_CHECK, micCheck, CALL_RECOVER, callRecovery,
     CHAT_REPAIR, chatRepair, unattended, tabTitle,
     waitingRoomLost, isOwnRoom, connectStalled, chatIsLive, backPress, leaveAsks, callWhenChatCloses, splitLinks,
