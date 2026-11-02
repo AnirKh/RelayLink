@@ -27,7 +27,7 @@
 
    APP_BUILD is written by tools/sync-build.js and by nothing else.
 ══════════════════════════════════════════════ */
-const APP_BUILD = "202611020756-b4b4f8c2";
+const APP_BUILD = "202611020826-c2c4c297";
 
 function refuseToRunInAStalePage() {
   let builtFor = null;
@@ -3292,10 +3292,12 @@ async function fetchSealedFile(named, open, meta, room, id) {
 
 /** A photo drawn, tap to see it big; a file by its name and size, tap to save
     it — from the copy kept here, once it is read back. */
-function fillMailFile(bubble, m, room = mailOpenFor, urls = mailUrls) {
+function fillMailFile(bubble, m, room = mailOpenFor, urls = mailUrls, notHere = null) {
   /* DCS.fmtBytes, not fmtBytes: this runs as the page loads, when a tapped
      "a message waits" opens a conversation — before fmtBytes is declared.
-     `room` and `urls`: a conversation's, or the owner's inbox's. */
+     `room` and `urls`: a conversation's, or the owner's inbox's. `notHere`:
+     what to make of the chip when the file is not on this device — said
+     missing, if nothing. */
   const image = G.presentAs("image", m.file.type).kind === "image";
   const chip = document.createElement("a");
   chip.className = "mail-file";
@@ -3324,6 +3326,7 @@ function fillMailFile(bubble, m, room = mailOpenFor, urls = mailUrls) {
   if (urls.has(key)) { show(urls.get(key)); return; }
   mailFileBlob(room, m.id).then(blob => {
     if (urls === mailUrls && mailOpenFor !== room) return;   // the conversation closed meanwhile
+    if (!blob && notHere) { notHere(m, chip, size); return; }
     if (!blob) { chip.classList.add("missing"); size.textContent = `${DCS.fmtBytes(m.file.size)} · ${t("mailFileMissing")}`; return; }
     if (!urls.has(key)) urls.set(key, URL.createObjectURL(blob));
     show(urls.get(key));
@@ -3364,10 +3367,17 @@ drawPeople();
    are worked out from. On each connection the server's hello carries a word
    for that connection alone; the owner's device signs it (owner-hello), and
    from then on the server hands it the notes, lets them go when it says so,
-   and alerts it where it says (owner-alert). A note is kept here as a
-   conversation is (mailStore, under the inbox's name; a file in IndexedDB),
-   and read in the Notes tab itself — asked for: no button, no window, just
-   the notes, day by day, a day opening to its own.
+   and alerts it where it says (owner-alert). Read in the Notes tab itself —
+   asked for: no button, no window, just the notes, day by day, a day
+   opening to its own.
+
+   Kept on the server until the owner deletes them — asked for, so that
+   every one of the owner's devices has every note. Each device keeps the
+   words (mailStore, under the inbox's name), and is sent the whole list
+   each time it asks, so one deleted on another device goes from here too.
+   A photo or file stays on the server until it is tapped; then it is
+   fetched, opened and kept here (IndexedDB). Deleting is said to the
+   server, and said again until the list shows it gone (`deleting`).
 
    Set up from "Own this app?": a fresh code, to be saved, and the lock it
    makes, to be written into protocol.js. Until that is this code's lock,
@@ -3441,6 +3451,7 @@ function ownerConnect() {
 /** Taken for the owner's: the notes, and where to alert this device. */
 function ownerAccepted() {
   ownerConfirmed = true;
+  sendDeletes();
   fetchInbox();
   ownerAlertNow(false);
 }
@@ -3458,40 +3469,87 @@ function ownerAlertNow(clear) {
   if (knock || clear) wsSend({ type: "owner-alert", knock });
 }
 
-/** The owner's notes, opened here — or not at all — kept, and let go of on
-    the server. One whose file has no answer yet stays there for next time. */
+/** The owner's notes, as the server holds them — the whole list, each time.
+    New ones are opened and kept here: their words, and a file's description
+    (the file itself when tapped). Ones another of the owner's devices
+    deleted go from here too. One that does not open is no note: the server
+    is told to let it go. */
 async function takeNotes(data) {
-  const items = Array.isArray(data.items) ? data.items.filter(m => m && typeof m.id === "string") : [];
-  if (!ownerKeysHere || data.side !== "a" || !items.length) return;
-  const seen = new Set(mailStore.seen[ownerBox] || []);
-  const taken = [];
-  let last = null, fresh = 0, lost = 0;
-  for (const m of items) {
-    if (seen.has(m.id)) { taken.push(m.id); continue; }
-    const where = { box: ownerBox, id: m.id };
-    const note = await DC.openNote(ownerKeysHere, { ...where, iv: m.iv, ct: m.ct });
-    if (note && note.file) {
-      const got = await fetchSealedFile(`${ownerBox}:a:${m.id}`, sealed => DC.openNoteFile(ownerKeysHere, where, sealed), note.file, ownerBox, m.id);
-      if (got === "later") continue;
-      if (got === "gone") { seen.add(m.id); taken.push(m.id); lost++; continue; }
-    }
-    seen.add(m.id);                                      // opened or not, never tried again
-    taken.push(m.id);
-    if (!note || !Number.isSafeInteger(m.at)) continue;
-    addToThread(ownerBox, { id: m.id, at: m.at, got: Date.now(), mine: false, from: note.name,
+  if (!ownerKeysHere || data.side !== "a") return;
+  const listed = Array.isArray(data.items) ? data.items.filter(m => m && typeof m.id === "string") : [];
+  const thread = threadFor(ownerBox);
+  const onServer = new Set(listed.map(m => m.id));
+  const deletedElsewhere = thread.items.filter(m => m.pi && !onServer.has(m.id));
+  for (const m of deletedElsewhere) forgetNoteFile(m);
+  if (deletedElsewhere.length) thread.items = thread.items.filter(m => !deletedElsewhere.includes(m));
+  thread.deleting = (thread.deleting || []).filter(id => onServer.has(id));   // still there: said again below
+  const deleting = new Set(thread.deleting);
+  const known = new Set(thread.items.map(m => m.id));
+  let last = null, fresh = 0;
+  for (const m of listed) {
+    if (known.has(m.id) || deleting.has(m.id)) continue;
+    const note = await DC.openNote(ownerKeysHere, { box: ownerBox, id: m.id, iv: m.iv, ct: m.ct });
+    if (!note || !Number.isSafeInteger(m.at)) { thread.deleting.push(m.id); continue; }
+    addToThread(ownerBox, { id: m.id, at: m.at, got: Date.now(), mine: false, pi: true, from: note.name,
                             ...(note.text ? { text: note.text } : {}), ...(note.file ? { file: note.file } : {}) });
     last = note;
     fresh++;
   }
-  mailStore.seen[ownerBox] = [...seen].slice(-G.MAIL_SEEN_MAX);
   storeMail();
-  if (taken.length) wsSend({ type: "mail-ack", box: ownerBox, side: "a", ids: taken });
-  if (lost) showToast(t("mailFileGone"), "warn");
+  sendDeletes();
   if (!fresh) { drawOwner(); return; }
   if (inboxShowing()) { inboxViewed(); return; }       // there on screen: shown at once, no toast
   drawOwner();
   showToast(I18N[LANG].noteArrived(last.name || t("noteAnonymous")), "info");
   noticeArrival();
+}
+
+/** Notes deleted on this device: gone from here at once, and from the server
+    — for every device — as soon as it is told (said again until it is). */
+function deleteNotes(ids) {
+  const thread = threadFor(ownerBox);
+  const drop = new Set(ids);
+  for (const m of thread.items) if (drop.has(m.id)) forgetNoteFile(m);
+  thread.items = thread.items.filter(m => !drop.has(m.id));
+  thread.deleting = [...new Set([...(thread.deleting || []), ...ids])];
+  storeMail();
+  sendDeletes();
+  drawOwner();
+}
+
+function sendDeletes() {
+  const ids = (mailStore.threads[ownerBox] || {}).deleting || [];
+  if (!ownerConfirmed) return;
+  for (let i = 0; i < ids.length; i += 200) wsSend({ type: "mail-ack", box: ownerBox, side: "a", ids: ids.slice(i, i + 200) });
+}
+
+/** A note's file kept here, gone — with its picture's address. */
+function forgetNoteFile(m) {
+  if (!m.file) return;
+  const key = `${ownerBox}/${m.id}`;
+  mailFilesHere.delete(key);
+  if (inboxUrls.has(key)) { URL.revokeObjectURL(inboxUrls.get(key)); inboxUrls.delete(key); }
+  mailFilesDo("readwrite", store => store.delete(key)).catch(() => {});
+}
+
+/** A note's file not here yet: its chip fetches it when tapped — opened, kept
+    and shown — or says why not. */
+function offerNoteFile(m, chip, size) {
+  const told = text => { size.textContent = `${DCS.fmtBytes(m.file.size)} · ${text}`; };
+  told(t("noteTapToGet"));
+  chip.classList.add("to-get");
+  chip.onclick = async e => {
+    if (e && e.preventDefault) e.preventDefault();
+    if (chip.classList.contains("getting")) return;
+    chip.classList.add("getting");
+    told(t("noteGetting"));
+    const where = { box: ownerBox, id: m.id };
+    const got = await fetchSealedFile(`${ownerBox}:a:${m.id}`, sealed => DC.openNoteFile(ownerKeysHere, where, sealed), m.file, ownerBox, m.id);
+    chip.classList.remove("getting");
+    if (got === "ok") { drawInbox(); return; }
+    told(t("noteTapToGet"));
+    showToast(t(got === "gone" ? "mailFileGone" : "networkErr"), "warn");
+  };
 }
 
 /** A note for the owner, sealed here — its file first, as for messages — and
@@ -3661,7 +3719,21 @@ function noteRow(m) {
   const who = document.createElement("span");
   who.className = "note-from";
   who.textContent = m.from || t("noteAnonymous");
-  head.append(time, who);
+  /* Delete: a second tap, so one is not enough to lose it. */
+  const del = document.createElement("button");
+  del.type = "button";
+  del.className = "note-delete";
+  del.setAttribute("aria-label", t("noteDelete"));
+  del.appendChild(tablerIcon("trash"));
+  del.onclick = () => {
+    if (!del.classList.contains("asking")) {
+      del.classList.add("asking");
+      del.textContent = t("noteDeleteSure");
+      return;
+    }
+    deleteNotes([m.id]);
+  };
+  head.append(time, who, del);
   row.appendChild(head);
   if (m.text) {
     const words = document.createElement("div");
@@ -3672,7 +3744,7 @@ function noteRow(m) {
   if (m.file) {
     const file = document.createElement("div");
     file.className = "mail-bubble";
-    fillMailFile(file, m, ownerBox, inboxUrls);
+    fillMailFile(file, m, ownerBox, inboxUrls, offerNoteFile);
     row.appendChild(file);
   }
   return row;
@@ -3701,8 +3773,7 @@ inboxClearBtn.onclick = () => {
   inboxClearing = false;
   inboxClearBtn.classList.remove("asking");
   inboxClearBtn.textContent = t("mailClear");
-  threadFor(ownerBox).items = [];
-  storeMail();
+  deleteNotes(threadFor(ownerBox).items.map(m => m.id));
   forgetMailFiles(ownerBox);
   letInboxUrlsGo();
   inboxOpenDays.clear();

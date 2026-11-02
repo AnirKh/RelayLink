@@ -18,6 +18,11 @@
   (drop), and gone with that message. One never described is let go after
   ORPHAN_MS.
 
+  One mailbox may be kept until its owner lets its messages go, with no week
+  (`lasting`): the app owner's inbox, whose notes stay here for every one of
+  the owner's devices to read. It has room for more, and the disk is never
+  filled past DISK_RESERVE_BYTES whatever the counts say.
+
   Kept in a file when there is somewhere to keep it (on the Pi, the service's
   state directory), so a restart — every update is one — loses nothing; in
   memory only otherwise, and then no files at all. Bounded per mailbox and in
@@ -43,6 +48,20 @@ const FILE_MAX_BYTES     = 50 * 1024 * 1024 + 28; // a 50 MB file, sealed: 12 of
 const BOX_MAX_FILE_BYTES = 400 * 1024 * 1024;     // eight of the largest, waiting for one person
 const ALL_MAX_FILE_BYTES = 2 * 1024 * 1024 * 1024;
 const ORPHAN_MS          = 10 * 60 * 1000;        // a file sent and never described
+/* The lasting mailbox: notes kept until the owner deletes them. */
+const LASTING_MAX_ITEMS      = 200;                 // as many as a device keeps (G.MAIL_THREAD_MAX)
+const LASTING_MAX_CHARS      = 3_000_000;
+const LASTING_MAX_FILE_BYTES = 1024 * 1024 * 1024;
+/* Left free on the disk the files are on, whatever is asked of it. */
+const DISK_RESERVE_BYTES = 1024 * 1024 * 1024;
+
+/** Free space where `dir` is (or would be) — Infinity where it cannot be told. */
+function diskFreeAt(dir) {
+  for (let at = dir; at; at = path.dirname(at) === at ? null : path.dirname(at)) {
+    try { const st = fs.statfsSync(at); return st.bavail * st.bsize; } catch (_) { /* not there yet: its parent */ }
+  }
+  return Infinity;
+}
 
 const BOX  = /^~[A-Za-z0-9_-]{43}$/;
 const ID   = /^[A-Za-z0-9_-]{22}$/;
@@ -67,7 +86,8 @@ function fileAddressValid(box, side, id) {
   return typeof box === "string" && BOX.test(box) && SIDE(side) && typeof id === "string" && ID.test(id);
 }
 
-function createMailboxes({ file = null, filesDir = null, now = () => Date.now(), saveDelayMs = SAVE_DELAY_MS } = {}) {
+function createMailboxes({ file = null, filesDir = null, now = () => Date.now(), saveDelayMs = SAVE_DELAY_MS,
+                          lasting = null, diskFree = () => diskFreeAt(filesDir) } = {}) {
   const boxes = new Map();              // `${box}:${to}` → [{ id, at, iv, ct, keptAt, file? }]
   const pending = new Map();            // file name → { box, to, size, at }: sent, not yet described
   let total = 0;                        // all sealed text kept, in characters
@@ -75,13 +95,16 @@ function createMailboxes({ file = null, filesDir = null, now = () => Date.now(),
   let saveTimer = null;
 
   const keyOf = (box, side) => `${box}:${side}`;
+  const lasts = box => lasting !== null && box === lasting;
+  const expired = (box, m) => !lasts(box) && now() - m.keptAt > MAIL_TTL_MS;
   const sizeOf = item => item.iv.length + item.ct.length;
   /* A file's name on disk says nothing of whose it is. */
   const fileName = (box, to, id) => crypto.createHash("sha256").update(`${box}:${to}:${id}`).digest("hex");
   const filePath = (box, to, id) => path.join(filesDir, fileName(box, to, id));
 
   /* Whatever the file holds, each message is believed only as a new one
-     would be — and one past its week is not taken back up. */
+     would be — and one past its week is not taken back up, but in the
+     lasting mailbox. */
   if (file) {
     try {
       const kept = JSON.parse(fs.readFileSync(file, "utf8"));
@@ -90,7 +113,7 @@ function createMailboxes({ file = null, filesDir = null, now = () => Date.now(),
           const [box, side] = key.split(":");
           if (!Array.isArray(items)) continue;
           for (const it of items) {
-            if (!it || !Number.isFinite(it.keptAt) || now() - it.keptAt > MAIL_TTL_MS) continue;
+            if (!it || !Number.isFinite(it.keptAt) || expired(box, it)) continue;
             if (!dropValid(box, side, it, Math.max(now(), it.keptAt))) continue;
             const withFile = filesDir && Number.isSafeInteger(it.file) && it.file > 0 && it.file <= FILE_MAX_BYTES;
             if (put(box, side, { id: it.id, at: it.at, iv: it.iv, ct: it.ct, keptAt: it.keptAt, ...(withFile ? { file: it.file } : {}) }) === "new" && withFile) {
@@ -106,8 +129,8 @@ function createMailboxes({ file = null, filesDir = null, now = () => Date.now(),
     const key = keyOf(box, side);
     const list = boxes.get(key) || [];
     if (list.some(m => m.id === item.id)) return "ok";                  // sent again: kept once
-    if (list.length >= BOX_MAX_ITEMS) return "full";
-    if (list.reduce((n, m) => n + sizeOf(m), 0) + sizeOf(item) > BOX_MAX_CHARS) return "full";
+    if (list.length >= (lasts(box) ? LASTING_MAX_ITEMS : BOX_MAX_ITEMS)) return "full";
+    if (list.reduce((n, m) => n + sizeOf(m), 0) + sizeOf(item) > (lasts(box) ? LASTING_MAX_CHARS : BOX_MAX_CHARS)) return "full";
     if (total + sizeOf(item) > ALL_MAX_CHARS) return "server-full";
     list.push(item);
     boxes.set(key, list);
@@ -195,16 +218,16 @@ function createMailboxes({ file = null, filesDir = null, now = () => Date.now(),
       return gone;
     },
 
-    /** Messages past their week, gone; files sent and never described, gone
-        after ORPHAN_MS — and any on disk that no message names (a restart
-        between the two). */
+    /** Messages past their week, gone — but in the lasting mailbox; files
+        sent and never described, gone after ORPHAN_MS — and any on disk that
+        no message names (a restart between the two). */
     sweep() {
       let gone = 0;
       for (const [key, list] of boxes) {
         const [box, side] = key.split(":");
-        const keep = list.filter(m => now() - m.keptAt <= MAIL_TTL_MS);
+        const keep = list.filter(m => !expired(box, m));
         if (keep.length === list.length) continue;
-        for (const m of list) if (now() - m.keptAt > MAIL_TTL_MS) letGo(box, side, m);
+        for (const m of list) if (expired(box, m)) letGo(box, side, m);
         gone += list.length - keep.length;
         if (keep.length) boxes.set(key, keep); else boxes.delete(key);
       }
@@ -235,12 +258,14 @@ function createMailboxes({ file = null, filesDir = null, now = () => Date.now(),
     filesOn: Boolean(filesDir),
 
     /** May a file of `bytes` be sent to this mailbox? "ok", "off" (nowhere
-        to keep it), "too-large", "full" (this mailbox), "server-full". */
+        to keep it), "too-large", "full" (this mailbox), "server-full" (all
+        the mailboxes, or the disk). */
     fileRoom(box, to, bytes) {
       if (!filesDir) return "off";
       if (!Number.isSafeInteger(bytes) || bytes < 28 || bytes > FILE_MAX_BYTES) return "too-large";
-      if (boxFileBytes(box, to) + bytes > BOX_MAX_FILE_BYTES) return "full";
-      if (fileTotal + pendingBytes() + bytes > ALL_MAX_FILE_BYTES) return "server-full";
+      if (boxFileBytes(box, to) + bytes > (lasts(box) ? LASTING_MAX_FILE_BYTES : BOX_MAX_FILE_BYTES)) return "full";
+      if (fileTotal + pendingBytes() + bytes > ALL_MAX_FILE_BYTES + (lasting ? LASTING_MAX_FILE_BYTES : 0)) return "server-full";
+      if (diskFree() - bytes < DISK_RESERVE_BYTES) return "server-full";
       return "ok";
     },
 
@@ -285,5 +310,6 @@ function createMailboxes({ file = null, filesDir = null, now = () => Date.now(),
 module.exports = {
   createMailboxes, dropValid, fileAddressValid,
   MAIL_TTL_MS, BOX_MAX_ITEMS, BOX_MAX_CHARS, ALL_MAX_CHARS, CT_MAX_CHARS,
-  FILE_MAX_BYTES, BOX_MAX_FILE_BYTES, ALL_MAX_FILE_BYTES, ORPHAN_MS
+  FILE_MAX_BYTES, BOX_MAX_FILE_BYTES, ALL_MAX_FILE_BYTES, ORPHAN_MS,
+  LASTING_MAX_ITEMS, LASTING_MAX_CHARS, LASTING_MAX_FILE_BYTES, DISK_RESERVE_BYTES
 };

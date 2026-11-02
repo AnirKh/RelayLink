@@ -647,8 +647,20 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
 .note-item { padding: 9px 10px; border-radius: 10px; background: var(--card); }
 .note-item.new { box-shadow: inset 3px 0 0 var(--accent); }
 .note-head { display: flex; align-items: baseline; gap: 8px; margin-bottom: 3px; }
-.note-time { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
-.note-from { font-size: 13.5px; font-weight: 600; overflow-wrap: anywhere; }
+.note-time { flex-shrink: 0; white-space: nowrap; font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.note-from { flex: 1; min-width: 0; font-size: 13.5px; font-weight: 600; overflow-wrap: anywhere; }
+.note-delete {
+  flex-shrink: 0; align-self: center; width: auto; min-height: 0; margin: -4px -4px -4px 0; padding: 4px 6px;
+  background: none; border: 0; color: var(--muted); font-size: 12px; font-weight: 500; cursor: pointer; border-radius: 6px;
+}
+/* Quiet buttons: the app's own hover would paint them as big ones. */
+.note-delete:hover:not(:disabled) { background: none; color: var(--danger-text); }
+.inbox-day-btn:hover:not(:disabled) { background: rgba(255,255,255,0.04); }
+.owner-link:hover:not(:disabled) { background: none; color: var(--text); }
+.note-delete .ti { font-size: 16px; }
+.note-delete.asking { color: var(--danger-text); font-weight: 600; }
+.mail-file.to-get { cursor: pointer; }
+.mail-file.getting { opacity: 0.6; cursor: progress; }
 .note-text { font-size: 14px; line-height: 1.45; white-space: pre-wrap; overflow-wrap: anywhere; }
 .note-text a { color: inherit; text-decoration: underline; }
 .note-item .mail-bubble { margin-top: 6px; display: inline-block; max-width: 100%; }

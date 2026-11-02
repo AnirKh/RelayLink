@@ -166,6 +166,34 @@ test("anyone leaves a note; nobody but the owner collects it, or has it let go �
   assert.ok(!me.inbox.some(m => m.type === "mail" && m.items.some(x => x.id === n.id)), "let go for good");
 });
 
+test("notes stay until the owner deletes them: every device of the owner's gets the same list — an empty one too", async () => {
+  const visitor = await client();
+  const n = await note({ name: "Bat", text: "for all your devices" });
+  visitor.send_(n);
+  await waitFor(visitor, "mail-dropped");
+  const phone = await ownerDevice();
+  await waitFor(phone, "owner-ok");
+  phone.send_({ type: "mail-fetch", files: true, boxes: [{ box: BOX, side: "a" }] });
+  assert.ok((await waitFor(phone, "mail")).items.some(m => m.id === n.id));
+  await sleep(300);
+  const laptop = await ownerDevice();
+  await waitFor(laptop, "owner-ok");
+  laptop.send_({ type: "mail-fetch", files: true, boxes: [{ box: BOX, side: "a" }] });
+  const list = await waitFor(laptop, "mail");
+  assert.ok(list.items.some(m => m.id === n.id), "the phone took it; it is still there for the laptop");
+  laptop.send_({ type: "mail-ack", box: BOX, side: "a", ids: list.items.map(m => m.id) });
+  await sleep(300);
+  phone.inbox.length = 0;
+  phone.send_({ type: "mail-fetch", files: true, boxes: [{ box: BOX, side: "a" }] });
+  assert.deepEqual(await waitFor(phone, "mail"), { type: "mail", box: BOX, side: "a", items: [] }, "all deleted on the laptop: the phone is told, with an empty list");
+});
+
+test("the server keeps the owner's inbox as its one lasting mailbox — no week", () => {
+  const server = fs.readFileSync(path.join(__dirname, "..", "..", "server.js"), "utf8");
+  assert.match(server, /createMailboxes\(\{[^}]*lasting: OWNER_BOX \}\)/);
+  assert.ok(server.indexOf("const OWNER_BOX") < server.indexOf("const mail = createMailboxes"), "worked out before the mailboxes are made");
+});
+
 test("a note's file: sent first, fetched by the owner, opened only by the owner", async () => {
   const visitor = await client();
   const n = await note({ name: "", text: "", file: { name: "cat.jpg", type: "image/jpeg", size: 4000 } }, { file: true });

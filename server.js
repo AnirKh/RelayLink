@@ -90,8 +90,15 @@ const { createMailboxes, fileAddressValid, FILE_MAX_BYTES: MAIL_FILE_MAX_BYTES }
 const MAILBOX_DIR = process.env.MAILBOX_DIR || (process.env.STATE_DIRECTORY || "").split(":")[0] || null;
 /* Photos and files, too — sealed the same way, kept on disk beside it, one
    file each; none without a directory to keep them in. */
+/* The owner's inbox (see OWNER INBOX below) is the one mailbox kept until
+   the owner deletes its notes: no week. */
+const OWNER_LOCK = /^[A-Za-z0-9_-]{87}\.[A-Za-z0-9_-]{87}$/.test(process.env.OWNER_LOCK || "")
+  ? process.env.OWNER_LOCK : require("./protocol.js").OWNER_LOCK;
+const OWNER_BOX = OWNER_LOCK
+  ? `~${crypto.createHash("sha256").update(`direct-connection/owner-inbox/v1:${OWNER_LOCK.split(".")[0]}`).digest("base64url")}`
+  : null;
 const mail = createMailboxes({ file: MAILBOX_DIR ? path.join(MAILBOX_DIR, "mailbox.json") : null,
-                               filesDir: MAILBOX_DIR ? path.join(MAILBOX_DIR, "files") : null });
+                               filesDir: MAILBOX_DIR ? path.join(MAILBOX_DIR, "files") : null, lasting: OWNER_BOX });
 setInterval(() => mail.sweep(), 5 * 60 * 1000).unref();
 /* ── OWNER INBOX ───────────────────────────
    "Leave a message" is a note for the app's owner. The sender's device seals
@@ -101,12 +108,10 @@ setInterval(() => mail.sweep(), 5 * 60 * 1000).unref();
    cannot open them. Only a link that proved it is the owner's — it signed
    this connection's one-time word with the lock's signing key (owner-hello)
    — may collect them or have them let go, and say where the owner's device
-   is to be alerted (owner-alert, kept in owner.json beside the mailbox). */
-const OWNER_LOCK = /^[A-Za-z0-9_-]{87}\.[A-Za-z0-9_-]{87}$/.test(process.env.OWNER_LOCK || "")
-  ? process.env.OWNER_LOCK : require("./protocol.js").OWNER_LOCK;
-const OWNER_BOX = OWNER_LOCK
-  ? `~${crypto.createHash("sha256").update(`direct-connection/owner-inbox/v1:${OWNER_LOCK.split(".")[0]}`).digest("base64url")}`
-  : null;
+   is to be alerted (owner-alert, kept in owner.json beside the mailbox).
+   They stay until the owner deletes them, for each of the owner's devices
+   to read; a device asking is sent the whole list, even an empty one, so it
+   sees what another of them deleted. */
 const OWNER_SIGN_KEY = (() => {
   if (!OWNER_LOCK) return null;
   const raw = Buffer.from(OWNER_LOCK.split(".")[1], "base64url");
@@ -1345,7 +1350,7 @@ wss.on("connection", (ws, req) => {
              from before them opened its message as no text, took it for
              garbled — and said it had it, so it was gone for good. */
           const items = mail.take(b.box, b.side).filter(m => !m.file || data.files === true);
-          if (items.length) ws.send(JSON.stringify({ type: "mail", box: b.box, side: b.side, items }));
+          if (items.length || b.box === OWNER_BOX) ws.send(JSON.stringify({ type: "mail", box: b.box, side: b.side, items }));
           /* Someone already waiting in the room for this side: said now, not
              only when the next one starts (see tellSavedWaiting). */
           const waitingRoom = sessions.get(b.box);

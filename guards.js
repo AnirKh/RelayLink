@@ -1471,10 +1471,12 @@
   }
 
   /** A note in the owner's inbox says who left it — as they wrote it, maybe
-      nothing — and only a note may hold words and a file together. */
+      nothing — and only a note may hold words and a file together. `pi`: it
+      is kept on the server too, until the owner deletes it. */
   function noteFromValid(m) {
     return (m.from === undefined || (m.mine === false && typeof m.from === "string" && m.from.length <= 200)) &&
-           (m.got === undefined || Number.isSafeInteger(m.got));
+           (m.got === undefined || Number.isSafeInteger(m.got)) &&
+           (m.pi === undefined || (m.pi === true && m.from !== undefined));
   }
 
   /**
@@ -1497,6 +1499,10 @@
         (m.mine ? MAIL_STATES.includes(m.state) : m.state === undefined));
       out.threads[room] = { read: Number.isSafeInteger(thread.read) ? thread.read : 0,
                             items: items.sort((x, y) => x.at - y.at).slice(-MAIL_THREAD_MAX) };
+      /* The inbox's: notes deleted here that the server is still to be told of. */
+      if (Array.isArray(thread.deleting)) {
+        out.threads[room].deleting = thread.deleting.filter(id => typeof id === "string" && MAIL_ID.test(id)).slice(-MAIL_SEEN_MAX);
+      }
     }
     for (const [room, ids] of Object.entries(stored.seen || {})) {
       if (SAVED_ROOM.test(room) && Array.isArray(ids)) out.seen[room] = ids.filter(id => typeof id === "string" && MAIL_ID.test(id)).slice(-MAIL_SEEN_MAX);

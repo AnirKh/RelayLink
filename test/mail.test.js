@@ -416,3 +416,53 @@ test("new is judged by when a note reached this device — a sender's clock that
     assert.deepEqual(G.mailStore({ v: 1, threads: { [room]: { items: [{ ...ahead, got }] } } }).threads[room].items, [], String(got));
   }
 });
+
+test("the lasting mailbox — the owner's inbox — keeps its notes past a week, and through a restart, until they are let go", async () => {
+  let now = 1_793_000_100_000;
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "dc-lasting-"));
+  const file = path.join(dir, "mailbox.json");
+  const INBOX = `~${"o".repeat(43)}`;
+  const box = M.createMailboxes({ file, now: () => now, lasting: INBOX, saveDelayMs: 5 });
+  box.drop(INBOX, "a", item(1, { at: now }));
+  box.drop(BOX, "b", item(2, { at: now }));
+  now += M.MAIL_TTL_MS * 4;
+  box.sweep();
+  assert.deepEqual(box.take(INBOX, "a").map(m => m.id), [id(1)], "a month on: still there");
+  assert.deepEqual(box.take(BOX, "b"), [], "any other mailbox: its week");
+  box.flush();
+  const again = M.createMailboxes({ file, now: () => now, lasting: INBOX });
+  assert.deepEqual(again.take(INBOX, "a").map(m => m.id), [id(1)], "and after a restart");
+  assert.deepEqual(M.createMailboxes({ file, now: () => now }).take(INBOX, "a"), [], "a mailbox not named lasting keeps only its week");
+  again.ack(INBOX, "a", [id(1)]);
+  assert.deepEqual(again.take(INBOX, "a"), [], "let go when the owner says");
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test("the lasting mailbox holds as many as a device keeps, and 1 GB of files; no file is taken when the disk is nearly full", () => {
+  const INBOX = `~${"o".repeat(43)}`;
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "dc-lasting-"));
+  let free = 100 * 1024 * 1024 * 1024;
+  const box = M.createMailboxes({ filesDir: path.join(dir, "files"), lasting: INBOX, diskFree: () => free });
+  assert.equal(M.LASTING_MAX_ITEMS, G.MAIL_THREAD_MAX, "the server and a device agree on how many");
+  const now = Date.now();
+  for (let i = 0; i < M.LASTING_MAX_ITEMS; i++) assert.equal(box.drop(INBOX, "a", item(i, { at: now })), "new");
+  assert.equal(box.drop(INBOX, "a", item(9999, { at: now })), "full");
+  box.fileStored(INBOX, "a", id(1), M.LASTING_MAX_FILE_BYTES - 100);
+  assert.equal(box.fileRoom(INBOX, "a", 100), "ok");
+  assert.equal(box.fileRoom(INBOX, "a", 101), "full");
+  free = M.DISK_RESERVE_BYTES + 1000;
+  assert.equal(box.fileRoom(BOX, "b", 999), "ok");
+  assert.equal(box.fileRoom(BOX, "b", 1001), "server-full", "never past the reserve, whatever the counts say");
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test("a note kept on the server says so (`pi`) — only a note, and only as true", () => {
+  const room = `~${"r".repeat(43)}`;
+  const note = { id: id(1), at: 5, got: 5, mine: false, from: "Bat", text: "hi", pi: true };
+  assert.deepEqual(G.mailStore({ v: 1, threads: { [room]: { items: [note] } } }).threads[room].items, [note]);
+  for (const bad of [{ ...note, pi: "yes" }, { ...note, pi: false }, { id: id(2), at: 5, mine: false, text: "a message, not a note", pi: true }]) {
+    assert.deepEqual(G.mailStore({ v: 1, threads: { [room]: { items: [bad] } } }).threads[room].items, [], JSON.stringify(bad));
+  }
+  const kept = G.mailStore({ v: 1, threads: { [room]: { items: [], deleting: [id(3), "bad", 7] } } });
+  assert.deepEqual(kept.threads[room].deleting, [id(3)], "what waits to be deleted on the server: ids, nothing else");
+});

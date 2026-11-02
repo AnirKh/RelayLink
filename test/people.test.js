@@ -2030,25 +2030,28 @@ test("a device of the owner's with alerts off does not undo another's — unless
   assert.match(fn("ownerAlertNow"), /if \(knock \|\| clear\) wsSend\(\{ type: "owner-alert", knock \}\);/);
 });
 
-test("notes arrive: opened, kept with who left them, counted and said — and let go of on the server", async () => {
+test("notes arrive: opened, kept with who left them, counted and said — and left on the server, but one that is no note", async () => {
   const o = await anOwner();
   const p = page({ owner: { lock: o.lock, code: o.code } });
   await p.api.ownerReady();
+  p.api.ownerAccepted();
   const hi = await noteFor(o, { name: "Bat", text: "are you around?" });
   const nameless = await noteFor(o, { name: "", text: "guess who" });
   const garbled = { id: DC.makeMailId(), at: Date.now(), iv: "x".repeat(16), ct: "AAAA" };
+  p.log.ws.length = 0;
   await p.api.receiveMail({ type: "mail", box: o.box, side: "a", items: [hi, nameless, garbled] });
   const items = p.api.get().mailStore.threads[o.box].items;
-  assert.deepEqual(items.map(m => [m.from, m.text, m.mine]), [["Bat", "are you around?", false], ["", "guess who", false]]);
-  assert.deepEqual(p.log.ws.at(-1), { type: "mail-ack", box: o.box, side: "a", ids: [hi.id, nameless.id, garbled.id] }, "the garbled one let go too");
+  assert.deepEqual(items.map(m => [m.from, m.text, m.mine, m.pi]), [["Bat", "are you around?", false, true], ["", "guess who", false, true]]);
+  assert.deepEqual(p.log.ws.filter(m => m.type === "mail-ack"), [{ type: "mail-ack", box: o.box, side: "a", ids: [garbled.id] }],
+    "the notes stay on the server for the owner's other devices; only what is no note is let go");
   assert.deepEqual(p.log.toasts, [I18N.mn.noteArrived(I18N.mn.noteAnonymous)], "said once — for the last, which gave no name");
   assert.equal(p.log.noticed, 1);
-  assert.ok(shown(p.els.inboxCount));
   assert.equal(p.els.inboxCount.textContent, "2");
   const kept = G.mailStore(JSON.parse(p.store.get("dc-mail")));
   assert.deepEqual(kept.threads[o.box].items.map(m => m.from), ["Bat", ""], "kept as they are, through the checks");
-  await p.api.receiveMail({ type: "mail", box: o.box, side: "a", items: [hi] });
-  assert.equal(p.api.get().mailStore.threads[o.box].items.length, 2, "delivered twice: shown once");
+  await p.api.receiveMail({ type: "mail", box: o.box, side: "a", items: [hi, nameless] });
+  assert.equal(p.api.get().mailStore.threads[o.box].items.length, 2, "listed again: shown once");
+  assert.equal(p.log.toasts.length, 1, "and not said again");
 });
 
 test("a device that is not the owner's takes no notes, and lets none go", async () => {
@@ -2060,32 +2063,39 @@ test("a device that is not the owner's takes no notes, and lets none go", async 
   assert.ok(!visitor.log.ws.some(m => m.type === "mail-ack"));
 });
 
-test("a note with a file: fetched, opened, kept — and in the inbox, who left it, the words and the picture", async () => {
+test("a note's file stays on the server until it is tapped — then it is fetched, opened, kept and drawn", async () => {
   const o = await anOwner();
   const p = page({ owner: { lock: o.lock, code: o.code } });
   await p.api.ownerReady();
   const n = await noteFor(o, { name: "Bat", text: "the beach", file: { name: "beach.png", type: "image/png", size: thePhoto.length } });
   p.env.uploads.set(`${o.box}:a:${n.id}`, await DC.sealNoteFile(o.lock, { box: o.box, id: n.id }, thePhoto));
   await p.api.receiveMail({ type: "mail", box: o.box, side: "a", items: [n] });
-  assert.equal(p.log.web.find(r => r.method === "GET").headers["X-DC-Mail"], `${o.box}:a:${n.id}`);
-  const copy = await p.api.mailFileBlob(o.box, n.id);
-  assert.deepEqual(new Uint8Array(await copy.arrayBuffer()), thePhoto);
+  assert.deepEqual(p.log.web, [], "nothing fetched yet");
+  assert.equal(await p.api.mailFileBlob(o.box, n.id), null);
   p.els.panelMail.classList.remove("hidden");             // the Notes tab looked at
   p.api.inboxViewed();
   assert.ok(!shown(p.els.mailOverlay), "no window: the notes are in the tab");
   await settle(); await settle(); await settle();
-  const day = p.els.inboxList.children[0];
-  const note = day.querySelector(".note-item");
-  assert.equal(note.querySelector(".note-from").textContent, "Bat");
-  assert.equal(note.querySelector(".note-text").textContent, "the beach");
-  assert.equal(note.querySelector(".mail-bubble").children[0].className, "mail-image", "and the picture, drawn");
-  note.querySelector(".mail-bubble").children[0].onclick();
+  const note = () => p.els.inboxList.children[0].querySelector(".note-item");
+  assert.equal(note().querySelector(".note-from").textContent, "Bat");
+  assert.equal(note().querySelector(".note-text").textContent, "the beach");
+  const chip = note().querySelector(".mail-file");
+  assert.ok(chip.classList.contains("to-get"));
+  assert.match(chip.querySelector(".mail-file-size").textContent, new RegExp(I18N.mn.noteTapToGet));
+  await chip.onclick({ preventDefault() {} });
+  assert.equal(p.log.web.find(r => r.method === "GET").headers["X-DC-Mail"], `${o.box}:a:${n.id}`);
+  const copy = await p.api.mailFileBlob(o.box, n.id);
+  assert.deepEqual(new Uint8Array(await copy.arrayBuffer()), thePhoto, "kept here now");
+  await settle(); await settle(); await settle();
+  const img = note().querySelector(".mail-bubble").children[0];
+  assert.equal(img.className, "mail-image", "and the picture, drawn");
+  img.onclick();
   assert.equal(p.log.viewed.at(-1).name, "beach.png", "tap to see it big");
-  assert.ok(!shown(p.els.inboxCount), "read now");
+  assert.ok(!p.log.ws.some(m => m.type === "mail-ack"), "still on the server, for the owner's other devices");
   p.api.openThread(await person("Anu"));
   p.api.closeThread();
   await settle(); await settle();
-  assert.match(note.querySelector(".mail-bubble").children[0].src, /^blob:/, "a conversation closing lets go of its pictures, not the inbox's");
+  assert.match(note().querySelector(".mail-bubble").children[0].src, /^blob:/, "a conversation closing lets go of its pictures, not the inbox's");
 });
 
 test("on the owner's device the Notes tab is the inbox itself: day by day, newest first — a day opens to its notes", async () => {
@@ -2166,6 +2176,10 @@ test("clearing the inbox takes two taps — and keeps the ids, so nothing cleare
   const n = await noteFor(o, { name: "", text: "", file: { name: "a.png", type: "image/png", size: thePhoto.length } });
   p.env.uploads.set(`${o.box}:a:${n.id}`, await DC.sealNoteFile(o.lock, { box: o.box, id: n.id }, thePhoto));
   await p.api.receiveMail({ type: "mail", box: o.box, side: "a", items: [n] });
+  p.els.panelMail.classList.remove("hidden");
+  p.api.inboxViewed();
+  await settle(); await settle(); await settle();
+  await p.els.inboxList.children[0].querySelector(".mail-file").onclick({ preventDefault() {} });
   p.els.inboxClearBtn.onclick();
   assert.equal(p.els.inboxClearBtn.textContent, I18N.mn.mailClearSure);
   assert.equal(p.api.get().mailStore.threads[o.box].items.length, 1, "one tap is not enough");
@@ -2175,23 +2189,91 @@ test("clearing the inbox takes two taps — and keeps the ids, so nothing cleare
   assert.equal(p.files.size, 0);
   assert.equal(p.els.inboxList.children[0].textContent, I18N.mn.inboxEmpty);
   await p.api.receiveMail({ type: "mail", box: o.box, side: "a", items: [n] });
-  assert.equal(p.api.get().mailStore.threads[o.box].items.length, 0, "delivered again: not shown again");
+  assert.equal(p.api.get().mailStore.threads[o.box].items.length, 0, "still listed, before the server lets it go: not taken back up");
 });
 
-test("a note whose file has no answer yet is left on the server for next time — the words with it", async () => {
+test("a file tapped with no answer from the server: said, and tappable again — then fetched", async () => {
   const o = await anOwner();
   const p = page({ owner: { lock: o.lock, code: o.code } });
   await p.api.ownerReady();
   const n = await noteFor(o, { name: "Bat", text: "see the photo", file: { name: "a.png", type: "image/png", size: thePhoto.length } });
   p.env.uploads.set(`${o.box}:a:${n.id}`, await DC.sealNoteFile(o.lock, { box: o.box, id: n.id }, thePhoto));
+  await p.api.receiveMail({ type: "mail", box: o.box, side: "a", items: [n] });
+  p.els.panelMail.classList.remove("hidden");
+  p.api.inboxViewed();
+  await settle(); await settle(); await settle();
+  const chip = () => p.els.inboxList.children[0].querySelector(".mail-file");
   p.env.web = "down";
-  await p.api.receiveMail({ type: "mail", box: o.box, side: "a", items: [n] });
-  assert.equal((p.api.get().mailStore.threads[o.box] || { items: [] }).items.length, 0);
-  assert.ok(!p.log.ws.some(m => m.type === "mail-ack"), "not let go");
+  await chip().onclick({ preventDefault() {} });
+  assert.equal(p.log.toasts.at(-1), I18N.mn.networkErr, "said why");
+  assert.match(chip().querySelector(".mail-file-size").textContent, new RegExp(I18N.mn.noteTapToGet), "tappable again");
+  assert.equal(await p.api.mailFileBlob(o.box, n.id), null);
   p.env.web = "works";
-  await p.api.receiveMail({ type: "mail", box: o.box, side: "a", items: [n] });
-  assert.deepEqual(p.api.get().mailStore.threads[o.box].items.map(m => [m.from, m.text, m.file.name]), [["Bat", "see the photo", "a.png"]]);
-  assert.deepEqual(p.log.ws.at(-1).ids, [n.id]);
+  await chip().onclick({ preventDefault() {} });
+  assert.ok(await p.api.mailFileBlob(o.box, n.id));
+});
+
+test("every one of the owner's devices has every note: the list is the server's — one deleted on another device goes here too", async () => {
+  const o = await anOwner();
+  const phone = page({ owner: { lock: o.lock, code: o.code } });
+  const laptop = page({ owner: { lock: o.lock, code: o.code } });
+  await phone.api.ownerReady();
+  await laptop.api.ownerReady();
+  const a = await noteFor(o, { name: "Bat", text: "one" });
+  const b = await noteFor(o, { name: "Anu", text: "two" });
+  for (const d of [phone, laptop]) await d.api.receiveMail({ type: "mail", box: o.box, side: "a", items: [a, b] });
+  for (const d of [phone, laptop]) assert.deepEqual(d.api.get().mailStore.threads[o.box].items.map(m => m.text), ["one", "two"], "both have both");
+  await laptop.api.receiveMail({ type: "mail", box: o.box, side: "a", items: [b] });
+  assert.deepEqual(laptop.api.get().mailStore.threads[o.box].items.map(m => m.text), ["two"], "deleted on the phone: gone from the laptop at its next look");
+  await laptop.api.receiveMail({ type: "mail", box: o.box, side: "a", items: [] });
+  assert.deepEqual(laptop.api.get().mailStore.threads[o.box].items, [], "an empty list is a list: all deleted elsewhere");
+  const before = page({ owner: { lock: o.lock, code: o.code }, mail: { v: 1, threads: { [o.box]: { read: 0, items: [
+    { id: DC.makeMailId(), at: 5, mine: false, from: "Old", text: "taken off the server before notes stayed there" }] } }, seen: {} } });
+  await before.api.ownerReady();
+  await before.api.receiveMail({ type: "mail", box: o.box, side: "a", items: [] });
+  assert.equal(before.api.get().mailStore.threads[o.box].items.length, 1, "a note from before, kept only here, is not taken for deleted");
+});
+
+test("deleting a note: two taps — gone here at once, and from the server, told again until its list shows it gone", async () => {
+  const o = await anOwner();
+  const p = page({ owner: { lock: o.lock, code: o.code } });
+  await p.api.ownerReady();
+  const a = await noteFor(o, { name: "Bat", text: "keep" });
+  const b = await noteFor(o, { name: "Anu", text: "delete me" });
+  await p.api.receiveMail({ type: "mail", box: o.box, side: "a", items: [a, b] });
+  p.els.panelMail.classList.remove("hidden");
+  p.api.inboxViewed();
+  const del = () => p.els.inboxList.children[0].querySelectorAll(".note-item").find(n => n.querySelector(".note-text").textContent === "delete me").querySelector(".note-delete");
+  assert.equal(del().attrs["aria-label"], I18N.mn.noteDelete);
+  del().onclick();
+  assert.equal(del().textContent, I18N.mn.noteDeleteSure, "one tap is not enough");
+  assert.equal(p.api.get().mailStore.threads[o.box].items.length, 2);
+  p.log.ws.length = 0;
+  del().onclick();
+  assert.deepEqual(p.api.get().mailStore.threads[o.box].items.map(m => m.text), ["keep"]);
+  assert.deepEqual(p.log.ws.filter(m => m.type === "mail-ack"), [], "the server not taken for the owner's yet: nothing said");
+  assert.deepEqual(JSON.parse(p.store.get("dc-mail")).threads[o.box].deleting, [b.id], "kept, to say");
+  p.api.ownerAccepted();
+  assert.deepEqual(p.log.ws.find(m => m.type === "mail-ack"), { type: "mail-ack", box: o.box, side: "a", ids: [b.id] }, "said once taken for the owner's");
+  await p.api.receiveMail({ type: "mail", box: o.box, side: "a", items: [a, b] });
+  assert.deepEqual(p.api.get().mailStore.threads[o.box].items.map(m => m.text), ["keep"], "still listed: not taken back up");
+  assert.deepEqual(p.log.ws.filter(m => m.type === "mail-ack").length, 2, "and said again");
+  await p.api.receiveMail({ type: "mail", box: o.box, side: "a", items: [a] });
+  assert.deepEqual(p.api.get().mailStore.threads[o.box].deleting, [], "gone from the list: nothing more to say");
+});
+
+test("clearing the inbox deletes every note from the server too", async () => {
+  const o = await anOwner();
+  const p = page({ owner: { lock: o.lock, code: o.code } });
+  await p.api.ownerReady();
+  p.api.ownerAccepted();
+  const notes = [await noteFor(o, { name: "", text: "a" }), await noteFor(o, { name: "", text: "b" })];
+  await p.api.receiveMail({ type: "mail", box: o.box, side: "a", items: notes });
+  p.log.ws.length = 0;
+  p.els.inboxClearBtn.onclick();
+  p.els.inboxClearBtn.onclick();
+  assert.deepEqual(p.log.ws.filter(m => m.type === "mail-ack").map(m => m.ids), [notes.map(n => n.id)]);
+  assert.equal(p.api.get().mailStore.threads[o.box].items.length, 0);
 });
 
 test("a visitor's note: sealed to the lock here, its file sent first, the server's answer awaited — only the owner opens it", async () => {
@@ -2258,14 +2340,20 @@ test("an owner code typed in: not a code, or not this app's — said, and nothin
   assert.ok(shown(p.els.inboxPane) && !shown(p.els.leaveForm));
 });
 
-test("taken off this device: two taps — the code, the notes and their files all go", async () => {
+test("taken off this device: two taps — the code, the notes and their files go from here, and stay on the server for the rest", async () => {
   const o = await anOwner();
   const p = page({ owner: { lock: o.lock, code: o.code } });
   await p.api.ownerReady();
+  p.api.ownerAccepted();
   const n = await noteFor(o, { name: "", text: "", file: { name: "a.png", type: "image/png", size: thePhoto.length } });
   p.env.uploads.set(`${o.box}:a:${n.id}`, await DC.sealNoteFile(o.lock, { box: o.box, id: n.id }, thePhoto));
   await p.api.receiveMail({ type: "mail", box: o.box, side: "a", items: [n] });
+  p.els.panelMail.classList.remove("hidden");
+  p.api.inboxViewed();
+  await settle(); await settle(); await settle();
+  await p.els.inboxList.children[0].querySelector(".mail-file").onclick({ preventDefault() {} });
   assert.equal(p.files.size, 1);
+  p.log.ws.length = 0;
   p.api.openOwnerDialog();
   p.els.ownerForgetBtn.onclick();
   assert.equal(p.els.ownerForgetBtn.textContent, I18N.mn.ownerForgetSure);
@@ -2276,6 +2364,7 @@ test("taken off this device: two taps — the code, the notes and their files al
   assert.equal(p.store.get("dc-owner"), undefined);
   assert.equal(p.api.get().mailStore.threads[o.box], undefined);
   assert.equal(p.files.size, 0);
+  assert.ok(!p.log.ws.some(m => m.type === "mail-ack"), "nothing deleted from the server: the other devices still have them");
   assert.ok(!shown(p.els.inboxPane) && shown(p.els.leaveForm));
 });
 
