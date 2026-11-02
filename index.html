@@ -15,9 +15,9 @@
        Install button at the bottom left is in the lobby (installOffer in
        guards.js). iPhones read the apple-* lines, since Safari takes the icon
        and title from these rather than from the manifest. -->
-  <link rel="manifest" href="manifest.webmanifest?v=202611020554-04e7068e">
-  <link rel="icon" type="image/svg+xml" href="icons/icon.svg?v=202611020554-04e7068e">
-  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png?v=202611020554-04e7068e">
+  <link rel="manifest" href="manifest.webmanifest?v=202611020638-45c11682">
+  <link rel="icon" type="image/svg+xml" href="icons/icon.svg?v=202611020638-45c11682">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png?v=202611020638-45c11682">
   <meta name="theme-color" content="#15151a">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black">
@@ -62,7 +62,7 @@
     soon as it parses.
   -->
   <style id="antiClickjack">body{visibility:hidden}</style>
-  <script src="framebust.js?v=202611020554-04e7068e"></script>
+  <script src="framebust.js?v=202611020638-45c11682"></script>
 
   <!--
     The icons, from our own copy. They came from a CDN, which saw every visit —
@@ -72,8 +72,8 @@
     test/csp.test.js checks, so it cannot be edited by accident. See "Icon
     font" in the README.
   -->
-  <link rel="stylesheet" href="vendor/tabler/tabler-icons.min.css?v=202611020554-04e7068e">
-  <link rel="stylesheet" href="style.css?v=202611020554-04e7068e">
+  <link rel="stylesheet" href="vendor/tabler/tabler-icons.min.css?v=202611020638-45c11682">
+  <link rel="stylesheet" href="style.css?v=202611020638-45c11682">
 </head>
 <body>
 
@@ -90,10 +90,10 @@
          is the way to reach them. Opened and closed like the about panel. -->
     <details id="authorDropdown" class="author">
       <summary class="author-btn" data-i18n-aria="authorLabel" aria-label="Зохиогчийн тухай">
-        <img src="icons/author.jpg?v=202611020554-04e7068e" alt="" width="36" height="36">
+        <img src="icons/author.jpg?v=202611020638-45c11682" alt="" width="36" height="36">
       </summary>
       <div class="author-panel">
-        <img class="author-photo" src="icons/author.jpg?v=202611020554-04e7068e" alt="" width="72" height="72">
+        <img class="author-photo" src="icons/author.jpg?v=202611020638-45c11682" alt="" width="72" height="72">
         <div class="author-name">Anir Khurelbaatar</div>
         <p data-i18n="authorAbout">Хүмүүс хоорондоо хялбар, чөлөөтэй харилцах боломжийг бүрдүүлэхийн тулд энэхүү аппыг бүтээлээ. Надтай холбогдохыг хүсвэл эндээс холбогдоорой.</p>
         <div class="author-links">
@@ -144,7 +144,7 @@
         <button id="tabMail" class="lobby-tab" type="button" role="tab" data-tab="mail"
                 aria-selected="false" aria-controls="panelMail" tabindex="-1">
           <i class="ti ti-mail" aria-hidden="true"></i>
-          <span data-i18n="tabMail">И-мэйл</span>
+          <span data-i18n="tabMail">Захиа</span>
         </button>
       </div>
 
@@ -202,9 +202,19 @@
         <div id="createInfo" class="create-info"></div>
       </div>
 
-      <!-- Leave a Message -->
+      <!-- Leave a note for the owner — sealed here to the owner's lock; or, on
+           the owner's own devices, their inbox. See "OWNER INBOX" in app.js. -->
       <div id="panelMail" class="card lobby-panel hidden" role="tabpanel" aria-labelledby="tabMail">
-        <p class="leave-msg-hint" data-i18n="leaveHint">Шууд харилцах боломжгүй үед миний и-мэйлрүү мэдээллээ илгээж болно.</p>
+        <div id="inboxRow" class="inbox-row hidden">
+          <button id="inboxBtn" type="button">
+            <i class="ti ti-inbox" aria-hidden="true"></i>
+            <span data-i18n="inboxOpen">Захиагаа унших</span>
+            <span id="inboxCount" class="mail-count hidden"></span>
+          </button>
+        </div>
+        <p id="noteOff" class="leave-msg-hint hidden" data-i18n="noteNoInbox">Захиа үлдээх боломж хараахан бэлэн болоогүй байна.</p>
+        <div id="leaveForm">
+        <p class="leave-msg-hint" data-i18n="leaveHint">Шууд холбогдох боломжгүй бол надад захиа үлдээгээрэй.</p>
         <input id="senderName" type="text" data-i18n-ph="senderPlaceholder" placeholder="Таны нэр (эсвэл холбоо барих мэдээлэл)">
         <textarea id="leaveMessage" data-i18n-ph="msgPlaceholder" placeholder="Энд явуулах мэдээллээ бичнэ үү" rows="4"
           style="margin-top:10px;border-radius:10px;resize:vertical;min-height:90px"></textarea>
@@ -221,6 +231,11 @@
           <span data-i18n="leaveSendLabel">Захиаг явуулах</span>
         </button>
         <div id="leaveStatus" class="leave-status"></div>
+        </div>
+        <button id="ownerLink" class="owner-link" type="button">
+          <span class="as-visitor" data-i18n="ownerLink">Аппын эзэмшигч үү? Таны захианы хайрцаг</span>
+          <span class="as-owner" data-i18n="ownerLinkHere">Захианы хайрцгийн тохиргоо</span>
+        </button>
       </div>
     </div>
 
@@ -350,6 +365,30 @@
         <button id="mailSendBtn" class="send-btn" type="button" data-i18n-aria="mailSend" aria-label="Илгээх">
           <i class="ti ti-send" aria-hidden="true"></i>
         </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- THE OWNER'S INBOX, SET UP — the owner code that opens it, made or
+       entered here, and the lock built into the app. See "OWNER INBOX". -->
+  <div id="ownerOverlay" class="overlay hidden">
+    <div class="modal owner-modal" role="dialog" aria-modal="true" aria-labelledby="ownerTitle">
+      <div class="mail-head">
+        <h2 id="ownerTitle" data-i18n="ownerTitle">Таны хувийн захианы хайрцаг</h2>
+        <button id="ownerCloseBtn" class="icon-btn" type="button" data-i18n-aria="ownerClose" aria-label="Хаах">
+          <i class="ti ti-x" aria-hidden="true"></i>
+        </button>
+      </div>
+      <p id="ownerText" class="save-hint"></p>
+      <div id="ownerCodeBox" class="owner-key hidden"></div>
+      <div id="ownerLockBox" class="owner-key owner-lock hidden"></div>
+      <input id="ownerCodeInput" class="hidden" type="text" autocomplete="off" autocapitalize="characters" spellcheck="false"
+             enterkeyhint="done" data-i18n-ph="ownerCodePh" placeholder="XXXX-XXXX-XXXX-XXXX-XXXX-XXXX">
+      <div class="modal-actions save-actions owner-actions">
+        <button id="ownerForgetBtn" class="btn-quiet hidden" type="button"></button>
+        <button id="ownerCopyBtn" class="btn-quiet hidden" type="button" data-i18n="ownerCopyLock">Цоожийг хуулах</button>
+        <button id="ownerSetupBtn" class="hidden" type="button" data-i18n="ownerSetup">Захианы хайрцаг тохируулах</button>
+        <button id="ownerUseBtn" class="hidden" type="button" data-i18n="ownerUse">Кодыг ашиглах</button>
       </div>
     </div>
   </div>
@@ -591,14 +630,14 @@
   </div>
 
   <!-- Load order matters: app.js reads DCProtocol, LANG and I18N at parse time. -->
-  <script src="protocol.js?v=202611020554-04e7068e"></script>
-  <script src="connstats.js?v=202611020554-04e7068e"></script>
-  <script src="guards.js?v=202611020554-04e7068e"></script>
-  <script src="i18n.js?v=202611020554-04e7068e"></script>
+  <script src="protocol.js?v=202611020638-45c11682"></script>
+  <script src="connstats.js?v=202611020638-45c11682"></script>
+  <script src="guards.js?v=202611020638-45c11682"></script>
+  <script src="i18n.js?v=202611020638-45c11682"></script>
   <!-- vendor/noble.js sets window.DCNoble; pake.js (SPAKE2) reads it, and app.js
        reads window.DCPake. So both load before app.js, noble before pake. -->
-  <script src="vendor/noble.js?v=202611020554-04e7068e"></script>
-  <script src="pake.js?v=202611020554-04e7068e"></script>
-  <script src="app.js?v=202611020554-04e7068e"></script>
+  <script src="vendor/noble.js?v=202611020638-45c11682"></script>
+  <script src="pake.js?v=202611020638-45c11682"></script>
+  <script src="app.js?v=202611020638-45c11682"></script>
 </body>
 </html>

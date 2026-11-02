@@ -48,7 +48,8 @@ test("its settings: production, 127.0.0.1 only, one proxy — and no secret fill
   assert.equal(values.NODE_ENV, "production");
   assert.equal(values.HOST, "127.0.0.1");
   assert.equal(values.TRUSTED_PROXY_HOPS, "1");
-  for (const secret of ["KNOCK_PUBLIC_KEY", "KNOCK_PRIVATE_KEY", "RESEND_API_KEY", "MAIL_TO"]) {
+  assert.doesNotMatch(env, /RESEND_API_KEY|MAIL_TO/, "no mail company: notes are sealed to the owner instead");
+  for (const secret of ["KNOCK_PUBLIC_KEY", "KNOCK_PRIVATE_KEY"]) {
     assert.equal(values[secret], "", `${secret} is filled in by the person at the Pi, never here`);
   }
   assert.match(env, /^#BASE_PATH=\/dc$/m, "off unless Funnel turns out to pass the path on");

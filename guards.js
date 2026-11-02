@@ -1470,6 +1470,12 @@
     return side === "a" ? "b" : side === "b" ? "a" : null;
   }
 
+  /** A note in the owner's inbox says who left it — as they wrote it, maybe
+      nothing — and only a note may hold words and a file together. */
+  function noteFromValid(m) {
+    return m.from === undefined || (m.mine === false && typeof m.from === "string" && m.from.length <= 200);
+  }
+
   /**
    * The conversations kept on this device, read back from storage — each
    * person's messages (theirs and ours) and when they were last read, and the
@@ -1484,8 +1490,9 @@
     for (const [room, thread] of Object.entries(stored.threads || {})) {
       if (!SAVED_ROOM.test(room) || !thread || !Array.isArray(thread.items)) continue;
       const items = thread.items.filter(m => m && typeof m === "object" && MAIL_ID.test(m.id) && Number.isSafeInteger(m.at) &&
-        typeof m.mine === "boolean" &&
-        (m.file === undefined ? typeof m.text === "string" && messageFits(m.text) : m.text === undefined && mailFileValid(m.file)) &&
+        typeof m.mine === "boolean" && noteFromValid(m) &&
+        (m.file === undefined ? typeof m.text === "string" && messageFits(m.text)
+                              : mailFileValid(m.file) && (m.text === undefined || (m.from !== undefined && messageFits(m.text)))) &&
         (m.mine ? MAIL_STATES.includes(m.state) : m.state === undefined));
       out.threads[room] = { read: Number.isSafeInteger(thread.read) ? thread.read : 0,
                             items: items.sort((x, y) => x.at - y.at).slice(-MAIL_THREAD_MAX) };

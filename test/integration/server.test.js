@@ -318,31 +318,13 @@ test("a healthy client survives several heartbeat sweeps", async () => {
 });
 
 /* ══════════════════════════════════════════
-   POST /api/send-message
+   "Leave a message" by email is gone
 
-   The endpoint parses uploads, so a malformed request reaches real parsing code
-   before any auth or rate limit applies. What matters in every case below is
-   not the status code but that the process is still serving afterwards: an
-   uncaught throw here kills the signaling server and every room with it.
+   It went through a mail company that read every word; a note is now sealed
+   to the owner and left like a waiting message (see OWNER INBOX in server.js,
+   and test/integration/notes.test.js). The address it used answers nothing.
 ══════════════════════════════════════════ */
 
-function post(body, headers) {
-  return new Promise(resolve => {
-    const req = http.request({
-      host: "127.0.0.1", port: PORT, path: "/api/send-message", method: "POST",
-      headers: { "Content-Length": Buffer.byteLength(body), ...headers }
-    }, res => {
-      let data = "";
-      res.on("data", c => data += c);
-      res.on("end", () => resolve({ status: res.statusCode, body: data }));
-    });
-    req.on("error", err => resolve({ error: err.code || err.message }));
-    req.setTimeout(4000, () => { req.destroy(); resolve({ error: "TIMEOUT" }); });
-    req.end(body);
-  });
-}
-
-/** True while the server is still answering requests. */
 async function stillServing() {
   const res = await new Promise(resolve => {
     const r = http.get({ host: "127.0.0.1", port: PORT, path: "/api/ping" }, res => {
@@ -354,148 +336,19 @@ async function stillServing() {
   return res.status === 200;
 }
 
-test("a non-multipart body does not take the server down", async () => {
-  /* multer only fills req.body for multipart requests, and no body parser is
-     mounted, so req.body is undefined here. Destructuring it threw, and because
-     the handler is async the rejection was unhandled — which ends the process.
-     One request, with a header the client documents, dropped every live chat. */
-  const live = await client();             // a real user, mid-session
-  live.send_({ type: "create-session", sessionId: "room-survives-json" });
-  assert.ok(await waitFor(live, "session-created"), "setup: room not created");
-
-  const res = await post('{"message":"hi"}', {
-    "Content-Type": "application/json",
-    "X-DC-Client": "1"
+test("the email route is gone, and asking for it changes nothing", async () => {
+  const res = await new Promise(resolve => {
+    const r = http.request({ host: "127.0.0.1", port: PORT, path: "/api/send-message", method: "POST",
+      headers: { "Content-Type": "application/json", "X-DC-Client": "1" } }, res => { res.resume(); res.on("end", () => resolve(res.statusCode)); });
+    r.on("error", () => resolve(null));
+    r.end('{"message":"hi"}');
   });
-
-  assert.notEqual(res.error, "ECONNRESET", "the server dropped the connection — it crashed");
-  assert.ok(await stillServing(), "the server stopped answering after one malformed request");
-  assert.equal(live.readyState, WebSocket.OPEN, "a live session was dropped with the process");
-});
-
-test("an empty body with no content type does not take the server down", async () => {
-  const res = await post("", { "X-DC-Client": "1" });
-  assert.notEqual(res.error, "ECONNRESET");
-  assert.ok(await stillServing(), "the server stopped answering");
-});
-
-test("a form-encoded body does not take the server down", async () => {
-  const res = await post("message=hi", {
-    "Content-Type": "application/x-www-form-urlencoded",
-    "X-DC-Client": "1"
-  });
-  assert.notEqual(res.error, "ECONNRESET");
-  assert.ok(await stillServing(), "the server stopped answering");
-});
-
-test("a request without the client header is refused before any parsing", async () => {
-  const res = await post('{"message":"hi"}', { "Content-Type": "application/json" });
-  assert.equal(res.status, 403, "drive-by posts must be refused");
-});
-
-/** A message as the page sends it: a multipart form with a message field. */
-function messageForm(message, ip) {
-  const B = "----dcWords";
-  const body = `--${B}\r\nContent-Disposition: form-data; name="message"\r\n\r\n${message}\r\n--${B}--\r\n`;
-  return post(body, { "Content-Type": `multipart/form-data; boundary=${B}`, "X-DC-Client": "1", "x-forwarded-for": ip || freshIp() });
-}
-
-test("every refusal of a message says why with a code, and passes on nothing from the mail service", async () => {
-  const codeOf = res => { try { return JSON.parse(res.body); } catch (_) { return {}; } };
-  const none = codeOf(await post('{"message":"hi"}', { "Content-Type": "application/json", "X-DC-Client": "1" }));
-  assert.equal(none.code, "message-required");
-  const long = codeOf(await messageForm("x".repeat(5001)));
-  assert.equal(long.code, "message-too-long");
-  assert.equal(long.max, 5000, "with the limit, for the page to say");
-  /* No mail service is set up for the tests, which is its own refusal. */
-  const unset = codeOf(await messageForm("hello"));
-  assert.equal(unset.code, "not-configured");
-  for (const answer of [none, long, unset]) assert.ok(!("detail" in answer), "nothing passed on");
-  const ip = freshIp();
-  let limited = null;
-  for (let i = 0; i < 7 && !limited; i++) {
-    const answer = codeOf(await messageForm("hello", ip));
-    if (answer.code === "rate-limited") limited = answer;
-  }
-  assert.ok(limited, "five a minute, then refused");
-  assert.ok(Number.isInteger(limited.remaining) && limited.remaining > 0, "with how long to wait");
-});
-
-/* The status code is the evidence of ordering here. multer buffers the whole
-   upload into memory, so a check placed after it has already spent the RAM. An
-   over-sized body would trip multer's own limit and answer 413 — seeing the
-   cheap header/limit rejection instead proves nothing read the body. */
-
-/** A multipart body larger than LEAVE_MESSAGE_MAX_FILE_BYTES (28 MB default). */
-function oversizedUpload() {
-  const B = "----dcOversize";
-  const head = Buffer.from(
-    `--${B}\r\nContent-Disposition: form-data; name="file"; filename="big.bin"\r\n` +
-    `Content-Type: application/octet-stream\r\n\r\n`);
-  const payload = Buffer.alloc(30 * 1024 * 1024, 0x41);
-  const tail = Buffer.from(`\r\n--${B}--\r\n`);
-  return { body: Buffer.concat([head, payload, tail]), type: `multipart/form-data; boundary=${B}` };
-}
-
-test("an unauthorised upload is refused before its body is buffered", async () => {
-  const up = oversizedUpload();
-  const res = await post(up.body, { "Content-Type": up.type });   // no X-DC-Client
-  assert.equal(res.status, 403,
-    "expected the header check first; 413 would mean multer buffered 30 MB from a stranger");
+  assert.equal(res, 404);
   assert.ok(await stillServing());
-});
-
-test("a rate-limited upload is refused before its body is buffered", async () => {
-  /* Burn the allowance with cheap requests, then send something large. */
-  const headers = { "Content-Type": "application/json", "X-DC-Client": "1", "X-Forwarded-For": "198.51.100.44" };
-  for (let i = 0; i < 6; i++) await post('{"message":"x"}', headers);
-
-  const up = oversizedUpload();
-  const res = await post(up.body, {
-    "Content-Type": up.type, "X-DC-Client": "1", "X-Forwarded-For": "198.51.100.44"
-  });
-  assert.equal(res.status, 429,
-    "expected the rate limit first; 413 would mean the limit ran after buffering");
-  assert.ok(await stillServing());
-});
-
-test("an oversized upload from an allowed client is still rejected by multer", async () => {
-  /* The guards must not have replaced the size limit — only moved ahead of it. */
-  const up = oversizedUpload();
-  const res = await post(up.body, {
-    "Content-Type": up.type, "X-DC-Client": "1", "X-Forwarded-For": "198.51.100.55"
-  });
-  assert.equal(res.status, 413, "the file-size limit must still apply to legitimate clients");
-  assert.ok(await stillServing());
-});
-
-/** A form of `fields` text fields of `size` characters each, then a message. */
-function fieldsForm(fields, size) {
-  const B = "----dcFields";
-  let body = "";
-  for (let i = 0; i < fields; i++) body += `--${B}\r\nContent-Disposition: form-data; name="f${i}"\r\n\r\n${"a".repeat(size)}\r\n`;
-  body += `--${B}\r\nContent-Disposition: form-data; name="message"\r\n\r\nhello\r\n--${B}--\r\n`;
-  return post(body, { "Content-Type": `multipart/form-data; boundary=${B}`, "X-DC-Client": "1", "x-forwarded-for": freshIp() });
-}
-
-test("a form holds no more than the page's own fields: more are refused, not read into memory", async () => {
-  /* Found in a security assessment: any number of text fields of up to 1 MB
-     each were held in memory — 150 took the process from 63 MB to 227 MB. */
-  const many = await fieldsForm(10, 10);
-  assert.equal(many.status, 400);
-  assert.equal(JSON.parse(many.body).code, "upload-failed");
-  const huge = await fieldsForm(1, 70 * 1024);
-  assert.equal(huge.status, 400, "a field far longer than any message");
-  /* The page's own form — a message, a name, a file — still goes through to
-     the mail step, which the tests leave unset. */
-  const B = "----dcPage";
-  const page = await post(
-    `--${B}\r\nContent-Disposition: form-data; name="message"\r\n\r\n${"й".repeat(5000)}\r\n` +
-    `--${B}\r\nContent-Disposition: form-data; name="name"\r\n\r\nAnu\r\n` +
-    `--${B}\r\nContent-Disposition: form-data; name="file"; filename="a.txt"\r\nContent-Type: text/plain\r\n\r\nhi\r\n--${B}--\r\n`,
-    { "Content-Type": `multipart/form-data; boundary=${B}`, "X-DC-Client": "1", "x-forwarded-for": freshIp() });
-  assert.equal(JSON.parse(page.body).code, "not-configured", "the longest message the page allows, with a name and a file");
-  assert.ok(await stillServing());
+  const ping = await new Promise(resolve => http.get({ host: "127.0.0.1", port: PORT, path: "/api/ping" }, res => {
+    let d = ""; res.on("data", c => d += c); res.on("end", () => resolve(JSON.parse(d)));
+  }));
+  assert.equal(ping.maxLeaveAttachBytes, undefined, "no email attachment limit to tell");
 });
 
 test("at most 50 open links from one address; one closing makes room for another", async () => {
@@ -1067,39 +920,6 @@ test("PIN and open rooms still close when their guest leaves; a code room still 
   host.send_({ type: "leave-session" });
   assert.ok(await waitFor(guest, "peer-disconnected"), "the guest is told");
   assert.ok(!(await listedNames()).includes("code-host-leaves"));
-});
-
-/* ══════════════════════════════════════════
-   Uploads at once
-══════════════════════════════════════════ */
-
-/** An upload that has started but not finished: the server is reading it. */
-function slowUpload(ip) {
-  const B = "----dcSlow";
-  const req = http.request({
-    host: "127.0.0.1", port: PORT, path: "/api/send-message", method: "POST",
-    headers: { "Content-Type": `multipart/form-data; boundary=${B}`, "X-DC-Client": "1",
-               "X-Forwarded-For": ip, "Transfer-Encoding": "chunked" }
-  });
-  req.on("error", () => {});
-  req.write(`--${B}\r\nContent-Disposition: form-data; name="file"; filename="slow.bin"\r\n` +
-            `Content-Type: application/octet-stream\r\n\r\n` + "A".repeat(64 * 1024));
-  return req;
-}
-
-test("a third upload while two are being read is turned away, before its body is read", async () => {
-  const first = slowUpload("198.51.100.71"), second = slowUpload("198.51.100.72");
-  await sleep(400);
-  const up = oversizedUpload();
-  const third = await post(up.body, { "Content-Type": up.type, "X-DC-Client": "1", "X-Forwarded-For": "198.51.100.73" });
-  assert.equal(third.status, 503, "the third is turned away; 413 would mean it was buffered first");
-  assert.ok(await stillServing());
-
-  /* The two finish — here, give up — and the server takes uploads again. */
-  first.destroy(); second.destroy();
-  await sleep(400);
-  const after = await post('{"message":"hi"}', { "Content-Type": "application/json", "X-DC-Client": "1", "X-Forwarded-For": "198.51.100.74" });
-  assert.notEqual(after.status, 503, "the slots were let go when those uploads ended");
 });
 
 /* ══════════════════════════════════════════

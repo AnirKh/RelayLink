@@ -51,10 +51,10 @@ sudo install -m 640 -o root -g dc deploy/pi/direct-connection.env.example /etc/d
 ```
 
 Then **the person at the Pi** opens it — `sudo nano /etc/direct-connection.env`
-— and fills in the four values: `KNOCK_PUBLIC_KEY` and `KNOCK_PRIVATE_KEY`
+— and fills in the two values: `KNOCK_PUBLIC_KEY` and `KNOCK_PRIVATE_KEY`
 (made once with `node tools/knock-keys.js`; moving to a new Pi, copy the pair
-from the old one's file, so alerts already turned on keep working),
-`RESEND_API_KEY` and `MAIL_TO`. Leave the rest as it is.
+from the old one's file, so alerts already turned on keep working). Leave the
+rest as it is.
 
 ## 4. Start it, and keep it up to date
 

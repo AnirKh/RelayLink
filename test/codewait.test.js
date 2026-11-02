@@ -340,9 +340,3 @@ test("the watch starts with the chat screen, and stops when the chat works or is
   assert.match(between("leaveBtn.onclick = (e) => {", "wsSend("), /clearConnectWatch\(\);/);
   assert.match(fn("returnToWaitingRoom"), /clearConnectWatch\(\);/);
 });
-
-test("a busy server is said in the user's language", () => {
-  const send = between("leaveSendBtn.onclick = async () => {", "function setLeaveStatus");
-  assert.match(send, /if \(res\.status === 503\) \{ setLeaveStatus\(t\("emailBusy"\), "err"\); return; \}/);
-  assert.ok(send.indexOf("res.status === 503") < send.indexOf("await res.json()"), "before reading the body");
-});

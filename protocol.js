@@ -385,6 +385,213 @@
     } catch (_) { return null; }
   }
 
+  /* ══════════════════════════════════════════
+     The owner's inbox
+     ──────────────────────────────────────────
+     "Leave a message" used to email the app's owner through a mail company,
+     which read every word. Now a visitor's note is sealed on their device to
+     the owner's lock, kept on the Pi, and opened only on the owner's devices.
+
+     The lock is two public keys — `box.sign`, each a raw P-256 point in
+     base64url. Anyone seals a note to `box` (ECDH with a fresh key of their
+     own, HKDF, AES-256-GCM: the sender cannot open it again either). `sign`
+     lets the server tell the owner's device from anyone else's (proveOwner),
+     so only the owner may collect notes or have them deleted.
+
+     The two private keys never exist anywhere but the owner's devices: each
+     works them out from the owner code, a 24-character code (120 bits) shown
+     once when the inbox is set up. The lock is written here, in the app's
+     own code, not handed out by the server — a server that was taken over
+     could not slip in a lock of its own and read what visitors write next.
+  ══════════════════════════════════════════ */
+
+  /** The owner's lock, or null: no inbox yet, and no note can be left. */
+  const OWNER_LOCK = null;
+
+  const OWNER_CODE_ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";   // Crockford's: no I, L, O or U to misread
+  const OWNER_CODE_CHARS    = 24;                                   // 5 bits each: 120
+  const OWNER_LOCK_PATTERN  = /^[A-Za-z0-9_-]{87}\.[A-Za-z0-9_-]{87}$/;
+  const NOTE_NAME_MAX = 200;
+  const NOTE_TEXT_MAX = 5000;
+  /* A sealed note or file carries the sender's one-time key (65 bytes), the
+     IV (12) and the tag (16) besides what it seals. */
+  const NOTE_SEAL_EXTRA = 65 + 12 + 16;
+
+  /** A fresh owner code, grouped in fours: "K7QM-2X9D-…". 256 is a multiple
+      of 32, so every character is equally likely. */
+  function makeOwnerCode() {
+    const bytes = globalThis.crypto.getRandomValues(new Uint8Array(OWNER_CODE_CHARS));
+    let code = "";
+    for (const b of bytes) code += OWNER_CODE_ALPHABET[b % 32];
+    return code.match(/.{4}/g).join("-");
+  }
+
+  /** An owner code as typed — any case, spaces or dashes, O for 0, I or L
+      for 1 — as its 24 characters; null if it cannot be one. */
+  function normalizeOwnerCode(input) {
+    if (typeof input !== "string") return null;
+    const code = input.toUpperCase().replace(/[\s-]/g, "").replace(/O/g, "0").replace(/[IL]/g, "1");
+    if (code.length !== OWNER_CODE_CHARS) return null;
+    for (const c of code) if (!OWNER_CODE_ALPHABET.includes(c)) return null;
+    return code;
+  }
+
+  function concatBytes(...parts) {
+    const out = new Uint8Array(parts.reduce((n, p) => n + p.length, 0));
+    let at = 0;
+    for (const p of parts) { out.set(p, at); at += p.length; }
+    return out;
+  }
+
+  /** One of the owner's private keys, from the code: HKDF labelled for that
+      key, 48 bytes read as a number, brought into range as FIPS 186-5 A.2.1
+      does — so the bias is beyond measuring. */
+  async function ownerScalar(code, label, order) {
+    const ikm = await subtle.importKey("raw", utf8.encode(code), "HKDF", false, ["deriveBits"]);
+    const bits = new Uint8Array(await subtle.deriveBits(
+      { name: "HKDF", hash: "SHA-256", salt: new Uint8Array(0), info: utf8.encode(label) }, ikm, 384));
+    let n = 0n;
+    for (const b of bits) n = (n << 8n) | BigInt(b);
+    const d = n % (order - 1n) + 1n;
+    const out = new Uint8Array(32);
+    for (let i = 31, v = d; i >= 0; i--, v >>= 8n) out[i] = Number(v & 0xffn);
+    return out;
+  }
+
+  /**
+   * The owner's keys, worked out from the code — null for something that is
+   * not one. `p256` is the curve (vendor/noble.js in the page): Web Crypto
+   * cannot find a public key from a private one, which importing needs.
+   *
+   * @returns {Promise<{box: {key: CryptoKey, pub: Uint8Array}, sign: {key: CryptoKey, pub: Uint8Array}, lock: string}|null>}
+   */
+  async function ownerKeys(codeInput, p256) {
+    const code = normalizeOwnerCode(codeInput);
+    if (!code) return null;
+    const make = async (label, algorithm, usages) => {
+      const d = await ownerScalar(code, label, p256.CURVE.n);
+      const pub = p256.getPublicKey(d, false);
+      const jwk = { kty: "EC", crv: "P-256", d: b64urlBytes(d), x: b64urlBytes(pub.subarray(1, 33)), y: b64urlBytes(pub.subarray(33)) };
+      return { key: await subtle.importKey("jwk", jwk, algorithm, false, usages), pub: new Uint8Array(pub) };
+    };
+    const box  = await make("direct-connection/owner-box/v1", { name: "ECDH", namedCurve: "P-256" }, ["deriveBits"]);
+    const sign = await make("direct-connection/owner-sign/v1", { name: "ECDSA", namedCurve: "P-256" }, ["sign"]);
+    return { box, sign, lock: `${b64urlBytes(box.pub)}.${b64urlBytes(sign.pub)}` };
+  }
+
+  /** A lock's two public keys, if it has the shape of one. Whether they are
+      points on the curve, importing them says. */
+  function parseLock(lock) {
+    if (typeof lock !== "string" || !OWNER_LOCK_PATTERN.test(lock)) return null;
+    const [box, sign] = lock.split(".").map(unb64url);
+    if (box.length !== 65 || sign.length !== 65 || box[0] !== 4 || sign[0] !== 4) return null;
+    return { box, sign };
+  }
+
+  /** The owner's inbox on the server: a mailbox named from the lock, in the
+      shape of a saved pair's, so the server keeps notes as it keeps messages. */
+  async function inboxName(lock) {
+    if (!parseLock(lock)) return null;
+    const digest = await subtle.digest("SHA-256", utf8.encode(`direct-connection/owner-inbox/v1:${lock.split(".")[0]}`));
+    return `~${b64urlBytes(new Uint8Array(digest))}`;
+  }
+
+  async function noteKey(shared, senderPub, ownerPub) {
+    const ikm = await subtle.importKey("raw", shared, "HKDF", false, ["deriveKey"]);
+    return subtle.deriveKey(
+      { name: "HKDF", hash: "SHA-256", salt: concatBytes(senderPub, ownerPub), info: utf8.encode("direct-connection/owner-note/v1") },
+      ikm, { name: "AES-GCM", length: 256 }, false, ["encrypt", "decrypt"]);
+  }
+
+  /** Sealed to the owner: the sender's one-time public key, the IV, then the
+      ciphertext — which only the owner's box key opens. */
+  async function sealToOwner(lock, aad, bytes) {
+    const owner = parseLock(lock);
+    if (!owner) throw new Error("not a lock");
+    const ownerKey = await subtle.importKey("raw", owner.box, { name: "ECDH", namedCurve: "P-256" }, false, []);
+    const once = await subtle.generateKey({ name: "ECDH", namedCurve: "P-256" }, false, ["deriveBits"]);
+    const oncePub = new Uint8Array(await subtle.exportKey("raw", once.publicKey));
+    const shared = await subtle.deriveBits({ name: "ECDH", public: ownerKey }, once.privateKey, 256);
+    const key = await noteKey(shared, oncePub, owner.box);
+    const iv = globalThis.crypto.getRandomValues(new Uint8Array(12));
+    const ct = new Uint8Array(await subtle.encrypt({ name: "AES-GCM", iv, additionalData: aad }, key, bytes));
+    return concatBytes(oncePub, iv, ct);
+  }
+
+  async function openAsOwner(keys, aad, sealed) {
+    try {
+      const all = new Uint8Array(sealed);
+      if (all.length < NOTE_SEAL_EXTRA) return null;
+      const senderPub = all.subarray(0, 65);
+      const sender = await subtle.importKey("raw", senderPub, { name: "ECDH", namedCurve: "P-256" }, false, []);
+      const shared = await subtle.deriveBits({ name: "ECDH", public: sender }, keys.box.key, 256);
+      const key = await noteKey(shared, senderPub, keys.box.pub);
+      return new Uint8Array(await subtle.decrypt({ name: "AES-GCM", iv: all.subarray(65, 77), additionalData: aad }, key, all.subarray(77)));
+    } catch (_) { return null; }
+  }
+
+  function noteAad(box, id) {
+    return sealData(["dc-note-1", box, id]);
+  }
+
+  function noteFileAad(box, id) {
+    return sealData(["dc-notefile-1", box, id]);
+  }
+
+  /** What a note may hold: who it is from (as they wrote it, maybe nothing),
+      the words, and a file's description. */
+  function noteBodyValid(body) {
+    return Boolean(body) && typeof body === "object" &&
+           typeof body.name === "string" && body.name.length <= NOTE_NAME_MAX &&
+           typeof body.text === "string" && body.text.length <= NOTE_TEXT_MAX &&
+           (body.file === undefined || fileMetaValid(body.file)) &&
+           (body.text.trim() !== "" || body.file !== undefined);
+  }
+
+  /** A note sealed to the owner, in a mailbox message's shape: the IV, and
+      the sender's one-time key with the ciphertext. Bound to its inbox and id. */
+  async function sealNote(lock, { box, id }, body) {
+    const sealed = await sealToOwner(lock, noteAad(box, id), utf8.encode(JSON.stringify(body)));
+    return { iv: b64urlBytes(sealed.subarray(65, 77)), ct: b64urlBytes(concatBytes(sealed.subarray(0, 65), sealed.subarray(77))) };
+  }
+
+  /** A note opened with the owner's keys — or null: not for this inbox, not
+      this note, changed, or not a note's shape. */
+  async function openNote(keys, { box, id, iv, ct }) {
+    try {
+      const ivBytes = unb64url(iv);
+      const rest = unb64url(ct);
+      if (ivBytes.length !== 12 || rest.length < 65 + 16) return null;
+      const plain = await openAsOwner(keys, noteAad(box, id), concatBytes(rest.subarray(0, 65), ivBytes, rest.subarray(65)));
+      if (!plain) return null;
+      const body = JSON.parse(new TextDecoder().decode(plain));
+      if (!noteBodyValid(body)) return null;
+      return { name: body.name, text: body.text,
+               ...(body.file ? { file: { name: body.file.name, type: body.file.type, size: body.file.size } } : {}) };
+    } catch (_) { return null; }
+  }
+
+  /** A note's file, sealed to the owner whole. */
+  function sealNoteFile(lock, { box, id }, bytes) {
+    return sealToOwner(lock, noteFileAad(box, id), bytes);
+  }
+
+  function openNoteFile(keys, { box, id }, sealed) {
+    return openAsOwner(keys, noteFileAad(box, id), sealed);
+  }
+
+  /** What the owner's device signs to show the server it is the owner's:
+      the inbox, and the one-time word the server gave this connection. */
+  function ownerProofData(box, nonce) {
+    return sealData(["dc-owner-1", box, nonce]);
+  }
+
+  /** ECDSA P-256 over SHA-256 — Web Crypto's r‖s, 64 bytes, in base64url. */
+  async function proveOwner(keys, box, nonce) {
+    const sig = await subtle.sign({ name: "ECDSA", hash: "SHA-256" }, keys.sign.key, ownerProofData(box, nonce));
+    return b64urlBytes(new Uint8Array(sig));
+  }
+
   /** UUID v4 shape, used as the transfer id. */
   function makeTransferId() {
     return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, c => {
@@ -402,6 +609,9 @@
     packChunk, unpackChunk, splitChunkBody, makeTransferId,
     SEAL_ROLES, SEAL_WINDOW, messageAad, chunkAad, confirmAad, sealWindow, takeSeal,
     mailboxKey, mailAad, makeMailId, sealMail, openMail, sealMailBody, openMailBody, fileMetaValid,
-    mailFileAad, sealMailFile, openMailFile
+    mailFileAad, sealMailFile, openMailFile,
+    OWNER_LOCK, OWNER_CODE_CHARS, NOTE_NAME_MAX, NOTE_TEXT_MAX, NOTE_SEAL_EXTRA,
+    makeOwnerCode, normalizeOwnerCode, ownerKeys, parseLock, inboxName,
+    sealNote, openNote, sealNoteFile, openNoteFile, ownerProofData, proveOwner
   };
 });

@@ -626,6 +626,28 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
 .mail-item.me .mail-bubble { background: var(--accent); color: var(--on-accent); }
 .mail-bubble a { color: inherit; text-decoration: underline; }
 .mail-meta { font-size: 11px; color: var(--muted); margin-top: 3px; }
+/* A note in the owner's inbox: who left it, then what — words, a file, or both. */
+.mail-from { font-size: 12px; font-weight: 600; color: var(--muted); margin-bottom: 3px; }
+.mail-item .mail-bubble + .mail-bubble { margin-top: 4px; }
+.overlay.inbox .mail-compose { display: none; }
+
+/* "Leave a note": the owner's way in, and on their devices the inbox. */
+.inbox-row button { width: 100%; display: flex; align-items: center; justify-content: center; gap: 8px; }
+.inbox-row .mail-count { position: static; }
+.owner-link {
+  display: block; margin: 14px auto 0; background: none; border: 0; padding: 4px 8px;
+  color: var(--muted); font-size: 12.5px; text-decoration: underline; cursor: pointer;
+}
+.owner-link .as-owner, .owner-link.is-owner .as-visitor { display: none; }
+.owner-link.is-owner .as-owner { display: inline; }
+.owner-key {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 15px; letter-spacing: 0.04em;
+  background: var(--input-bg); color: var(--text); border-radius: 10px; padding: 10px 12px; margin: 8px 0;
+  overflow-wrap: anywhere; user-select: all; text-align: center;
+}
+.owner-key.owner-lock { font-size: 11.5px; letter-spacing: 0; text-align: left; }
+.owner-key::before { display: block; font-family: system-ui, sans-serif; font-size: 11px; color: var(--muted); margin-bottom: 4px; text-align: left; content: attr(data-label); letter-spacing: 0; }
+.owner-actions { flex-wrap: wrap; }
 .mail-meta.refused { color: var(--danger-text); }
 .mail-compose { display: flex; gap: 8px; align-items: flex-end; }
 .mail-compose textarea { flex: 1; min-height: 44px; max-height: 140px; resize: none; margin: 0; border-radius: 12px; }

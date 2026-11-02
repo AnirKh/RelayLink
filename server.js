@@ -15,8 +15,7 @@
   - So does a chat, either side's link: the host takes its seat back with its
     host key, the guest with its guest key (rejoin-session); the other side
     hears peer-away / peer-back, and repair-request passes between them
-  - At most UPLOADS_AT_ONCE leave-a-message uploads read at a time, each
-    holding no more than the page's own fields and one file
+  - Waiting files written straight to disk, at most MAIL_FILES_AT_ONCE coming at once
   - At most WS_PER_IP_MAX open WebSocket links per address
   - Session cleanup on disconnect
   - WebSocket heartbeat (30s ping/pong) drops clients that vanished silently
@@ -27,16 +26,13 @@
   - One room per socket; every room message names its room
   - WebSocket Origin allowlist (same as CORS)
   - list-sessions / create-session rate limits per IP
-  - POST /api/send-message (Resend + optional file attachment; requires X-DC-Client header)
+  - Notes for the app's owner, sealed to the owner's lock on the sender's device,
+    kept in the owner's inbox, collected only by the owner's devices (see OWNER INBOX)
   - Optional PUBLIC_SESSION_LIST=0 to hide active room names from the lobby
   ─────────────────────────────────────────────
 
   Environment — on the Pi, /etc/direct-connection.env (see deploy/pi).
-  For "leave a message" by email:
-    RESEND_API_KEY  Resend API key
-    MAIL_TO         recipient email address
-
-  Optional:
+  All optional:
     ALLOWED_ORIGINS       Comma-separated browser origins (must include your static site origin)
     PUBLIC_SESSION_LIST   Set to "0" to never expose other users' room names in the lobby
     HEARTBEAT_MS          Ping sweep interval, 1000–300000 (default 30000)
@@ -55,6 +51,9 @@
                           off, e.g. /dc — taken off here (default: none)
     MAILBOX_DIR           Where waiting messages are kept (default: systemd's
                           STATE_DIRECTORY; without either, memory only)
+    OWNER_LOCK            The owner's lock, where it is not the app's own
+                          (DC.OWNER_LOCK in protocol.js) — tests, or this
+                          server run for someone else
     See deploy/pi/SETUP.md for running it on a Raspberry Pi.
 */
 
@@ -67,8 +66,6 @@ const path       = require("path");
 const fs         = require("fs");
 const { pipeline, Transform } = require("stream");
 const WebSocket  = require("ws");
-const multer     = require("multer");
-const { Resend } = require("resend");
 
 /* Policy lives in csp.js so the header here and the meta tag in index.html
    cannot drift apart unnoticed. See that file before editing either. */
@@ -96,6 +93,59 @@ const MAILBOX_DIR = process.env.MAILBOX_DIR || (process.env.STATE_DIRECTORY || "
 const mail = createMailboxes({ file: MAILBOX_DIR ? path.join(MAILBOX_DIR, "mailbox.json") : null,
                                filesDir: MAILBOX_DIR ? path.join(MAILBOX_DIR, "files") : null });
 setInterval(() => mail.sweep(), 5 * 60 * 1000).unref();
+/* ── OWNER INBOX ───────────────────────────
+   "Leave a message" is a note for the app's owner. The sender's device seals
+   it to the owner's lock (protocol.js — the lock is in the app's own code)
+   and leaves it here like any waiting message, in the mailbox the lock names
+   (OWNER_BOX, side "a"); a file goes first, as for messages. This server
+   cannot open them. Only a link that proved it is the owner's — it signed
+   this connection's one-time word with the lock's signing key (owner-hello)
+   — may collect them or have them let go, and say where the owner's device
+   is to be alerted (owner-alert, kept in owner.json beside the mailbox). */
+const OWNER_LOCK = /^[A-Za-z0-9_-]{87}\.[A-Za-z0-9_-]{87}$/.test(process.env.OWNER_LOCK || "")
+  ? process.env.OWNER_LOCK : require("./protocol.js").OWNER_LOCK;
+const OWNER_BOX = OWNER_LOCK
+  ? `~${crypto.createHash("sha256").update(`direct-connection/owner-inbox/v1:${OWNER_LOCK.split(".")[0]}`).digest("base64url")}`
+  : null;
+const OWNER_SIGN_KEY = (() => {
+  if (!OWNER_LOCK) return null;
+  const raw = Buffer.from(OWNER_LOCK.split(".")[1], "base64url");
+  try {
+    return crypto.createPublicKey({ format: "jwk", key: { kty: "EC", crv: "P-256",
+      x: raw.subarray(1, 33).toString("base64url"), y: raw.subarray(33).toString("base64url") } });
+  } catch (_) { console.error("OWNER_LOCK is not a lock: no inbox"); return null; }
+})();
+const OWNER_FILE = MAILBOX_DIR ? path.join(MAILBOX_DIR, "owner.json") : null;
+let ownerAlert = null;                 // where the owner's device is alerted, or null
+if (OWNER_FILE) {
+  try {
+    const kept = JSON.parse(fs.readFileSync(OWNER_FILE, "utf8"));
+    if (kept && kept.v === 1 && kept.box === OWNER_BOX && kept.alert && typeof kept.alert === "object") ownerAlert = kept.alert;
+  } catch (_) { /* none yet */ }
+}
+
+/** Did this signature come from the owner's device, for this connection? */
+function ownerProofValid(nonce, sig) {
+  if (!OWNER_SIGN_KEY || typeof nonce !== "string" || typeof sig !== "string" || !/^[A-Za-z0-9_-]{86}$/.test(sig)) return false;
+  try {
+    return crypto.verify("sha256", Buffer.from(JSON.stringify(["dc-owner-1", OWNER_BOX, nonce])),
+      { key: OWNER_SIGN_KEY, dsaEncoding: "ieee-p1363" }, Buffer.from(sig, "base64url"));
+  } catch (_) { return false; }
+}
+
+/** Where to alert the owner — kept as the mailbox is: written aside, then moved into place. */
+function keepOwnerAlert(alert) {
+  ownerAlert = alert;
+  if (!OWNER_FILE) return;
+  try {
+    fs.mkdirSync(path.dirname(OWNER_FILE), { recursive: true });
+    fs.writeFileSync(`${OWNER_FILE}.tmp`, JSON.stringify({ v: 1, box: OWNER_BOX, alert }), { mode: 0o600 });
+    fs.renameSync(`${OWNER_FILE}.tmp`, OWNER_FILE);
+  } catch (err) {
+    console.error(`Owner alert: could not be kept — ${err.code || err.message}`);
+  }
+}
+
 /* Stopping — every update restarts the server — keeps what waits first. */
 for (const signal of ["SIGTERM", "SIGINT"]) process.on(signal, () => { mail.flush(); process.exit(0); });
 
@@ -217,47 +267,6 @@ const wss = new WebSocket.Server({
   }
 });
 
-/* ── Resend client ─────────────────────────── */
-let resend = null;
-
-function getResendClient() {
-  if (!process.env.RESEND_API_KEY) return null;
-  if (!resend) resend = new Resend(process.env.RESEND_API_KEY);
-  return resend;
-}
-
-/* ── Leave-a-message attachment (Resend caps whole email ~40MB after Base64) ── */
-const LEAVE_MESSAGE_MAX_FILE_BYTES = (() => {
-  const cap   = 35 * 1024 * 1024;
-  const def   = 28 * 1024 * 1024;
-  const parsed = parseInt(process.env.LEAVE_ATTACH_MAX_BYTES || "", 10);
-  if (Number.isFinite(parsed) && parsed >= 1024 * 1024 && parsed <= cap) return parsed;
-  return def;
-})();
-
-/* ── Multer — store file in memory ──
-   Found in a security assessment: only the file was capped. multer's own
-   defaults allow any number of text fields of up to 1 MB each, all held in
-   memory, so one request of 150 such fields took the process from 63 MB to
-   227 MB — refused, but only after reading them all. Two at once would pass
-   a small instance's memory and restart it, dropping every room. The page
-   sends two fields (message, name) and at most one file, so that is all a
-   form may hold; a field is capped well above the longest message
-   (MESSAGE_MAX characters, four bytes each at most), which still gets its
-   own "too long" answer. */
-const UPLOAD_FIELDS_MAX    = 4;
-const UPLOAD_FIELD_BYTES   = 64 * 1024;
-const upload = multer({
-  storage: multer.memoryStorage(),
-  limits: {
-    fileSize:  LEAVE_MESSAGE_MAX_FILE_BYTES,
-    files:     1,
-    fields:    UPLOAD_FIELDS_MAX,
-    fieldSize: UPLOAD_FIELD_BYTES,
-    parts:     UPLOAD_FIELDS_MAX + 1
-  }
-});
-
 app.use((req, res, next) => {
   res.setHeader("Content-Security-Policy", CSP_HEADER);
   res.setHeader("X-Content-Type-Options", "nosniff");
@@ -294,71 +303,12 @@ app.get(["/app.js", "/protocol.js", "/i18n.js", "/framebust.js", "/connstats.js"
 /* ── Ping endpoint — used by client to wake server ── */
 app.get("/api/ping", (req, res) => res.json({
   ok: true,
-  maxLeaveAttachBytes: LEAVE_MESSAGE_MAX_FILE_BYTES,
   /* The public half of the knock keys, for a browser to subscribe with —
      null when this server sends no knocks. */
   knockKey: KNOCK_KEYS ? KNOCK_KEYS.publicKey : null,
   /* Whether a photo or file can wait here for someone away, and how big. */
   mailFileMaxBytes: mail.filesOn ? MAIL_FILE_MAX_BYTES : 0
 }));
-
-/* ══════════════════════════════════════════════
-   POST /api/send-message
-══════════════════════════════════════════════ */
-
-const MESSAGE_MAX = 5000;
-const NAME_MAX = 200;
-const EMAIL_WINDOW_MS = 60_000;
-const EMAIL_MAX_PER_WINDOW = 5;
-const emailAttempts = new Map();
-
-function checkEmailRateLimit(ip) {
-  const now = Date.now();
-  const entry = emailAttempts.get(ip);
-  if (!entry || entry.resetAt <= now) {
-    emailAttempts.set(ip, { count: 1, resetAt: now + EMAIL_WINDOW_MS });
-    return { allowed: true };
-  }
-  if (entry.count >= EMAIL_MAX_PER_WINDOW) {
-    return { allowed: false, remaining: Math.ceil((entry.resetAt - now) / 1000) };
-  }
-  entry.count++;
-  return { allowed: true };
-}
-
-setInterval(() => {
-  const now = Date.now();
-  for (const [ip, entry] of emailAttempts) {
-    if (entry.resetAt <= now) emailAttempts.delete(ip);
-  }
-}, 60_000);
-
-function cleanHeaderValue(str) {
-  return str.replace(/[\r\n]+/g, " ").trim();
-}
-
-function cleanAttachmentName(name) {
-  const cleaned = String(name || "attachment")
-    .replace(/[\r\n/\\:*?"<>|]+/g, "_")
-    .slice(0, 180)
-    .trim();
-  return cleaned || "attachment";
-}
-
-/* Express 4 does not await route handlers, so a rejected promise becomes an
-   unhandled rejection and Node terminates the process — taking every open room
-   and every call in progress with it. One malformed request could do it. Route
-   every async handler through here so a throw becomes a 500 instead. */
-function asyncRoute(handler) {
-  return (req, res, next) => Promise.resolve(handler(req, res, next)).catch(next);
-}
-
-/* ── Gatekeepers, deliberately ahead of multer ──
-   multer buffers the whole upload into memory before the handler runs, so any
-   check placed after it has already let an unauthenticated stranger spend
-   LEAVE_MESSAGE_MAX_FILE_BYTES of RAM. Both checks below are cheap, header-only
-   and settle the request before a byte of body is read. Order matters here —
-   keep them in front of upload.single(). */
 
 /** Non-simple header forces CORS preflight; simple cross-site forms cannot set it. */
 function requireClientHeader(req, res, next) {
@@ -367,114 +317,6 @@ function requireClientHeader(req, res, next) {
   }
   next();
 }
-
-/* At most this many uploads are read at once. multer holds each in memory —
-   up to LEAVE_MESSAGE_MAX_FILE_BYTES — and the rate limit below is per
-   address, so nothing else bounded how many arrive together: a handful of
-   large ones from a few addresses could exhaust the instance's memory, and
-   the restart would drop every live chat. One past the limit is turned away
-   before a byte of its body is read, and does not count against its sender's
-   allowance — it was the server that was busy, not them. */
-const UPLOADS_AT_ONCE = 2;
-let uploadsInFlight = 0;
-
-function limitConcurrentUploads(req, res, next) {
-  if (uploadsInFlight >= UPLOADS_AT_ONCE) {
-    res.setHeader("Retry-After", "10");
-    return res.status(503).json({ error: "The server is busy — try again in a moment.", code: "busy" });
-  }
-  uploadsInFlight++;
-  let released = false;
-  const release = () => { if (!released) { released = true; uploadsInFlight--; } };
-  res.on("finish", release);     // answered
-  res.on("close", release);      // or the connection went first
-  next();
-}
-
-function enforceEmailRateLimit(req, res, next) {
-  const limit = checkEmailRateLimit(getClientIp(req));
-  if (!limit.allowed) {
-    return res.status(429).json({ error: `Too many messages. Try again in ${limit.remaining}s.`, code: "rate-limited", remaining: limit.remaining });
-  }
-  next();
-}
-
-app.post("/api/send-message",
-  requireClientHeader,
-  limitConcurrentUploads,
-  enforceEmailRateLimit,
-  upload.single("file"),
-  asyncRoute(async (req, res) => {
-
-  /* multer fills req.body only for multipart requests and leaves it undefined
-     for anything else, and no body parser is mounted. The client always sends
-     FormData, so a missing body is a malformed request — it must fall through
-     to the "Message is required" check below, not throw. */
-  const { message, name } = req.body || {};
-
-  if (typeof message !== "string" || message.trim() === "") {
-    return res.status(400).json({ error: "Message is required", code: "message-required" });
-  }
-  const trimmedMessage = message.trim();
-  if (trimmedMessage.length > MESSAGE_MAX) {
-    return res.status(400).json({ error: `Message must be ${MESSAGE_MAX} characters or fewer`, code: "message-too-long", max: MESSAGE_MAX });
-  }
-  if (!process.env.MAIL_TO) {
-    return res.status(500).json({ error: "Server email not configured", code: "not-configured" });
-  }
-  const resendClient = getResendClient();
-  if (!resendClient) {
-    return res.status(500).json({ error: "Server email not configured", code: "not-configured" });
-  }
-
-  const rawName = typeof name === "string" ? name : "";
-  const senderLabel = cleanHeaderValue(rawName.trim() ? rawName.trim() : "Anonymous").slice(0, NAME_MAX) || "Anonymous";
-  const safeSenderLabel = escapeHtml(senderLabel);
-  const sentAt = new Date().toLocaleString("en-US", { timeZone: "UTC" }) + " UTC";
-
-  const htmlBody = `
-    <div style="font-family:Arial,sans-serif;max-width:520px;margin:auto;background:#1b1f27;color:#fff;border-radius:12px;overflow:hidden">
-      <div style="background:#2563eb;padding:20px 24px">
-        <h2 style="margin:0;font-size:18px">📩 New message via RelayLink</h2>
-      </div>
-      <div style="padding:24px">
-        <p style="color:#9ca3af;font-size:13px;margin:0 0 4px">From</p>
-        <p style="font-size:16px;font-weight:600;margin:0 0 16px">${safeSenderLabel}</p>
-        <p style="color:#9ca3af;font-size:13px;margin:0 0 4px">Message</p>
-        <div style="background:#2a2f3a;padding:14px 16px;border-radius:8px;font-size:15px;line-height:1.6;white-space:pre-wrap">${escapeHtml(trimmedMessage)}</div>
-        <p style="color:#9ca3af;font-size:12px;margin:16px 0 0">Sent: ${sentAt}</p>
-      </div>
-    </div>
-  `;
-
-  const mailOptions = {
-    from:    "RelayLink <onboarding@resend.dev>",
-    to:      process.env.MAIL_TO,
-    subject: `📩 New message from ${senderLabel}`,
-    text:    `From: ${senderLabel}\nSent: ${sentAt}\n\n${trimmedMessage}`,
-    html:    htmlBody
-  };
-
-  if (req.file) {
-    mailOptions.attachments = [{
-      filename: cleanAttachmentName(req.file.originalname),
-      content:  req.file.buffer
-    }];
-  }
-
-  try {
-    const { error } = await resendClient.emails.send(mailOptions);
-    if (error) throw new Error(error.message);
-    console.log("Email sent");
-    res.json({ ok: true });
-  } catch (err) {
-    console.error("Resend error:", err.message);
-    /* The mail service's own words stay in the log. They went to the page as
-       `detail`, which showed whatever the service said, in English, to whoever
-       sent the message. */
-    res.status(500).json({ error: "Failed to send email", code: "send-failed" });
-  }
-}));
 
 /* ══════════════════════════════════════════════
    /api/mailbox/file — a photo or file that waits
@@ -560,13 +402,6 @@ app.get("/api/mailbox/file", requireClientHeader, (req, res) => {
 });
 
 app.use((err, req, res, next) => {
-  if (err instanceof multer.MulterError) {
-    if (err.code === "LIMIT_FILE_SIZE") {
-      const mb = Math.round(LEAVE_MESSAGE_MAX_FILE_BYTES / 1024 / 1024);
-      return res.status(413).json({ error: `File is too large (max about ${mb} MB).`, code: "file-too-large", maxMb: mb });
-    }
-    return res.status(400).json({ error: "Upload failed", code: "upload-failed" });
-  }
   /* Anything reaching here is a bug in a handler. Answer generically rather
      than calling next(err): Express's default handler replies with the stack
      trace unless NODE_ENV is production, which is not guaranteed to be set. */
@@ -574,16 +409,6 @@ app.use((err, req, res, next) => {
   if (res.headersSent) return next(err);
   res.status(500).json({ error: "Server error", code: "server-error" });
 });
-
-/* ── HTML escape helper ─────────────────────── */
-function escapeHtml(str) {
-  return str
-    .replace(/&/g,  "&amp;")
-    .replace(/</g,  "&lt;")
-    .replace(/>/g,  "&gt;")
-    .replace(/"/g,  "&quot;")
-    .replace(/'/g,  "&#39;");
-}
 
 /* ══════════════════════════════════════════════
    PIN BRUTE-FORCE PROTECTION
@@ -826,6 +651,11 @@ const mailDropHits       = new Map();
 const MAIL_DROP_WINDOW_MS = 10 * 60 * 1000;
 const MAIL_DROP_MAX      = 60;
 const mailFetchHits      = new Map();
+/* Notes for the owner, from one network: fewer than messages between two
+   people who saved each other — anyone can leave one. */
+const noteHits           = new Map();
+const NOTE_WINDOW_MS     = 10 * 60 * 1000;
+const NOTE_MAX           = 10;
 const MAIL_FETCH_WINDOW_MS = 60_000;
 const MAIL_FETCH_MAX     = 30;
 const MAIL_KNOCK_GAP_MS  = 60_000;     // "a message waits" once a minute per mailbox
@@ -839,7 +669,7 @@ const mailFetchedAt      = new Map();  // `${box}:${side}` → when last asked a
    for it: `${box}:${side}` → links. */
 const mailListeners      = new Map();
 
-/* joinAttempts and emailAttempts each have a sweep above; these two were
+/* joinAttempts has a sweep above; these were
    missed, and without one they keep an entry per address seen since startup.
    See ratelimit.js — pruneExpired explains why slidingAllow cannot do it. */
 setInterval(() => {
@@ -848,6 +678,7 @@ setInterval(() => {
   pruneExpired(knockHits, KNOCK_WINDOW_MS);
   pruneExpired(mailDropHits, MAIL_DROP_WINDOW_MS);
   pruneExpired(mailFetchHits, MAIL_FETCH_WINDOW_MS);
+  pruneExpired(noteHits, NOTE_WINDOW_MS);
   for (const [box, at] of mailKnockedAt) if (Date.now() - at > MAIL_KNOCK_GAP_MS) mailKnockedAt.delete(box);
   for (const [key, at] of mailFetchedAt) if (Date.now() - at > 60_000) mailFetchedAt.delete(key);
 }, 60_000);
@@ -1025,7 +856,10 @@ wss.on("connection", (ws, req) => {
   /* Said first, on every connection — including the reconnect every open page
      makes a few seconds after this process restarts for an update. That is the
      moment a page left open finds out it is old. */
-  if (CLIENT_BUILD) ws.send(JSON.stringify({ type: "hello", build: CLIENT_BUILD }));
+  /* With it, a word for this connection alone: the owner's device signs it
+     to show it is the owner's (owner-hello). */
+  ws.ownerNonce = crypto.randomBytes(16).toString("base64url");
+  ws.send(JSON.stringify({ type: "hello", ...(CLIENT_BUILD ? { build: CLIENT_BUILD } : {}), nonce: ws.ownerNonce }));
 
   ws.on("close", () => {
     console.log(`Client disconnected ${ipLogId(clientIp)}`);
@@ -1041,7 +875,7 @@ wss.on("connection", (ws, req) => {
      exception and Node ends the process, taking every room and every call with
      it. The four characters `null` did exactly that — see handleMessage. This
      is the backstop for whichever input nobody has thought of yet, the same job
-     asyncRoute() does for the HTTP side. */
+     the error handler does for the HTTP side. */
   ws.on("message", (raw) => {
     try {
       handleMessage(raw);
@@ -1457,6 +1291,9 @@ wss.on("connection", (ws, req) => {
       case "mail-drop": {
         const { box, to, id, at, iv, ct } = data;
         const refuse = code => ws.send(JSON.stringify({ type: "mail-refused", id: typeof id === "string" ? id.slice(0, 32) : null, code }));
+        const note = OWNER_BOX !== null && box === OWNER_BOX;       // for the owner, from anyone
+        if (note && to !== "a") { refuse("invalid"); break; }
+        if (note && !slidingAllow(noteHits, clientIp, NOTE_MAX, NOTE_WINDOW_MS)) { refuse("too-many"); break; }
         if (!slidingAllow(mailDropHits, clientIp, MAIL_DROP_MAX, MAIL_DROP_WINDOW_MS)) { refuse("too-many"); break; }
         const result = mail.drop(box, to, { id, at, iv, ct, file: data.file === true });   // a photo or file: sent first, see /api/mailbox/file
         if (result === "invalid" || result === "full" || result === "server-full") { refuse(result); break; }
@@ -1465,13 +1302,17 @@ wss.on("connection", (ws, req) => {
         const key = `${box}:${to}`;
         const listening = [...(mailListeners.get(key) || [])].filter(l => l.readyState === WebSocket.OPEN && l !== ws);
         for (const l of listening) l.send(JSON.stringify({ type: "mail-waiting", box }));
-        const knock = data.knock && typeof data.knock === "object" ? data.knock : null;
+        /* A note alerts the owner where the owner said; a message, where its writer said. */
+        const knock = note ? ownerAlert : (data.knock && typeof data.knock === "object" ? data.knock : null);
         const alert = () => {
           if (!knock || !KNOCK_KEYS || !isPushEndpoint(knock.endpoint, KNOCK_TEST_ORIGIN) || !pushKeysValid(knock.p256dh, knock.auth)) return;
           if (Date.now() - (mailKnockedAt.get(key) || 0) < MAIL_KNOCK_GAP_MS || !slidingAllow(knockHits, clientIp, KNOCK_MAX, KNOCK_WINDOW_MS)) return;
           mailKnockedAt.set(key, Date.now());
           sendKnock({ to: { endpoint: knock.endpoint, p256dh: knock.p256dh, auth: knock.auth }, room: box, keys: KNOCK_KEYS, kind: "mail" })
-            .then(r => console.log(`Mail knock: ${r.status || "no answer"}`));
+            .then(r => {
+              console.log(`Mail knock: ${r.status || "no answer"}`);
+              if (note && r.gone && ownerAlert === knock) keepOwnerAlert(null);   // that device no longer takes alerts
+            });
         };
         if (!listening.length) { alert(); break; }
         const toldAt = Date.now();
@@ -1488,6 +1329,7 @@ wss.on("connection", (ws, req) => {
         ws.mailKeys = ws.mailKeys || new Set();
         for (const b of asked) {
           if (!b || typeof b.box !== "string" || !SAVED_ROOM_PATTERN.test(b.box) || (b.side !== "a" && b.side !== "b")) continue;
+          if (b.box === OWNER_BOX && !ws.isOwner) continue;           // the owner's notes, to the owner alone
           const key = `${b.box}:${b.side}`;
           if (!ws.mailKeys.has(key) && ws.mailKeys.size >= 50) continue;
           ws.mailKeys.add(key);
@@ -1509,9 +1351,31 @@ wss.on("connection", (ws, req) => {
         break;
       }
 
+      /* The owner's device, showing it is: this connection's word, signed with
+         the lock's signing key. From then on it may collect the owner's notes. */
+      case "owner-hello": {
+        if (ownerProofValid(ws.ownerNonce, data.proof)) {
+          ws.isOwner = true;
+          ws.send(JSON.stringify({ type: "owner-ok" }));
+        } else {
+          ws.send(JSON.stringify({ type: "owner-refused" }));
+        }
+        break;
+      }
+
+      /* Where the owner's device is alerted when a note arrives — or nowhere (null). */
+      case "owner-alert": {
+        if (!ws.isOwner) break;
+        const to = data.knock && typeof data.knock === "object" ? data.knock : null;
+        if (to && (!isPushEndpoint(to.endpoint, KNOCK_TEST_ORIGIN) || !pushKeysValid(to.p256dh, to.auth))) break;
+        keepOwnerAlert(to ? { endpoint: to.endpoint, p256dh: to.p256dh, auth: to.auth } : null);
+        break;
+      }
+
       /* The device has them: gone from here for good. */
       case "mail-ack": {
         if (typeof data.box !== "string" || !SAVED_ROOM_PATTERN.test(data.box) || (data.side !== "a" && data.side !== "b")) break;
+        if (data.box === OWNER_BOX && !ws.isOwner) break;            // and let go by the owner alone
         mail.ack(data.box, data.side, Array.isArray(data.ids) ? data.ids.slice(0, 200) : []);
         break;
       }

@@ -27,7 +27,7 @@
 
    APP_BUILD is written by tools/sync-build.js and by nothing else.
 ══════════════════════════════════════════════ */
-const APP_BUILD = "202611020554-04e7068e";
+const APP_BUILD = "202611020638-45c11682";
 
 function refuseToRunInAStalePage() {
   let builtFor = null;
@@ -118,7 +118,7 @@ function applyI18n() {
     const key = el.dataset.i18n;
     const val = I18N[LANG][key];
     if (typeof val === "string") el.textContent = val;
-    if (key === "leaveHint" && typeof val === "function") el.textContent = val(leaveAttachMaxMbRounded());
+    if (key === "leaveHint" && typeof val === "function") el.textContent = val(noteFileMaxMb());
     else if (typeof val === "function" && "i18nArg" in el.dataset) el.textContent = val(el.dataset.i18nArg);
   });
   document.querySelectorAll("[data-i18n-ph]").forEach(el => {
@@ -269,6 +269,22 @@ const mailCloseBtn   = document.getElementById("mailCloseBtn");
 const mailClearBtn   = document.getElementById("mailClearBtn");
 const mailAttachBtn  = document.getElementById("mailAttachBtn");
 const mailFileInput  = document.getElementById("mailFileInput");
+const inboxRow       = document.getElementById("inboxRow");          // see "OWNER INBOX"
+const inboxBtn       = document.getElementById("inboxBtn");
+const inboxCount     = document.getElementById("inboxCount");
+const noteOff        = document.getElementById("noteOff");
+const leaveForm      = document.getElementById("leaveForm");
+const ownerLink      = document.getElementById("ownerLink");
+const ownerOverlay   = document.getElementById("ownerOverlay");
+const ownerText      = document.getElementById("ownerText");
+const ownerCodeBox   = document.getElementById("ownerCodeBox");
+const ownerLockBox   = document.getElementById("ownerLockBox");
+const ownerCodeInput = document.getElementById("ownerCodeInput");
+const ownerForgetBtn = document.getElementById("ownerForgetBtn");
+const ownerCopyBtn   = document.getElementById("ownerCopyBtn");
+const ownerSetupBtn  = document.getElementById("ownerSetupBtn");
+const ownerUseBtn    = document.getElementById("ownerUseBtn");
+const ownerCloseBtn  = document.getElementById("ownerCloseBtn");
 
 /* ── State ───────────────────────────────────── */
 let ws              = null;
@@ -1135,6 +1151,9 @@ const SERVER_URL = window.DIRECT_CONNECTION_SERVER_URL ||
     ? `${location.protocol}//${location.hostname}:3000`
     : DEFAULT_SERVER_URL);
 const WS_URL = SERVER_URL.replace(/^http/, "ws");
+/* The owner's lock (protocol.js) — or, for a test page, one it names itself.
+   See "OWNER INBOX". */
+const OWNER_LOCK = DC.parseLock(window.DIRECT_CONNECTION_OWNER_LOCK) ? window.DIRECT_CONNECTION_OWNER_LOCK : DC.OWNER_LOCK;
 const CHUNK_SIZE    = 65536;
 const MAX_P2P_FILE_BYTES = 150 * 1024 * 1024; // 150 MB hard cap for P2P transfers
 /* What may be arriving at once: two maximum-size files side by side. */
@@ -1143,11 +1162,12 @@ const INCOMING_BUDGET_BYTES = 2 * MAX_P2P_FILE_BYTES;
    plaintext sealed with AES-GCM's 16-byte tag. */
 const MAX_CHUNK_BODY = DC.E2E_BIN_IV_LEN + CHUNK_SIZE + 16;
 
-/** Max size for “leave a message” file; server may raise via /api/ping (Resend email ~40MB cap). */
-let maxLeaveAttachBytes = 28 * 1024 * 1024;
+/** The largest file a note may carry: what the server keeps (/api/ping says),
+    less what sealing adds — the sender's one-time key, the IV, the tag. */
+let noteFileMaxBytes = G.MAIL_FILE_MAX + 28 - DC.NOTE_SEAL_EXTRA;
 
-function leaveAttachMaxMbRounded() {
-  return Math.max(1, Math.round(maxLeaveAttachBytes / 1024 / 1024));
+function noteFileMaxMb() {
+  return Math.max(1, Math.round(noteFileMaxBytes / 1024 / 1024));
 }
 
 /* ══════════════════════════════════════════════
@@ -1180,14 +1200,14 @@ function wakeServer() {
   fetch(`${SERVER_URL}/api/ping`, { signal: controller.signal })
     .then(r => (r.ok ? r.json() : null))
     .then(j => {
-      if (j && typeof j.maxLeaveAttachBytes === "number" && j.maxLeaveAttachBytes >= 1048576) {
-        maxLeaveAttachBytes = j.maxLeaveAttachBytes;
-        applyI18n();
-      }
       /* The server sends knocks: the alerts switch can show. */
       if (j && typeof j.knockKey === "string" && /^B[A-Za-z0-9_-]{86}$/.test(j.knockKey)) knockKeyArrived(j.knockKey);
       /* How big a photo or file may wait there — none, on a server with nowhere to keep them. */
-      if (j && Number.isSafeInteger(j.mailFileMaxBytes)) mailFileMaxBytes = Math.max(0, Math.min(j.mailFileMaxBytes - 28, G.MAIL_FILE_MAX));
+      if (j && Number.isSafeInteger(j.mailFileMaxBytes)) {
+        mailFileMaxBytes = Math.max(0, Math.min(j.mailFileMaxBytes - 28, G.MAIL_FILE_MAX));
+        noteFileMaxBytes = Math.max(0, j.mailFileMaxBytes - DC.NOTE_SEAL_EXTRA);
+        applyI18n();
+      }
     })
     .catch(() => {})
     .finally(() => {
@@ -2662,6 +2682,7 @@ async function knockKeyArrived(key) {
     }
   }
   drawPeople();
+  ownerAlertNow(false);       // taken for the owner's before alerts were back: said now
 }
 
 async function knocksOn() {
@@ -2697,6 +2718,7 @@ async function knocksOff() {
 function knocksChanged() {
   drawPeople();
   if (knockPeer()) sendKnockAddress();
+  ownerAlertNow(true);
 }
 
 knockBtn.onclick = () => {
@@ -2980,7 +3002,8 @@ function mailAnswered(data, kept) {
     not both taken for new. */
 let mailQueue = Promise.resolve();
 function receiveMail(data) {
-  mailQueue = mailQueue.then(() => takeMail(data)).catch(err => console.error("Messages could not be taken:", err));
+  mailQueue = mailQueue.then(() => (ownerBox && data.box === ownerBox ? takeNotes(data) : takeMail(data)))
+    .catch(err => console.error("Messages could not be taken:", err));
   return mailQueue;
 }
 
@@ -3033,6 +3056,7 @@ async function takeMail(data) {
 function openThread(p) {
   if (mailOpenFor !== p.room) letMailUrlsGo();
   mailOpenFor = p.room;
+  mailOverlay.classList.remove("inbox");                 // a conversation: written in, too
   mailTitle.textContent = p.name;
   mailHint.textContent = t("mailHint");
   mailClearBtn.classList.remove("asking");
@@ -3049,9 +3073,11 @@ function openThread(p) {
 function closeThread() {
   closeImageViewer();                                    // its picture is about to be let go of
   mailOverlay.classList.add("hidden");
+  mailOverlay.classList.remove("inbox");
   mailOpenFor = null;
   letMailUrlsGo();
   drawPeople();
+  drawOwner();
 }
 
 function drawThread() {
@@ -3071,15 +3097,29 @@ function drawThread() {
 function mailBubble(m) {
   const row = document.createElement("div");
   row.className = `mail-item ${m.mine ? "me" : "peer"}`;
-  const bubble = document.createElement("div");
-  bubble.className = "mail-bubble";
-  if (m.file) fillMailFile(bubble, m);
-  else fillMessage(bubble, m.text);                      // links tappable, nothing else made of it
+  if (m.from !== undefined) {                            // a note: who left it, as they wrote it
+    const who = document.createElement("div");
+    who.className = "mail-from";
+    who.textContent = m.from || t("noteAnonymous");
+    row.appendChild(who);
+  }
+  if (m.text !== undefined) {
+    const bubble = document.createElement("div");
+    bubble.className = "mail-bubble";
+    fillMessage(bubble, m.text);                         // links tappable, nothing else made of it
+    row.appendChild(bubble);
+  }
+  if (m.file) {                                          // a note may have both
+    const bubble = document.createElement("div");
+    bubble.className = "mail-bubble";
+    fillMailFile(bubble, m);
+    row.appendChild(bubble);
+  }
   const meta = document.createElement("div");
   meta.className = m.state === "refused" ? "mail-meta refused" : "mail-meta";
   const when = new Date(m.at).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
   meta.textContent = m.mine ? `${when} · ${t({ sending: "mailSending", kept: "mailKept", refused: "mailNotSent" }[m.state])}` : when;
-  row.append(bubble, meta);
+  row.appendChild(meta);
   return row;
 }
 
@@ -3119,6 +3159,7 @@ mailClearBtn.onclick = () => {
   letMailUrlsGo();
   drawThread();
   drawPeople();
+  drawOwner();
 };
 
 /* ── Photos and files ────────────────────────
@@ -3242,17 +3283,23 @@ async function deliverMailFile(p, item) {
 /** Theirs, fetched, opened and kept here: "ok"; "gone" — the server has no
     such file, or it does not open as this one; or "later" — no answer. */
 async function fetchMailFile(p, key, where, meta) {
+  return fetchSealedFile(`${p.room}:${p.side}:${where.id}`, sealed => DC.openMailFile(key, where, sealed), meta, p.room, where.id);
+}
+
+/** A waiting file — a message's or a note's — fetched by its "box:side:id",
+    opened by `open`, and kept here under `room`: as fetchMailFile says. */
+async function fetchSealedFile(named, open, meta, room, id) {
   let res;
   try {
-    res = await fetch(`${SERVER_URL}/api/mailbox/file`, { headers: { "X-DC-Client": "1", "X-DC-Mail": `${p.room}:${p.side}:${where.id}` } });
+    res = await fetch(`${SERVER_URL}/api/mailbox/file`, { headers: { "X-DC-Client": "1", "X-DC-Mail": named } });
   } catch (_) { return "later"; }
   if (res.status === 404) return "gone";
   if (!res.ok) return "later";
   let sealed;
   try { sealed = new Uint8Array(await res.arrayBuffer()); } catch (_) { return "later"; }
-  const bytes = await DC.openMailFile(key, where, sealed);
+  const bytes = await open(sealed);
   if (!bytes || bytes.length !== meta.size) return "gone";
-  await keepMailFile(p.room, where.id, new Blob([bytes], { type: G.presentAs("image", meta.type).blobType }));
+  await keepMailFile(room, id, new Blob([bytes], { type: G.presentAs("image", meta.type).blobType }));
   return "ok";
 }
 
@@ -3310,13 +3357,318 @@ mailFileInput.onchange = () => {
 /** "A message waits" tapped: their conversation, and anything newer. */
 function answerMail(room) {
   const p = people.find(q => q.room === room);
-  if (p) openThread(p);
+  if (p) { openThread(p); return; }
+  ownerReady.then(() => { if (ownerKeysHere && room === ownerBox) openInbox(); });
 }
 
 mailStore = loadMail();
 drawPeople();
 
-/* Opened by tapping "a message waits": the worker names the room in the address. */
+/* ══════════════════════════════════════════════
+   OWNER INBOX
+   ─────────────────────────────────────────────
+   "Leave a note" was an email to the app's owner, through a mail company
+   that read every word. Now a note is sealed on the visitor's device to the
+   owner's lock (DC.OWNER_LOCK, written in the app's own code), left on the
+   server like a waiting message — in the inbox the lock names, side "a" —
+   and opened only on the owner's devices.
+
+   Those devices keep the owner code (dc-owner), which the two private keys
+   are worked out from. On each connection the server's hello carries a word
+   for that connection alone; the owner's device signs it (owner-hello), and
+   from then on the server hands it the notes, lets them go when it says so,
+   and alerts it where it says (owner-alert). A note is kept here as a
+   conversation is (mailStore, under the inbox's name; a file in IndexedDB),
+   and read in the same window, with nothing to write in.
+
+   Set up from "Own this app?": a fresh code, to be saved, and the lock it
+   makes, to be written into protocol.js. Until that is this code's lock,
+   the device waits — and nobody can leave a note.                         */
+const OWNER_KEY = "dc-owner";
+let ownerBox = null;              // the inbox's name on the server, from OWNER_LOCK
+let ownerKeysHere = null;         // this device's keys, when its code makes OWNER_LOCK
+let ownerCodeHere = null;         // the code kept here, whether or not it does (yet)
+let ownerLockHere = null;         // the lock that code makes
+let ownerNonce = null;            // this connection's word, from the server's hello
+let ownerConfirmed = false;       // the server takes this connection for the owner's
+let ownerForgetting = false;
+const noteAnswers = new Map();    // a note's id → what to do with the server's answer
+const NOTE_ANSWER_MS = 20_000;
+
+function loadOwnerCode() {
+  try {
+    const kept = JSON.parse(localStorage.getItem(OWNER_KEY) || "null");
+    return kept && kept.v === 1 ? DC.normalizeOwnerCode(kept.code) : null;
+  } catch (_) { return null; }
+}
+
+/** Kept (or let go, for null) — false where storage is off. */
+function storeOwnerCode(code) {
+  try {
+    if (code) localStorage.setItem(OWNER_KEY, JSON.stringify({ v: 1, code }));
+    else localStorage.removeItem(OWNER_KEY);
+    return true;
+  } catch (_) { return false; }
+}
+
+/** Who this device is to the inbox, from the code kept here. */
+async function ownerFromCode() {
+  ownerCodeHere = loadOwnerCode();
+  ownerKeysHere = null;
+  ownerLockHere = null;
+  if (ownerCodeHere && window.DCNoble) {
+    const keys = await DC.ownerKeys(ownerCodeHere, window.DCNoble.p256);
+    ownerLockHere = keys ? keys.lock : null;
+    if (keys && keys.lock === OWNER_LOCK) ownerKeysHere = keys;
+  }
+  drawOwner();
+  ownerConnect();
+}
+
+const ownerReady = (async () => {
+  ownerBox = OWNER_LOCK ? await DC.inboxName(OWNER_LOCK) : null;
+  await ownerFromCode();
+})().catch(err => console.error("The inbox could not be worked out here:", err));
+
+/** The server's hello: a connection, and its word to sign. */
+function ownerHello(nonce) {
+  ownerNonce = typeof nonce === "string" ? nonce : null;
+  ownerConfirmed = false;
+  ownerConnect();
+}
+
+/** The owner's device says it is, once a connection. */
+function ownerConnect() {
+  if (!ownerKeysHere || !ownerNonce || ownerConfirmed) return;
+  const nonce = ownerNonce;
+  DC.proveOwner(ownerKeysHere, ownerBox, nonce)
+    .then(proof => { if (nonce === ownerNonce) wsSend({ type: "owner-hello", proof }); })
+    .catch(err => console.error("Could not show this is the owner's device:", err));
+}
+
+/** Taken for the owner's: the notes, and where to alert this device. */
+function ownerAccepted() {
+  ownerConfirmed = true;
+  fetchInbox();
+  ownerAlertNow(false);
+}
+
+function fetchInbox() {
+  if (ownerConfirmed && ownerBox) wsSend({ type: "mail-fetch", files: true, boxes: [{ box: ownerBox, side: "a" }] });
+}
+
+/** Where the owner is alerted of a note: this device, while its alerts are on.
+    One with them off says nothing — unless they were just turned off here
+    (`clear`) — so it does not undo another of the owner's devices. */
+function ownerAlertNow(clear) {
+  if (!ownerConfirmed) return;
+  const knock = knockAddress();
+  if (knock || clear) wsSend({ type: "owner-alert", knock });
+}
+
+/** The owner's notes, opened here — or not at all — kept, and let go of on
+    the server. One whose file has no answer yet stays there for next time. */
+async function takeNotes(data) {
+  const items = Array.isArray(data.items) ? data.items.filter(m => m && typeof m.id === "string") : [];
+  if (!ownerKeysHere || data.side !== "a" || !items.length) return;
+  const seen = new Set(mailStore.seen[ownerBox] || []);
+  const taken = [];
+  let last = null, fresh = 0, lost = 0;
+  for (const m of items) {
+    if (seen.has(m.id)) { taken.push(m.id); continue; }
+    const where = { box: ownerBox, id: m.id };
+    const note = await DC.openNote(ownerKeysHere, { ...where, iv: m.iv, ct: m.ct });
+    if (note && note.file) {
+      const got = await fetchSealedFile(`${ownerBox}:a:${m.id}`, sealed => DC.openNoteFile(ownerKeysHere, where, sealed), note.file, ownerBox, m.id);
+      if (got === "later") continue;
+      if (got === "gone") { seen.add(m.id); taken.push(m.id); lost++; continue; }
+    }
+    seen.add(m.id);                                      // opened or not, never tried again
+    taken.push(m.id);
+    if (!note || !Number.isSafeInteger(m.at)) continue;
+    addToThread(ownerBox, { id: m.id, at: m.at, mine: false, from: note.name,
+                            ...(note.text ? { text: note.text } : {}), ...(note.file ? { file: note.file } : {}) });
+    last = note;
+    fresh++;
+  }
+  mailStore.seen[ownerBox] = [...seen].slice(-G.MAIL_SEEN_MAX);
+  if (mailOpenFor === ownerBox) threadFor(ownerBox).read = Date.now();
+  storeMail();
+  if (taken.length) wsSend({ type: "mail-ack", box: ownerBox, side: "a", ids: taken });
+  if (lost) showToast(t("mailFileGone"), "warn");
+  drawOwner();
+  if (!fresh) return;
+  if (mailOpenFor === ownerBox) { drawThread(); return; }
+  showToast(I18N[LANG].noteArrived(last.name || t("noteAnonymous")), "info");
+  noticeArrival();
+}
+
+/** A note for the owner, sealed here — its file first, as for messages — and
+    the server's answer: { ok: true }, or { ok: false, code }. */
+async function sendNote({ name, text, file }) {
+  if (!OWNER_LOCK || !ownerBox) return { ok: false, code: "no-inbox" };
+  if (!ws || ws.readyState !== WebSocket.OPEN) return { ok: false, code: "no-answer" };
+  const id = DC.makeMailId();
+  const where = { box: ownerBox, id };
+  let meta = null;
+  if (file) {
+    meta = { name: String(file.name || "file").slice(0, 255), type: String(file.type || "").slice(0, 100), size: file.size };
+    const sealed = await DC.sealNoteFile(OWNER_LOCK, where, new Uint8Array(await file.arrayBuffer()));
+    let res;
+    try {
+      res = await fetch(`${SERVER_URL}/api/mailbox/file`, {
+        method: "POST",
+        headers: { "X-DC-Client": "1", "Content-Type": "application/octet-stream", "X-DC-Mail": `${ownerBox}:a:${id}:${sealed.length}` },
+        body: sealed
+      });
+    } catch (_) { return { ok: false, code: "no-answer" }; }
+    if (!res.ok) return { ok: false, code: await res.json().then(j => j && j.code, () => null) };
+  }
+  const sealed = await DC.sealNote(OWNER_LOCK, where, { name, text, ...(meta ? { file: meta } : {}) });
+  return dropNote({ type: "mail-drop", box: ownerBox, to: "a", id, at: Date.now(), iv: sealed.iv, ct: sealed.ct, ...(meta ? { file: true } : {}) });
+}
+
+/** Left on the server; the answer, or none in NOTE_ANSWER_MS. */
+function dropNote(drop) {
+  return new Promise(resolve => {
+    const timer = setTimeout(() => { noteAnswers.delete(drop.id); resolve({ ok: false, code: "no-answer" }); }, NOTE_ANSWER_MS);
+    noteAnswers.set(drop.id, answer => { clearTimeout(timer); noteAnswers.delete(drop.id); resolve(answer); });
+    wsSend(drop);
+  });
+}
+
+/** The server's word on a note of ours, if it was one. */
+function noteAnswered(data, kept) {
+  const answer = data && noteAnswers.get(data.id);
+  if (!answer) return false;
+  answer(kept ? { ok: true } : { ok: false, code: data.code });
+  return true;
+}
+
+/* ── On screen ───────────────────────────── */
+
+/** The panel: the inbox on the owner's devices, the form to leave a note
+    everywhere else — or a word that it is not ready, with no lock yet. */
+function drawOwner() {
+  const owner = Boolean(ownerKeysHere);
+  inboxRow.classList.toggle("hidden", !owner);
+  leaveForm.classList.toggle("hidden", owner || !OWNER_LOCK);
+  noteOff.classList.toggle("hidden", owner || Boolean(OWNER_LOCK));
+  ownerLink.classList.toggle("is-owner", owner);
+  const unread = owner ? G.mailUnread(mailStore.threads[ownerBox]) : 0;
+  inboxCount.classList.toggle("hidden", !unread);
+  inboxCount.textContent = unread > 9 ? "9+" : String(unread);
+  if (!ownerOverlay.classList.contains("hidden")) drawOwnerDialog();
+}
+
+function openInbox() {
+  if (!ownerKeysHere) return;
+  if (mailOpenFor !== ownerBox) letMailUrlsGo();
+  mailOpenFor = ownerBox;
+  mailOverlay.classList.add("inbox");
+  mailTitle.textContent = t("inboxTitle");
+  mailHint.textContent = t("inboxHint");
+  mailClearBtn.classList.remove("asking");
+  mailClearBtn.textContent = t("mailClear");
+  threadFor(ownerBox).read = Date.now();
+  storeMail();
+  mailOverlay.classList.remove("hidden");
+  drawThread();
+  drawOwner();
+  fetchInbox();                                          // anything newer
+}
+
+function openOwnerDialog() {
+  ownerForgetting = false;
+  ownerCodeInput.value = "";
+  drawOwnerDialog();
+  ownerOverlay.classList.remove("hidden");
+}
+
+function closeOwnerDialog() {
+  ownerOverlay.classList.add("hidden");
+  ownerForgetting = false;
+}
+
+/** No code here: make one, or enter it. A code whose lock is the app's: this
+    device reads the inbox. A code whose lock is not in the app yet: save it,
+    and send the lock. `note` says something else, for a moment. */
+function drawOwnerDialog(note = null) {
+  const owner = Boolean(ownerKeysHere);
+  const waiting = Boolean(ownerCodeHere) && !owner;
+  const show = (el, on) => el.classList.toggle("hidden", !on);
+  ownerText.textContent = note || t(owner ? "ownerReadyText"
+                                          : waiting ? (OWNER_LOCK ? "ownerWrongCode" : "ownerPendingText")
+                                                    : (OWNER_LOCK ? "ownerEnterText" : "ownerStartText"));
+  show(ownerCodeBox, Boolean(ownerCodeHere));
+  ownerCodeBox.dataset.label = t("ownerCodeLabel");
+  ownerCodeBox.textContent = ownerCodeHere ? ownerCodeHere.match(/.{4}/g).join("-") : "";
+  const lockToSend = waiting && !OWNER_LOCK && Boolean(ownerLockHere);
+  show(ownerLockBox, lockToSend);
+  ownerLockBox.dataset.label = t("ownerLockLabel");
+  ownerLockBox.textContent = lockToSend ? ownerLockHere : "";
+  show(ownerCopyBtn, lockToSend);
+  ownerCopyBtn.textContent = t("ownerCopyLock");
+  show(ownerSetupBtn, !ownerCodeHere && !OWNER_LOCK);
+  show(ownerCodeInput, !ownerCodeHere);
+  show(ownerUseBtn, !ownerCodeHere);
+  show(ownerForgetBtn, Boolean(ownerCodeHere));
+  ownerForgetBtn.classList.toggle("asking", ownerForgetting);
+  ownerForgetBtn.textContent = t(ownerForgetting ? "ownerForgetSure" : "ownerForget");
+}
+
+async function useOwnerCode(code) {
+  if (!storeOwnerCode(DC.normalizeOwnerCode(code))) { showToast(t("savedNoStorage"), "error"); return; }
+  await ownerFromCode();
+  drawOwnerDialog();
+}
+
+ownerLink.onclick = openOwnerDialog;
+inboxBtn.onclick = openInbox;
+ownerCloseBtn.onclick = closeOwnerDialog;
+ownerOverlay.onclick = e => { if (e.target === ownerOverlay) closeOwnerDialog(); };
+ownerSetupBtn.onclick = () => useOwnerCode(DC.makeOwnerCode());
+
+/* A code for a lock already in the app is taken only if it is that lock's:
+   one mistyped is said at once, not kept to wait for nothing. */
+ownerUseBtn.onclick = async () => {
+  const code = DC.normalizeOwnerCode(ownerCodeInput.value);
+  if (!code) { drawOwnerDialog(t("ownerBadCode")); return; }
+  if (OWNER_LOCK) {
+    const keys = window.DCNoble ? await DC.ownerKeys(code, window.DCNoble.p256) : null;
+    if (!keys || keys.lock !== OWNER_LOCK) { drawOwnerDialog(t("ownerWrongCode")); return; }
+  }
+  await useOwnerCode(code);
+};
+ownerCodeInput.addEventListener("keydown", e => {
+  if (e.key !== "Enter" || e.isComposing) return;
+  e.preventDefault();
+  ownerUseBtn.onclick();
+});
+
+ownerCopyBtn.onclick = () => {
+  if (!ownerLockHere || !navigator.clipboard) return;
+  navigator.clipboard.writeText(ownerLockHere).then(() => { ownerCopyBtn.textContent = t("ownerCopied"); }, () => {});
+};
+
+/* Two taps: the code goes from this device, and the notes kept here with it. */
+ownerForgetBtn.onclick = () => {
+  if (!ownerForgetting) { ownerForgetting = true; drawOwnerDialog(); return; }
+  ownerForgetting = false;
+  if (mailOpenFor && mailOpenFor === ownerBox) closeThread();
+  if (ownerBox) {
+    delete mailStore.threads[ownerBox];
+    delete mailStore.seen[ownerBox];
+    storeMail();
+    forgetMailFiles(ownerBox);
+  }
+  storeOwnerCode(null);
+  ownerConfirmed = false;
+  ownerFromCode().then(() => drawOwnerDialog());
+};
+
+/* Opened by tapping "a message waits": the worker names the room in the
+   address — a saved person's, or the inbox. */
 const _mailRoom = (location.hash.match(/^#mail=(~[A-Za-z0-9_-]{43})$/) || [])[1] || null;
 if (_mailRoom) {
   history.replaceState({}, "", `${location.pathname}${location.search}`);
@@ -3860,6 +4212,15 @@ async function handleSignaling(data) {
 
     case "hello":
       handleServerBuild(data.build);
+      ownerHello(data.nonce);
+      break;
+
+    case "owner-ok":
+      ownerAccepted();
+      break;
+
+    case "owner-refused":
+      console.warn("The server did not take this device for the owner's");
       break;
 
     case "session-list":
@@ -4139,7 +4500,7 @@ async function handleSignaling(data) {
       break;
 
     case "mail-waiting":
-      fetchMail();
+      if (ownerBox && data.box === ownerBox) fetchInbox(); else fetchMail();
       break;
 
     case "meet-waiting":
@@ -4148,11 +4509,11 @@ async function handleSignaling(data) {
       break;
 
     case "mail-dropped":
-      mailAnswered(data, true);
+      if (!noteAnswered(data, true)) mailAnswered(data, true);
       break;
 
     case "mail-refused":
-      mailAnswered(data, false);
+      if (!noteAnswered(data, false)) mailAnswered(data, false);
       break;
 
     case "seat-taken":
@@ -7977,9 +8338,8 @@ leaveFileBtn.onclick = () => leaveFile.click();
 
 leaveFile.onchange = () => {
   const f = leaveFile.files[0];
-  const mb = leaveAttachMaxMbRounded();
-  if (f && f.size > maxLeaveAttachBytes) {
-    setLeaveStatus(I18N[LANG].leaveFileTooBig(mb), "err");
+  if (f && f.size > noteFileMaxBytes) {
+    setLeaveStatus(I18N[LANG].leaveFileTooBig(noteFileMaxMb()), "err");
     leaveFile.value = "";
     leaveFileName.textContent = "";
     const span = leaveFileBtn.querySelector("span[data-i18n]");
@@ -7992,34 +8352,18 @@ leaveFile.onchange = () => {
   if (span) span.textContent = f ? t("changeFile") : t("attachFile");
 };
 
+/* A note for the owner — sealed here, see "OWNER INBOX" (sendNote). */
 leaveSendBtn.onclick = async () => {
   const msg = leaveMessage.value.trim();
-  if (!msg) { setLeaveStatus(t("writeFirst"), "err"); return; }
   const lf = leaveFile.files[0];
-  const mb = leaveAttachMaxMbRounded();
-  if (lf && lf.size > maxLeaveAttachBytes) {
-    setLeaveStatus(I18N[LANG].leaveFileTooBig(mb), "err");
-    return;
-  }
+  if (!msg && !lf) { setLeaveStatus(t("writeFirst"), "err"); return; }
+  if (msg.length > DC.NOTE_TEXT_MAX) { setLeaveStatus(I18N[LANG].noteTooLong(DC.NOTE_TEXT_MAX), "err"); return; }
+  if (lf && lf.size > noteFileMaxBytes) { setLeaveStatus(I18N[LANG].leaveFileTooBig(noteFileMaxMb()), "err"); return; }
   leaveSendBtn.disabled = true;
   setLeaveStatus(t("sending"), "sending");
-
-  const fd = new FormData();
-  fd.append("message", msg);
-  fd.append("name", senderName.value.trim());
-  if (lf) fd.append("file", lf);
-
   try {
-    const res  = await fetch(`${SERVER_URL}/api/send-message`, {
-      method: "POST",
-      headers: { "X-DC-Client": "1" },
-      body: fd
-    });
-    /* Turned away because other messages were being sent at that moment —
-       said in the user's language, not the server's English. */
-    if (res.status === 503) { setLeaveStatus(t("emailBusy"), "err"); return; }
-    const json = await res.json();
-    if (res.ok && json.ok) {
+    const answer = await sendNote({ name: senderName.value.trim().slice(0, DC.NOTE_NAME_MAX), text: msg, file: lf || null });
+    if (answer.ok) {
       setLeaveStatus(t("msgSent"), "ok");
       leaveMessage.value = "";
       senderName.value   = "";
@@ -8028,25 +8372,26 @@ leaveSendBtn.onclick = async () => {
       const span = leaveFileBtn.querySelector("span[data-i18n]");
       if (span) span.textContent = t("attachFile");
     } else {
-      setLeaveStatus(leaveErrorText(json), "err");
+      setLeaveStatus(leaveErrorText(answer.code), "err");
     }
-  } catch (_) {
-    setLeaveStatus(t("networkErr"), "err");
+  } catch (err) {
+    console.error("A note could not be sealed:", err);
+    setLeaveStatus(t("noteFailed"), "err");
   } finally {
     leaveSendBtn.disabled = false;
   }
 };
 
-/** Why a message was not sent, in the user's language. The server's words
-    were English, and one of them passed on whatever the mail service said. */
-function leaveErrorText(json) {
-  const code = json && json.code;
-  if (code === "rate-limited")     return I18N[LANG].emailRateLimited(Number(json.remaining) || 60);
-  if (code === "message-too-long") return I18N[LANG].emailTooLong(Number(json.max) || 5000);
-  if (code === "file-too-large")   return I18N[LANG].leaveFileTooBig(Number(json.maxMb) || leaveAttachMaxMbRounded());
-  if (code === "message-required") return t("writeFirst");
-  if (code === "not-configured")   return t("emailUnavailable");
-  return t("emailFailed");
+/** Why a note was not left, in the user's language. */
+function leaveErrorText(code) {
+  if (code === "no-inbox")  return t("noteNoInbox");
+  if (code === "no-answer") return t("networkErr");
+  if (code === "too-many")  return t("noteTooMany");
+  if (code === "full" || code === "server-full") return t("noteInboxFull");
+  if (code === "too-large") return I18N[LANG].leaveFileTooBig(noteFileMaxMb());
+  if (code === "busy")      return t("mailTryLater");
+  if (code === "off")       return t("mailFilesOff");
+  return t("noteFailed");
 }
 
 function setLeaveStatus(text, type) {

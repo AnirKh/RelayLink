@@ -20,7 +20,7 @@ App: https://anirkh.github.io/RelayLink/ · Code: https://github.com/AnirKh/Rela
 | `ratelimit.js` | Sliding-window counters, their expiry sweep, `safeLabel` for anything client-supplied that reaches a log line, and `joinVerdict` — which join lock applies to which credential. Same reason as above: small, pure, security-relevant. |
 | `framebust.js` | Refuses to run inside a frame. The only such protection on GitHub Pages (see below). |
 | `manifest.webmanifest`, `icons/` | What makes the site installable as an app: its name, colours and icons. `icons/icon.svg` is the drawing; the PNGs are rendered from it. See "Installable as an app". `icons/link-preview-relaylink.png` is the card a shared link shows — see "Link previews". |
-| `server.js` | Signaling, PIN/token auth, rate limits, `/api/send-message`. |
+| `server.js` | Signaling, PIN/token auth, rate limits, the mailbox and its files, the owner's inbox. |
 | `knock.js` | Sending a knock: Web Push to a saved person's device — RFC 8291 encryption (checked against the RFC's own example), VAPID signing, and the push services it may send to. Node's own crypto, no dependency. See "Knocks". |
 | `mailbox.js` | Messages, photos and files waiting for a saved person who is away: kept sealed — never read — in a file (the files beside it) or in memory, with their limits and their week. See "Waiting messages". |
 | `deploy/pi/` | Running the server — its one home — on a Raspberry Pi behind Tailscale Funnel: the systemd service, an updater and its timer, the settings file, and `SETUP.md`. See "On a Raspberry Pi at home". |
@@ -190,7 +190,7 @@ The photo is `icons/author.jpg`: cropped to head and shoulders and drawn afresh 
 
 ## The lobby: three tabs
 
-Under the title the lobby has three tabs — **Rooms | Create room | Email** — and shows one section at a time. It opens on Rooms, because most people arriving are joining someone, and returns there after a chat. The Rooms tab carries a count of open rooms, so it can be seen from the other two. A created room brings its host to the Create tab, where the PIN and link are; a room that expires while its host is on another tab is also said as a toast. Arrow keys, Home and End move along the tabs (`showLobbyTab`, `lobbyTabKeyTarget` in `app.js`).
+Under the title the lobby has three tabs — **Rooms | Create room | Notes** — and shows one section at a time. It opens on Rooms, because most people arriving are joining someone, and returns there after a chat. The Rooms tab carries a count of open rooms, so it can be seen from the other two. A created room brings its host to the Create tab, where the PIN and link are; a room that expires while its host is on another tab is also said as a toast. Arrow keys, Home and End move along the tabs (`showLobbyTab`, `lobbyTabKeyTarget` in `app.js`).
 
 **`#lobbyStatus` is for news that belongs to no tab.** The create card's status line used to carry everything: the server waking up, "Joining…" from an invite link, a link that was refused. With Rooms open by default, all of that would have been said inside a hidden tab. It now goes on a status line above the panels, shown on every tab and taking no room when empty. `#createInfo` keeps only what is about creating: "Creating…", the PIN and link, the room expiring.
 
@@ -690,6 +690,21 @@ A chat needs both people there at once. **A saved person who is away can now be 
 
 What it costs, said plainly: the server sees which mailboxes a device asks after — so which saved pairs it belongs to — and when messages come and go, and how long they are; never what they say. That server is the Pi at home now. There is no forward secrecy: a message is sealed with the pair's lasting key, so whoever later had that secret and a copy of the sealed message could read it — which is why the server lets each go once it is taken. And a device that is offline for more than a week misses what waited for it.
 
+## Notes for the owner
+
+"Leave a message" emailed the app's owner through a mail company (Resend), which read every word — and the attachment. **Now a note is sealed on the visitor's device to the owner's lock, and only the owner's devices open it.**
+
+- **The lock** is two public keys (`DC.OWNER_LOCK` in `protocol.js`): `box`, which anyone seals to — ECDH with a one-time key of the sender's own, HKDF, AES-256-GCM, so the sender cannot open it again either — and `sign`, which the server checks the owner's proof against. It is written in the app's own code, not handed out by the server: a server that was taken over could not slip in a lock of its own and read what visitors write next. Until it is set, nobody can leave a note, and the form says so.
+- **The owner code** — 24 characters, 120 bits, from an alphabet with nothing to misread — is where both private keys come from (HKDF of the code, labelled for each key, brought into range as FIPS 186-5 A.2.1 does). It is made once, from "Own this app?" under the form, shown to be saved, and typed into each device the owner reads on. The keys exist only there.
+- **Kept as a waiting message is** (`mailbox.js`): in the inbox the lock names (`DC.inboxName`, side "a"), a file sent first as for messages. The server cannot open them.
+- **Only the owner's device collects them.** Each connection, the server's `hello` carries a word for that connection alone (`nonce`); the owner's device signs it with the lock's signing key (`owner-hello`, ECDSA P-256), and only then does the server hand it the inbox, let notes go when it says so, and take where to alert it (`owner-alert`, kept in `owner.json` beside the mailbox). A stranger fetching the inbox gets nothing, and one asking for notes to be let go lets nothing go.
+- **On the owner's device** the Notes tab is their inbox, with how many are new; notes are kept and read like a conversation — who left it, the words, a photo drawn or a file to save — in the same window, with nothing to write in. "Inbox settings" shows the code again, or takes it off the device (two taps; the notes kept there go with it).
+- **Limits:** 10 notes from one network in ten minutes, a note's words up to 5000 characters, a file up to the server's file limit less what sealing adds (`DC.NOTE_SEAL_EXTRA`).
+
+What it costs, said plainly: the owner code is the inbox. Lost, the notes waiting can never be read — a new code needs a new lock in the app. Seen by someone else, they can read every note left since. The server still sees that a note was left, when, from which network, and how long it is.
+
+Tested in `test/owner.test.js` (the code, the keys, the seal and the proof, each against node's own crypto), `test/integration/notes.test.js` (through a real server: who may collect and let go, alerts, restarts, limits) and `test/people.test.js` (the page: setting up, sending, receiving, the inbox, taking the code off); and in headless Edge, a visitor's note and photo read in the owner's inbox.
+
 ## Chat messages that wait for the link
 
 A message written while the link is down used to fail. **Now it waits** (`outbox`, app.js): shown at once, faded, with ⏳, and sent by itself — in order, sealed as any other — as soon as the other side is listening again (`flushOutbox`, from `e2eActivate` and the host's `peer-info`). Only in a chat that had its key once (`G.mayQueueText`), up to `G.OUTBOX_MAX`; and a chat that was green waits to be green again before anything goes (`G.mayFlushOutbox`), so a message meant for a checked chat never leaves into an unchecked one. When the chat ends with some still waiting (`settleOutbox`, from the reconnect notice and from leaving), to a saved person they go as offline messages (✉, see "Waiting messages"); to anyone else they are marked not sent (✕) — never dropped silently.
@@ -734,9 +749,9 @@ Because nothing limits how often a token may be tried, both secrets are compared
 
 ## The server's refusals, in the user's language
 
-The server's refusals were shown as it wrote them, in English, to Mongolian readers too: a room name taken or not allowed, too many rooms from one network, and every refusal of a "leave a message" email. One of those passed on whatever the mail service said, as `detail` — its own English, and whatever it chose to include. Now:
+The server's refusals were shown as it wrote them, in English, to Mongolian readers too: a room name taken or not allowed, too many rooms from one network, and every refusal of a "leave a message" email. One of those passed on whatever the mail service said, as `detail` — its own English, and whatever it chose to include. (There is no mail service now: see "Notes for the owner".) Now:
 
-- **Every refusal carries a `code`**, and the page says it in its own words: `serverErrorKey` for a room (`name-taken`, `invalid-name`, `too-many-rooms`), `leaveErrorText` for a message (`rate-limited` with the seconds to wait, `message-too-long` with the limit, `file-too-large` with the size, `message-required`, `not-configured`; anything else, that it failed). A code the page does not know — a newer server — falls back to the server's message, and the reload notice, which has no code, is already in both languages.
+- **Every refusal carries a `code`**, and the page says it in its own words: `serverErrorKey` for a room (`name-taken`, `invalid-name`, `too-many-rooms`), `leaveErrorText` for a note (`no-inbox`, `no-answer`, `too-many`, `full`, `too-large` with the size, `busy`, `off`; anything else, that it failed). A code the page does not know — a newer server — falls back to the server's message, and the reload notice, which has no code, is already in both languages.
 - **The mail service's words stay in the server's log.** No answer carries a `detail` any more, and the page shows neither the server's English nor any detail.
 - **Nine icon buttons were named in English only** — mute, camera, end call, leave, voice call, video call, attach, record, send — so a screen reader read them in English whatever the page's language. Each now takes its name from the page's language (`data-i18n-aria`), and `test/words.test.js` fails if an English-only name is left in the page.
 
@@ -849,23 +864,19 @@ Node's built-in runner, no dependencies.
 - `test/mail.test.js` — waiting messages: the seal opening for the other side only (not handed back, moved, re-dated or changed), the mailbox's checks, limits, week and file (a restart losing nothing, nothing in the file believed unchecked), and `G.mailStore`, `G.mailUnread` and `G.mailRefusalKey`. The page's side — sending, sending again until kept, opening theirs, forged ones dropped, two deliveries shown once, the conversation, clearing, forgetting, opening from an alert — is in `test/people.test.js`; `test/integration/mail.test.js` runs a server with a mailbox file and a stand-in push service — and, for someone waiting, the lobby of the side waited for told when it starts and stops, told at once when it opens late, its other devices told when one answers, and nobody else told. Photos and files: `test/mail.test.js` (their seal, checked against node's own crypto; the mailbox's file limits, clean-up and restart), `test/people.test.js` (sending, sending again, refusals, fetching, lost ones, drawing them, clearing), `test/integration/mailfiles.test.js` (through a real server: sent, described, fetched, let go, turned away, limited).
 - `test/layout.test.js` — the phone-keyboard fix: that every full-height rule reads `--app-height`, and `fitToVisibleArea()` lifted out of `app.js` and run against a stand-in window for each case it has to judge.
 
-`/api/send-message` is covered inside `server.test.js`. Those tests assert the process is **still serving** after a malformed request, not just the status code — an uncaught throw in that handler ends the process and every open room with it. Any new async route must go through `asyncRoute()` for the same reason: Express 4 does not await handlers, so a rejected promise becomes an unhandled rejection and Node exits.
+The HTTP routes — `/api/ping` and the mailbox's files — are covered in `test/integration/mailfiles.test.js`. An async route would need its rejections caught: Express 4 does not await handlers, so a rejected promise becomes an unhandled rejection and Node exits, taking every open room with it.
 
 **The WebSocket side has the same hazard and the same kind of backstop.** Nothing catches what a `"message"` listener throws, so it ends the process too — the four characters `null` did it, because `JSON.parse` accepts them and reading `.type` off `null` throws. `handleMessage` now rejects anything that is not a plain object, and the listener wraps it in a `try`/`catch` for whichever input nobody has thought of yet. New message handling goes inside `handleMessage`, not in a second listener.
 
 Not covered: the WebRTC and UI code in `app.js`, which needs a browser and two peers. Changes there still want a manual two-tab check. Also not covered: the ten-minute expiry of an unjoined room — the wait is hard-coded, so it was checked by hand against a server with its clock moved forward.
 
-### Three ordering rules in `server.js`
+### Ordering rules in `server.js`
 
 All are about work done before a request has earned it.
 
-**At most `UPLOADS_AT_ONCE` (2) uploads are read at a time** (`limitConcurrentUploads`). multer holds each one in memory — up to the attachment limit — and the rate limit is per address, so nothing else bounded how many arrive together: a handful of large uploads from a few addresses could use up the instance's memory, and the restart would drop every live chat. One past the limit gets **503** before a byte of its body is read, does not count against its sender's allowance, and is said in the user's language. A slot is freed when the request is answered or its connection goes.
+**An upload is written straight to disk, counted, and checked before a byte is read** (`/api/mailbox/file`): the app's header, the mailbox and size it names, room in that mailbox and in all, the sender's allowance — and at most `MAIL_FILES_AT_ONCE` (3) coming at once. Nothing is held in memory, and one longer than it said is cut off. Before, "leave a message" took uploads through multer, which held each in memory, and needed limits of its own — on how many at once, and on the form's fields: one request of 150 text fields once took the process from 63 MB to 227 MB before being refused.
 
-**And each upload holds no more than the page's own form** (`UPLOAD_FIELDS_MAX`, `UPLOAD_FIELD_BYTES`): two text fields and one file, a field at most 64 KB — well above the longest message the page allows, which still gets its own "too long" answer. Found in a security assessment: only the file was capped, and multer's defaults let any number of text fields of 1 MB each be held in memory — one request of 150 took the process from 63 MB to 227 MB before being refused. Now it is refused with **400** at the first field past the limit, and the memory goes back down.
-
-**At most `WS_PER_IP_MAX` (50) WebSocket links are open from one address** at once; the next is refused (429) until one closes. Found in the same assessment: nothing bounded them, so one machine could open thousands. Generous on purpose: a mobile network can put many phones behind one address.
-
-**`requireClientHeader` and `enforceEmailRateLimit` must stay ahead of `upload.single()`.** multer buffers the entire upload into memory before the handler runs, so any check placed after it has already let a stranger spend up to `LEAVE_ATTACH_MAX_BYTES` of RAM. The tests pin this by status code: an oversized upload with no client header must answer **403**, not 413 — a 413 means multer parsed it first.
+**At most `WS_PER_IP_MAX` (50) WebSocket links are open from one address** at once; the next is refused (429) until one closes. Found in a security assessment: nothing bounded them, so one machine could open thousands. Generous on purpose: a mobile network can put many phones behind one address.
 
 **Anything client-supplied that reaches a log line goes through `safeLabel`.** A WebSocket `data.type` is arbitrary text up to `maxPayload`. Printed raw, a newline in it writes further log lines the attacker controls, including imitations of the real ones. Unknown types are also capped per socket, so one client cannot fill the log by inventing names.
 
@@ -918,7 +929,7 @@ The Tabler icons are served from here: `vendor/tabler/` holds release 3.31.0's s
 npm audit
 ```
 
-Worth running before a deploy. Two of the four direct dependencies sit directly on the internet — `ws` handles every signalling socket and `multer` parses every upload — so an advisory in either is reachable by anyone, not theoretical.
+Worth running before a deploy. The server has two direct dependencies, and both sit directly on the internet — `ws` handles every signalling socket, `express` every request — so an advisory in either is reachable by anyone, not theoretical. The email ones (`resend`, `multer`) went with email, and their eight advisories with them.
 
 Deliberately **not** in the pre-push hook: advisories appear on their own schedule, so it would block pushes for reasons unrelated to the change being pushed, and a hook that fails for unrelated reasons is one you learn to bypass.
 
@@ -967,11 +978,11 @@ If an origin is missing, the browser will block CORS and **WebSocket connections
 Optional:
 
 - **`PUBLIC_SESSION_LIST=0`** — the lobby never receives other users’ room names (only empty lists). Hosts still share PIN or invite link as usual.
-- **`RESEND_API_KEY`**, **`MAIL_TO`** — required for “leave a message” email; `POST /api/send-message` also requires a custom header (`X-DC-Client: 1`) sent by the bundled client so drive-by form posts cannot abuse the endpoint.
+- **`OWNER_LOCK`** — the owner's lock, where it is not the app's own (`DC.OWNER_LOCK` in `protocol.js`): for tests, or this server run for someone else. See "Notes for the owner".
 - **`TRUSTED_PROXY_HOPS`** — how many proxies sit in front of this process (default **1**). Every rate limit keys on the client address, and `X-Forwarded-For` is only trustworthy as far back as the proxies you control, so the address is read that many entries from the **right**. Leave at 1 behind one proxy — Tailscale Funnel on the Pi, or nginx. **Set to 0 if the process is exposed directly** — otherwise a client can send its own `X-Forwarded-For` and pick a fresh identity for every request, evading the PIN lockout, the room-creation cap and the email limit. The server logs the value it is using on startup.
 - **`HOST_AWAY_MS`** — how long a seat is kept for a side whose link dropped — a waiting room's host, or either side of a chat — in ms (default **600000**, ten minutes; accepted range 1000–3600000). See "A room that waits for its host" and "A chat survives a dropped link to the server".
 - **`HEARTBEAT_MS`** — how often the server pings each WebSocket client, in ms (default **30000**, accepted range 1000–300000). A client that misses a sweep is dropped, which frees its room and tells the other peer. Lower it only for testing; every client answers every sweep, so short intervals mean constant traffic.
-- **`LEAVE_ATTACH_MAX_BYTES`** — optional max attachment size for the main-page email form (default **28 MB**). Resend rejects emails over **~40 MB** total after encoding, so do not set this above **35 MB** unless you use another mail provider.
+
 - **`KNOCK_PUBLIC_KEY`**, **`KNOCK_PRIVATE_KEY`** — the key pair knocks are signed with (Web Push, VAPID). Make them once with `node tools/knock-keys.js` and paste its two lines in. (It used to make, about one time in 250, a pair the server then turned away — node drops a private key's leading zero bytes — which switched knocks off without a word; the key is padded to its 32 bytes now. A pair already in use was taken, so is fine.) Without both, knocks are off: the server sends none and `/api/ping` offers no key, so the page shows no alerts switch. A new pair later makes every device subscribe again (it does so by itself when next opened) and tell each saved person again (when they next connect). See "Knocks".
 - **`KNOCK_SUBJECT`** — a `mailto:` or `https:` contact the push services may use (default the site's address).
 - **`KNOCK_TEST_ORIGIN`** — tests only: lets knocks go to one local stand-in for a push service. Never set it on a real server.

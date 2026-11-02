@@ -19,6 +19,7 @@ const fs     = require("node:fs");
 const path   = require("node:path");
 const crypto = require("node:crypto");
 const G      = require("../guards.js");
+const { p256 } = require("@noble/curves/p256");
 const DC     = require("../protocol.js");
 
 const read = name => fs.readFileSync(path.join(__dirname, "..", name), "utf8").replace(/\r\n/g, "\n");
@@ -168,7 +169,9 @@ const NAMES = ["G", "DC", "I18N", "LANG", "t", "localStorage", "window", "docume
   "APP_BUILD", "installOverlay", "showLobbyTab", "runningInstalled",
   "mailOverlay", "mailTitle", "mailHint", "mailList", "mailInput", "mailSendBtn", "mailCloseBtn", "mailClearBtn",
   "fillMessage", "noticeArrival", "typingWithFinger", "env",
-  "mailAttachBtn", "mailFileInput", "openImageViewer", "closeImageViewer", "DCS", "fetch", "SERVER_URL", "IDBKeyRange", "URL"];
+  "mailAttachBtn", "mailFileInput", "openImageViewer", "closeImageViewer", "DCS", "fetch", "SERVER_URL", "IDBKeyRange", "URL",
+  "inboxRow", "inboxBtn", "inboxCount", "noteOff", "leaveForm", "ownerLink", "ownerOverlay", "ownerText",
+  "ownerCodeBox", "ownerLockBox", "ownerCodeInput", "ownerForgetBtn", "ownerCopyBtn", "ownerSetupBtn", "ownerUseBtn", "ownerCloseBtn", "OWNER_LOCK"];
 
 /** A real P-256 public key and a 16-byte secret, as a browser's subscription has. */
 function pushKeys() {
@@ -267,12 +270,13 @@ function fakeWeb(env, log) {
  * (neither read nor written).
  */
 function page({ saved = [], storage = "works", connected = true, checked = true, kind = "pin", wsOpen = true, inChat = false, lang = "mn",
-                 knock = {}, mail = null, hash = "", timers = null } = {}) {
+                 knock = {}, mail = null, hash = "", timers = null, owner = {} } = {}) {
   const log = { ws: [], sealed: [], toasts: [], sys: [], screen: [], left: 0, quality: [], reconnect: 0, closed: 0,
                 asked: 0, registered: [], subscribed: [], unsubscribed: 0, replaced: [], tabs: [], noticed: 0, web: [], viewed: [] };
   const store = new Map();
   if (saved.length) store.set("dc-people", JSON.stringify({ v: 1, people: saved }));
   if (mail) store.set("dc-mail", JSON.stringify(mail));
+  if (owner.code) store.set("dc-owner", JSON.stringify({ v: 1, code: owner.code }));
   const off = () => { throw new Error("storage off"); };
   const localStorage = {
     getItem: k => (storage === "off" ? off() : store.has(k) ? store.get(k) : null),
@@ -283,7 +287,7 @@ function page({ saved = [], storage = "works", connected = true, checked = true,
   const idb = new Map();
   const files = new Map();
   const indexedDB = fakeIndexedDB(idb, files);
-  const window = { indexedDB, addEventListener: (type, f) => { (winListeners[type] = winListeners[type] || []).push(f); } };
+  const window = { indexedDB, DCNoble: { p256 }, addEventListener: (type, f) => { (winListeners[type] = winListeners[type] || []).push(f); } };
   const push = pushBrowser(knock, log);
   const docListeners = {};
   const document = { createElement: element, createTextNode: s => ({ tag: "#text", textContent: String(s), children: [] }),
@@ -293,12 +297,16 @@ function page({ saved = [], storage = "works", connected = true, checked = true,
                    "saveCancelBtn", "saveConfirmBtn", "leaveBtn", "lobbyStatus", "voiceCallBtn", "videoCallBtn", "statsBar", "chatScreen",
                    "knockBtn", "knockIcon", "knockLabel", "installOverlay",
                    "mailOverlay", "mailTitle", "mailHint", "mailList", "mailInput", "mailSendBtn", "mailCloseBtn", "mailClearBtn",
-                   "mailAttachBtn", "mailFileInput"]) {
-    els[n] = element(n === "saveNameInput" || n === "mailInput" ? "input" : "div");
+                   "mailAttachBtn", "mailFileInput",
+                   "inboxRow", "inboxBtn", "inboxCount", "noteOff", "leaveForm", "ownerLink", "ownerOverlay", "ownerText",
+                   "ownerCodeBox", "ownerLockBox", "ownerCodeInput", "ownerForgetBtn", "ownerCopyBtn", "ownerSetupBtn", "ownerUseBtn", "ownerCloseBtn"]) {
+    els[n] = element(n === "saveNameInput" || n === "mailInput" || n === "ownerCodeInput" ? "input" : "div");
   }
   els.peopleSection.classList.add("hidden");
   els.saveOverlay.classList.add("hidden");
   els.mailOverlay.classList.add("hidden");
+  els.ownerOverlay.classList.add("hidden");
+  for (const n of ["inboxRow", "noteOff"]) els[n].classList.add("hidden");
   els.knockBtn.classList.add("hidden");
   els.installOverlay.classList.add("hidden");
   if (!inChat) els.chatScreen.classList.add("hidden");
@@ -334,9 +342,11 @@ function page({ saved = [], storage = "works", connected = true, checked = true,
       quickCallPerson, placeQuickCall, quickCallPeerReady,
       openThread, closeThread, sendMail, receiveMail, mailAnswered, mailAtConnect, fetchMail, answerMail, sendFromThread,
       sendMailFile, mailFileBlob, files: () => mailFileQueue,
+      ownerReady: () => ownerReady, ownerHello, ownerAccepted, sendNote, noteAnswered, openInbox, openOwnerDialog,
       get: () => ({ people, meeting, waitingForUs, personMenuFor, heldOpen, quickCall, pendingMeet, saveOffer, saveAsked, saveDialog, forgetting, currentSession,
                     isConnecting, isHost, hostKey, roomSecret, pendingRoomSecret, roomKind, guestKey,
-                    knockKey, knockSub, knockSent, knockShared, savedInChat, knockEarly, mailStore, mailOpenFor }),
+                    knockKey, knockSub, knockSent, knockShared, savedInChat, knockEarly, mailStore, mailOpenFor,
+                    ownerBox, ownerKeysHere, ownerCodeHere, ownerLockHere, ownerConfirmed }),
       set: o => { for (const [k, v] of Object.entries(o)) switch (k) {
         case "listJoinId": listJoinId = v; break;
         case "currentSession": currentSession = v; break;
@@ -363,7 +373,8 @@ function page({ saved = [], storage = "works", connected = true, checked = true,
     els.mailOverlay, els.mailTitle, els.mailHint, els.mailList, els.mailInput, els.mailSendBtn, els.mailCloseBtn, els.mailClearBtn,
     (el, text) => { el.textContent = text; }, () => { log.noticed++; }, () => false, env,
     els.mailAttachBtn, els.mailFileInput, (url, name) => log.viewed.push({ url, name }), () => {}, { fmtBytes: n => `${n} B` },
-    fakeWeb(env, log), "https://pi.test/dc", IDBKeyRange, URL);
+    fakeWeb(env, log), "https://pi.test/dc", IDBKeyRange, URL,
+    els.inboxRow, els.inboxBtn, els.inboxCount, els.noteOff, els.leaveForm, els.ownerLink, els.ownerOverlay, els.ownerText, els.ownerCodeBox, els.ownerLockBox, els.ownerCodeInput, els.ownerForgetBtn, els.ownerCopyBtn, els.ownerSetupBtn, els.ownerUseBtn, els.ownerCloseBtn, owner.lock || null);
   const rows = () => els.peopleList.children;
   const button = (row, cls) => row.children.find(c => c.classList.contains(cls));
   const stored = () => JSON.parse(store.get("dc-people") || "null");
@@ -1785,8 +1796,8 @@ test("too big, or a server that keeps no files: said, and nothing sent", async (
   assert.deepEqual(p.log.toasts, [I18N.mn.mailFileTooBig]);
   assert.deepEqual(p.log.web, []);
   assert.equal((p.api.get().mailStore.threads[anu.room] || { items: [] }).items.length, 0);
-  assert.match(app, /if \(j && Number\.isSafeInteger\(j\.mailFileMaxBytes\)\) mailFileMaxBytes = Math\.max\(0, Math\.min\(j\.mailFileMaxBytes - 28, G\.MAIL_FILE_MAX\)\);/,
-    "the server's own limit, from /api/ping — 0 when it keeps none");
+  assert.match(app, /if \(j && Number\.isSafeInteger\(j\.mailFileMaxBytes\)\) \{\s*mailFileMaxBytes = Math\.max\(0, Math\.min\(j\.mailFileMaxBytes - 28, G\.MAIL_FILE_MAX\)\);\s*noteFileMaxBytes = Math\.max\(0, j\.mailFileMaxBytes - DC\.NOTE_SEAL_EXTRA\);/,
+    "the server's own limit, from /api/ping — 0 when it keeps none; a note's file, less what sealing it to the owner adds");
   assert.match(fn("sendMailFile"), /if \(!mailFileMaxBytes\) \{ showToast\(t\("mailFilesOff"\), "warn"\); return; \}/);
 });
 
@@ -1924,4 +1935,282 @@ test("cleared, or the person forgotten: their files go from this device too", as
   p.api.forgetPerson(p.api.get().people.find(q => q.name === "Bat"));
   await settle(); await settle();
   assert.equal(p.files.size, 0);
+});
+
+/* ══════════════════════════════════════════
+   The owner's inbox
+══════════════════════════════════════════ */
+
+/** An owner: their code, the keys it makes, and the inbox the lock names. */
+async function anOwner() {
+  const code = DC.makeOwnerCode();
+  const keys = await DC.ownerKeys(code, p256);
+  return { code, keys, lock: keys.lock, box: await DC.inboxName(keys.lock) };
+}
+const shown = el => !el.classList.contains("hidden");
+
+/** Does `proof` show the owner's signing key signed this inbox and word? As the server checks it. */
+function proofValid(lock, box, nonce, proof) {
+  const raw = Buffer.from(lock.split(".")[1], "base64url");
+  const key = crypto.createPublicKey({ format: "jwk", key: { kty: "EC", crv: "P-256",
+    x: raw.subarray(1, 33).toString("base64url"), y: raw.subarray(33).toString("base64url") } });
+  return crypto.verify("sha256", Buffer.from(JSON.stringify(["dc-owner-1", box, nonce])), { key, dsaEncoding: "ieee-p1363" }, Buffer.from(proof, "base64url"));
+}
+
+/** A note for `o`, as a visitor's page leaves it. */
+async function noteFor(o, body, over = {}) {
+  const id = DC.makeMailId();
+  return { id, at: Date.now() - 500, ...(await DC.sealNote(o.lock, { box: o.box, id }, body)), ...over };
+}
+
+test("no lock in the app yet: no note can be left; \"Own this app?\" makes a code, and shows the lock it makes to send", async () => {
+  const p = page();
+  await p.api.ownerReady();
+  assert.ok(shown(p.els.noteOff) && !shown(p.els.leaveForm) && !shown(p.els.inboxRow));
+  assert.deepEqual(await p.api.sendNote({ name: "", text: "hi", file: null }), { ok: false, code: "no-inbox" });
+  p.api.openOwnerDialog();
+  assert.equal(p.els.ownerText.textContent, I18N.mn.ownerStartText);
+  assert.ok(shown(p.els.ownerSetupBtn) && shown(p.els.ownerCodeInput) && !shown(p.els.ownerLockBox));
+  p.els.ownerSetupBtn.onclick();
+  await until(() => p.api.get().ownerLockHere);
+  const { ownerCodeHere: code, ownerLockHere: lock } = p.api.get();
+  assert.deepEqual(JSON.parse(p.store.get("dc-owner")), { v: 1, code }, "kept on this device");
+  assert.match(code, /^[0-9A-HJKMNP-TV-Z]{24}$/, "plainly: shown in fours, kept without them");
+  assert.equal(lock, (await DC.ownerKeys(code, p256)).lock);
+  assert.equal(p.els.ownerText.textContent, I18N.mn.ownerPendingText);
+  assert.equal(p.els.ownerCodeBox.textContent, code.match(/.{4}/g).join("-"), "shown to be saved");
+  assert.equal(p.els.ownerLockBox.textContent, lock, "and the lock, to send");
+  assert.ok(!shown(p.els.ownerSetupBtn) && !shown(p.els.ownerCodeInput));
+  assert.equal(p.api.get().ownerKeysHere, null, "not the app's inbox until the lock is in the app");
+  let copied = null;
+  p.push.navigator.clipboard = { writeText: async text => { copied = text; } };
+  p.els.ownerCopyBtn.onclick();
+  await settle();
+  assert.equal(copied, lock);
+  assert.equal(p.els.ownerCopyBtn.textContent, I18N.mn.ownerCopied);
+});
+
+test("the app's lock and this device's code: the inbox, not the form — and each connection, the device shows it is the owner's", async () => {
+  const o = await anOwner();
+  const p = page({ owner: { lock: o.lock, code: o.code }, knock: { subscribed: true, permission: "granted", registered: true } });
+  await p.api.ownerReady();
+  assert.ok(shown(p.els.inboxRow) && !shown(p.els.leaveForm) && !shown(p.els.noteOff));
+  assert.ok(p.els.ownerLink.classList.contains("is-owner"));
+  assert.equal(p.api.get().ownerBox, o.box);
+  p.api.ownerHello("word-1");
+  await until(() => p.log.ws.some(m => m.type === "owner-hello"));
+  const hello = p.log.ws.find(m => m.type === "owner-hello");
+  assert.deepEqual(Object.keys(hello).sort(), ["proof", "type"], "the proof alone: nothing of the code or the keys");
+  assert.ok(proofValid(o.lock, o.box, "word-1", hello.proof));
+  assert.ok(!JSON.stringify(p.log.ws).includes(o.code.slice(0, 8)));
+  p.log.ws.length = 0;
+  p.api.ownerAccepted();
+  assert.deepEqual(p.log.ws.find(m => m.type === "mail-fetch"), { type: "mail-fetch", files: true, boxes: [{ box: o.box, side: "a" }] });
+  assert.ok(!p.log.ws.some(m => m.type === "owner-alert"), "this device's alerts are not back yet");
+  await p.api.knockKeyArrived(SERVER_KNOCK_KEY);           // they are now: said then
+  await until(() => p.log.ws.some(m => m.type === "owner-alert"));
+  const alert = p.log.ws.find(m => m.type === "owner-alert");
+  assert.ok(G.knockAddressValid(alert.knock), "where this device's alerts go");
+  const visitor = page({ owner: { lock: o.lock } });
+  await visitor.api.ownerReady();
+  visitor.api.ownerHello("word-2");
+  await settle();
+  assert.ok(!visitor.log.ws.some(m => m.type === "owner-hello"), "a visitor's device says nothing of the sort");
+  assert.ok(shown(visitor.els.leaveForm) && !shown(visitor.els.inboxRow));
+});
+
+test("a device of the owner's with alerts off does not undo another's — unless it just turned them off", async () => {
+  const o = await anOwner();
+  const p = page({ owner: { lock: o.lock, code: o.code } });
+  await p.api.ownerReady();
+  p.api.ownerAccepted();
+  await settle();
+  assert.ok(!p.log.ws.some(m => m.type === "owner-alert"));
+  assert.match(fn("knocksChanged"), /ownerAlertNow\(true\);/);
+  assert.match(fn("ownerAlertNow"), /if \(knock \|\| clear\) wsSend\(\{ type: "owner-alert", knock \}\);/);
+});
+
+test("notes arrive: opened, kept with who left them, counted and said — and let go of on the server", async () => {
+  const o = await anOwner();
+  const p = page({ owner: { lock: o.lock, code: o.code } });
+  await p.api.ownerReady();
+  const hi = await noteFor(o, { name: "Bat", text: "are you around?" });
+  const nameless = await noteFor(o, { name: "", text: "guess who" });
+  const garbled = { id: DC.makeMailId(), at: Date.now(), iv: "x".repeat(16), ct: "AAAA" };
+  await p.api.receiveMail({ type: "mail", box: o.box, side: "a", items: [hi, nameless, garbled] });
+  const items = p.api.get().mailStore.threads[o.box].items;
+  assert.deepEqual(items.map(m => [m.from, m.text, m.mine]), [["Bat", "are you around?", false], ["", "guess who", false]]);
+  assert.deepEqual(p.log.ws.at(-1), { type: "mail-ack", box: o.box, side: "a", ids: [hi.id, nameless.id, garbled.id] }, "the garbled one let go too");
+  assert.deepEqual(p.log.toasts, [I18N.mn.noteArrived(I18N.mn.noteAnonymous)], "said once — for the last, which gave no name");
+  assert.equal(p.log.noticed, 1);
+  assert.ok(shown(p.els.inboxCount));
+  assert.equal(p.els.inboxCount.textContent, "2");
+  const kept = G.mailStore(JSON.parse(p.store.get("dc-mail")));
+  assert.deepEqual(kept.threads[o.box].items.map(m => m.from), ["Bat", ""], "kept as they are, through the checks");
+  await p.api.receiveMail({ type: "mail", box: o.box, side: "a", items: [hi] });
+  assert.equal(p.api.get().mailStore.threads[o.box].items.length, 2, "delivered twice: shown once");
+});
+
+test("a device that is not the owner's takes no notes, and lets none go", async () => {
+  const o = await anOwner();
+  const visitor = page({ owner: { lock: o.lock } });
+  await visitor.api.ownerReady();
+  await visitor.api.receiveMail({ type: "mail", box: o.box, side: "a", items: [await noteFor(o, { name: "", text: "hi" })] });
+  assert.equal(visitor.api.get().mailStore.threads[o.box], undefined);
+  assert.ok(!visitor.log.ws.some(m => m.type === "mail-ack"));
+});
+
+test("a note with a file: fetched, opened, kept — and in the inbox, who left it, the words and the picture", async () => {
+  const o = await anOwner();
+  const p = page({ owner: { lock: o.lock, code: o.code } });
+  await p.api.ownerReady();
+  const n = await noteFor(o, { name: "Bat", text: "the beach", file: { name: "beach.png", type: "image/png", size: thePhoto.length } });
+  p.env.uploads.set(`${o.box}:a:${n.id}`, await DC.sealNoteFile(o.lock, { box: o.box, id: n.id }, thePhoto));
+  await p.api.receiveMail({ type: "mail", box: o.box, side: "a", items: [n] });
+  assert.equal(p.log.web.find(r => r.method === "GET").headers["X-DC-Mail"], `${o.box}:a:${n.id}`);
+  const copy = await p.api.mailFileBlob(o.box, n.id);
+  assert.deepEqual(new Uint8Array(await copy.arrayBuffer()), thePhoto);
+  p.els.inboxBtn.onclick();
+  assert.ok(shown(p.els.mailOverlay) && p.els.mailOverlay.classList.contains("inbox"), "the conversation window, with nothing to write in");
+  assert.equal(p.els.mailTitle.textContent, I18N.mn.inboxTitle);
+  assert.equal(p.els.mailHint.textContent, I18N.mn.inboxHint);
+  await settle(); await settle(); await settle();
+  const row = p.els.mailList.children[0];
+  assert.equal(row.querySelector(".mail-from").textContent, "Bat");
+  const bubbles = row.querySelectorAll(".mail-bubble");
+  assert.equal(bubbles.length, 2, "the words, and the picture");
+  assert.equal(bubbles[0].textContent, "the beach");
+  assert.equal(bubbles[1].children[0].className, "mail-image");
+  assert.ok(!shown(p.els.inboxCount), "read now");
+  p.api.closeThread();
+  assert.ok(!p.els.mailOverlay.classList.contains("inbox"), "a person's conversation after it can be written in");
+});
+
+test("a note whose file has no answer yet is left on the server for next time — the words with it", async () => {
+  const o = await anOwner();
+  const p = page({ owner: { lock: o.lock, code: o.code } });
+  await p.api.ownerReady();
+  const n = await noteFor(o, { name: "Bat", text: "see the photo", file: { name: "a.png", type: "image/png", size: thePhoto.length } });
+  p.env.uploads.set(`${o.box}:a:${n.id}`, await DC.sealNoteFile(o.lock, { box: o.box, id: n.id }, thePhoto));
+  p.env.web = "down";
+  await p.api.receiveMail({ type: "mail", box: o.box, side: "a", items: [n] });
+  assert.equal((p.api.get().mailStore.threads[o.box] || { items: [] }).items.length, 0);
+  assert.ok(!p.log.ws.some(m => m.type === "mail-ack"), "not let go");
+  p.env.web = "works";
+  await p.api.receiveMail({ type: "mail", box: o.box, side: "a", items: [n] });
+  assert.deepEqual(p.api.get().mailStore.threads[o.box].items.map(m => [m.from, m.text, m.file.name]), [["Bat", "see the photo", "a.png"]]);
+  assert.deepEqual(p.log.ws.at(-1).ids, [n.id]);
+});
+
+test("a visitor's note: sealed to the lock here, its file sent first, the server's answer awaited — only the owner opens it", async () => {
+  const o = await anOwner();
+  const p = page({ owner: { lock: o.lock }, timers: [] });
+  await p.api.ownerReady();
+  const pending = p.api.sendNote({ name: "Bat", text: "call me", file: picked("plan.pdf", "application/pdf", thePhoto) });
+  await until(() => p.log.ws.some(m => m.type === "mail-drop"));
+  const drop = p.log.ws.find(m => m.type === "mail-drop");
+  assert.deepEqual(Object.keys(drop).sort(), ["at", "box", "ct", "file", "id", "iv", "to", "type"], "no knock address: a visitor has none to give");
+  assert.deepEqual([drop.box, drop.to, drop.file], [o.box, "a", true]);
+  assert.ok(!JSON.stringify(drop).includes("call me") && !JSON.stringify(drop).includes("Bat"));
+  const [upload] = p.log.web;
+  assert.equal(upload.headers["X-DC-Mail"], `${o.box}:a:${drop.id}:${thePhoto.length + DC.NOTE_SEAL_EXTRA}`, "the file went first");
+  assert.deepEqual(await DC.openNoteFile(o.keys, { box: o.box, id: drop.id }, p.env.uploads.get(`${o.box}:a:${drop.id}`)), thePhoto);
+  assert.deepEqual(await DC.openNote(o.keys, drop), { name: "Bat", text: "call me", file: { name: "plan.pdf", type: "application/pdf", size: thePhoto.length } });
+  assert.equal(p.api.noteAnswered({ type: "mail-dropped", id: "someone-else" }, true), false, "not ours: left to the rest");
+  assert.equal(p.api.noteAnswered({ type: "mail-dropped", id: drop.id }, true), true);
+  assert.deepEqual(await pending, { ok: true });
+  const refused = p.api.sendNote({ name: "", text: "again", file: null });
+  await until(() => p.log.ws.filter(m => m.type === "mail-drop").length === 2);
+  p.api.noteAnswered({ type: "mail-refused", id: p.log.ws.filter(m => m.type === "mail-drop")[1].id, code: "too-many" }, false);
+  assert.deepEqual(await refused, { ok: false, code: "too-many" });
+});
+
+test("a note with no answer, a link that is down, or a file the server turns away: said, not hung on", async () => {
+  const o = await anOwner();
+  const timers = [];
+  const p = page({ owner: { lock: o.lock }, timers });
+  await p.api.ownerReady();
+  const silent = p.api.sendNote({ name: "", text: "hello?", file: null });
+  await until(() => p.log.ws.some(m => m.type === "mail-drop"));
+  timers.filter(Boolean).at(-1)();
+  assert.deepEqual(await silent, { ok: false, code: "no-answer" });
+  const down = page({ owner: { lock: o.lock }, wsOpen: false });
+  await down.api.ownerReady();
+  assert.deepEqual(await down.api.sendNote({ name: "", text: "hi", file: null }), { ok: false, code: "no-answer" });
+  const full = page({ owner: { lock: o.lock } });
+  await full.api.ownerReady();
+  full.env.web = 507;
+  full.env.webCode = "full";
+  assert.deepEqual(await full.api.sendNote({ name: "", text: "", file: picked("a.png", "image/png", thePhoto) }), { ok: false, code: "full" });
+  assert.ok(!full.log.ws.some(m => m.type === "mail-drop"), "no note for a file that is not there");
+});
+
+test("an owner code typed in: not a code, or not this app's — said, and nothing kept; the right one opens the inbox here", async () => {
+  const o = await anOwner();
+  const p = page({ owner: { lock: o.lock } });
+  await p.api.ownerReady();
+  p.api.openOwnerDialog();
+  assert.equal(p.els.ownerText.textContent, I18N.mn.ownerEnterText);
+  assert.ok(!shown(p.els.ownerSetupBtn), "the app has its lock: no new one to make");
+  p.els.ownerCodeInput.value = "not a code";
+  await p.els.ownerUseBtn.onclick();
+  assert.equal(p.els.ownerText.textContent, I18N.mn.ownerBadCode);
+  p.els.ownerCodeInput.value = DC.makeOwnerCode();
+  await p.els.ownerUseBtn.onclick();
+  assert.equal(p.els.ownerText.textContent, I18N.mn.ownerWrongCode);
+  assert.equal(p.store.get("dc-owner"), undefined, "a wrong one is not kept to wait for nothing");
+  p.els.ownerCodeInput.value = o.code.toLowerCase().replace(/-/g, " ");
+  await p.els.ownerUseBtn.onclick();
+  assert.ok(p.api.get().ownerKeysHere);
+  assert.equal(p.els.ownerText.textContent, I18N.mn.ownerReadyText);
+  assert.ok(shown(p.els.inboxRow) && !shown(p.els.leaveForm));
+});
+
+test("taken off this device: two taps — the code, the notes and their files all go", async () => {
+  const o = await anOwner();
+  const p = page({ owner: { lock: o.lock, code: o.code } });
+  await p.api.ownerReady();
+  const n = await noteFor(o, { name: "", text: "", file: { name: "a.png", type: "image/png", size: thePhoto.length } });
+  p.env.uploads.set(`${o.box}:a:${n.id}`, await DC.sealNoteFile(o.lock, { box: o.box, id: n.id }, thePhoto));
+  await p.api.receiveMail({ type: "mail", box: o.box, side: "a", items: [n] });
+  assert.equal(p.files.size, 1);
+  p.api.openOwnerDialog();
+  p.els.ownerForgetBtn.onclick();
+  assert.equal(p.els.ownerForgetBtn.textContent, I18N.mn.ownerForgetSure);
+  assert.ok(p.store.get("dc-owner"), "one tap is not enough");
+  p.els.ownerForgetBtn.onclick();
+  await until(() => !p.api.get().ownerCodeHere);
+  await settle(); await settle();
+  assert.equal(p.store.get("dc-owner"), undefined);
+  assert.equal(p.api.get().mailStore.threads[o.box], undefined);
+  assert.equal(p.files.size, 0);
+  assert.ok(!shown(p.els.inboxRow) && shown(p.els.leaveForm));
+});
+
+test("\"a note waits\" tapped: the inbox opens — on the owner's device", async () => {
+  const o = await anOwner();
+  const p = page({ owner: { lock: o.lock, code: o.code }, hash: `#mail=${o.box}` });
+  await p.api.ownerReady();
+  await until(() => shown(p.els.mailOverlay));
+  assert.ok(p.els.mailOverlay.classList.contains("inbox"));
+  const visitor = page({ owner: { lock: o.lock }, hash: `#mail=${o.box}` });
+  await visitor.api.ownerReady();
+  await settle();
+  assert.ok(!shown(visitor.els.mailOverlay));
+});
+
+test("the wiring: the hello's word, the server's yes, waiting notes, answers to ours, the form — and no email anywhere", () => {
+  assert.match(app, /case "hello":\s*handleServerBuild\(data\.build\);\s*ownerHello\(data\.nonce\);/);
+  assert.match(app, /case "owner-ok":\s*ownerAccepted\(\);/);
+  assert.match(app, /case "mail-waiting":\s*if \(ownerBox && data\.box === ownerBox\) fetchInbox\(\); else fetchMail\(\);/);
+  assert.match(app, /case "mail-dropped":\s*if \(!noteAnswered\(data, true\)\) mailAnswered\(data, true\);/);
+  assert.match(app, /case "mail-refused":\s*if \(!noteAnswered\(data, false\)\) mailAnswered\(data, false\);/);
+  assert.match(fn("receiveMail"), /ownerBox && data\.box === ownerBox \? takeNotes\(data\) : takeMail\(data\)/);
+  assert.match(app.slice(app.indexOf("leaveSendBtn.onclick = async () => {")), /await sendNote\(\{ name: senderName\.value\.trim\(\)\.slice\(0, DC\.NOTE_NAME_MAX\), text: msg, file: lf \|\| null \}\)/);
+  assert.ok(!/send-message|maxLeaveAttach|resend/i.test(app.replace(/\/\*[\s\S]*?\*\//g, "")), "no email left in the page");
+  assert.ok(!/require\("(multer|resend)"\)/.test(server));
+  for (const id of ["inboxRow", "inboxBtn", "inboxCount", "noteOff", "leaveForm", "ownerLink", "ownerOverlay", "ownerText", "ownerCodeBox",
+                    "ownerLockBox", "ownerCodeInput", "ownerForgetBtn", "ownerCopyBtn", "ownerSetupBtn", "ownerUseBtn", "ownerCloseBtn"]) {
+    assert.ok(html.includes(`id="${id}"`), id);
+  }
 });

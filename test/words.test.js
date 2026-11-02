@@ -107,40 +107,34 @@ test("the server names every room refusal it sends — all but the bilingual rel
 });
 
 /* ══════════════════════════════════════════
-   A message the server would not send
+   A note that was not left
 ══════════════════════════════════════════ */
 
-function leaveSays(json, lang = "mn") {
-  return new Function("I18N", "LANG", "t", "leaveAttachMaxMbRounded", `${fn("leaveErrorText")}; return leaveErrorText;`)(
-    I18N, lang, k => I18N[lang][k], () => 28)(json);
+function leaveSays(code, lang = "mn") {
+  return new Function("I18N", "LANG", "t", "noteFileMaxMb", `${fn("leaveErrorText")}; return leaveErrorText;`)(
+    I18N, lang, k => I18N[lang][k], () => 25)(code);
 }
 
-test("why a message was not sent, in the user's language", () => {
-  assert.equal(leaveSays({ code: "rate-limited", remaining: 42 }), I18N.mn.emailRateLimited(42));
-  assert.equal(leaveSays({ code: "message-too-long", max: 5000 }, "en"), I18N.en.emailTooLong(5000));
-  assert.equal(leaveSays({ code: "file-too-large", maxMb: 28 }), I18N.mn.leaveFileTooBig(28));
-  assert.equal(leaveSays({ code: "message-required" }), I18N.mn.writeFirst);
-  assert.equal(leaveSays({ code: "not-configured" }), I18N.mn.emailUnavailable);
-  assert.equal(leaveSays({ code: "send-failed" }), I18N.mn.emailFailed);
-  assert.equal(leaveSays({}), I18N.mn.emailFailed, "anything else: that it failed");
-  assert.equal(leaveSays(null), I18N.mn.emailFailed);
+test("why a note was not left, in the user's language", () => {
+  assert.equal(leaveSays("no-inbox"), I18N.mn.noteNoInbox);
+  assert.equal(leaveSays("no-answer", "en"), I18N.en.networkErr);
+  assert.equal(leaveSays("too-many"), I18N.mn.noteTooMany);
+  for (const code of ["full", "server-full"]) assert.equal(leaveSays(code), I18N.mn.noteInboxFull, code);
+  assert.equal(leaveSays("too-large"), I18N.mn.leaveFileTooBig(25));
+  assert.equal(leaveSays("busy"), I18N.mn.mailTryLater);
+  assert.equal(leaveSays("off"), I18N.mn.mailFilesOff);
+  for (const other of ["invalid", "constructor", undefined, null, 7]) assert.equal(leaveSays(other), I18N.mn.noteFailed, String(other));
 });
 
-test("nothing the mail service says reaches the page — it used to, as \"detail\"", () => {
-  assert.equal(leaveSays({ code: "send-failed", error: "Failed", detail: "API key is invalid (re_abc…)" }), I18N.mn.emailFailed);
-  assert.ok(!/detail/.test(server.replace(/\/\*[\s\S]*?\*\//g, "")), "server.js no longer sends a detail");
-  assert.ok(!/json\.detail|json\.error/.test(between("leaveSendBtn.onclick = async () => {", "function setLeaveStatus")),
-    "the page shows neither the server's English nor any detail");
-});
-
-test("every refusal of a message from the server carries a code", () => {
+test("every refusal of a request from the server carries a code", () => {
   const answers = server.split("\n").filter(line => /res\.status\(\d+\)\.json\(/.test(line));
-  assert.ok(answers.length >= 11, `expected the server's refusals, found ${answers.length}`);
+  assert.ok(answers.length >= 4, `expected the server's refusals, found ${answers.length}`);
   for (const line of answers) assert.match(line, /code: "[a-z-]+"/, `no code: ${line.trim()}`);
 });
 
-test("the words for a refused message are in both languages", () => {
-  for (const key of ["emailRateLimited", "emailTooLong", "emailUnavailable", "emailFailed", "leaveFileTooBig", "writeFirst"]) {
+test("the words for a note not left are in both languages", () => {
+  for (const key of ["noteNoInbox", "noteTooMany", "noteInboxFull", "noteFailed", "noteTooLong", "leaveFileTooBig", "writeFirst",
+                     "networkErr", "mailTryLater", "mailFilesOff"]) {
     for (const lang of ["mn", "en"]) assert.ok(key in I18N[lang], `${lang}.${key}`);
   }
 });
