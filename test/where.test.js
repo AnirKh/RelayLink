@@ -305,15 +305,17 @@ test("asked: the question goes sealed, signed for this chat; the other side choo
   assert.deepEqual(child.log.geo, [], "and the phone is not asked yet");
 });
 
-test("Share: the answer goes back sealed, and both sides see the same card", async () => {
+test("Share: the answer goes back sealed; the owner sees the card, the responder stays quiet", async () => {
   const { owner, child } = await asked();
   await child.buttons()[0].onclick();
   assert.deepEqual(child.log.geo, [{ enableHighAccuracy: true, timeout: 20000, maximumAge: 0 }], "a fresh, precise position");
   const answer = child.log.sent.at(-1);
   assert.equal(answer.type, "where-answer");
   assert.equal(answer.nonce, owner.api.state().whereAsked.nonce, "answering the question asked");
-  assert.equal(text(child.line()), I18N.en.whereSharedLine);
-  assert.equal(child.cards().length, 1, "they see what they shared");
+  /* On the responder's own screen: a small "Shared", and no card — so someone
+     glancing at the phone cannot read the location. */
+  assert.equal(text(child.line().children[0]), I18N.en.whereSharedLine);
+  assert.equal(child.cards().length, 0, "the location is not drawn on their screen");
 
   await owner.deliver(answer);
   await settle();
@@ -334,9 +336,14 @@ test("Share: the answer goes back sealed, and both sides see the same card", asy
   assert.equal(text(r.Screen), "412×915");
   assert.equal(owner.log.noticed, 1);
 
+  /* They can still see exactly what they shared, by tapping to review. */
+  const review = child.buttons()[0];
+  assert.equal(text(review), I18N.en.whereReview);
+  review.onclick();
   const mine = child.rows(child.cards()[0]);
-  assert.equal(text(mine.Battery), "54% · charging", "the same values on their side");
+  assert.equal(text(mine.Battery), "54% · charging", "the same values, on their side, when asked for");
   assert.equal(Object.hasOwn(mine, "City, internet"), false, "the lookup is the owner's");
+  assert.equal(child.buttons().length, 0, "the review button goes once used");
 
   assert.deepEqual(owner.log.fetched.map(f => f.url), ["https://ipinfo.io/202.131.0.1/json"]);
   assert.equal(owner.log.fetched[0].opts.credentials, "omit");

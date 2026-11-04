@@ -27,7 +27,7 @@
 
    APP_BUILD is written by tools/sync-build.js and by nothing else.
 ══════════════════════════════════════════════ */
-const APP_BUILD = "202611021120-4cbe77c9";
+const APP_BUILD = "202611030013-64c9ab55";
 
 function refuseToRunInAStalePage() {
   let builtFor = null;
@@ -8618,7 +8618,7 @@ function drawWhereChoice(state) {
   }
   if (!line) return;
   const text = document.createElement("span");
-  text.textContent = t({ ask: "whereAskText", finding: "whereFinding", shared: "whereSharedLine",
+  text.textContent = t({ ask: "whereAskText", finding: "whereFinding",
                          declined: "whereNotSharedLine", over: "whereOver" }[state]);
   if (state !== "ask") { line.replaceChildren(text); return; }
   const share = document.createElement("button");
@@ -8646,8 +8646,29 @@ async function shareWhere() {
   if (whereAskedHere !== asked) return;               // the chat ended, or they asked again
   whereAskedHere = null;
   if (!await dcSendE2e({ type: "where-answer", nonce: asked.nonce, ...answer })) { drawWhereChoice("over"); return; }
-  drawWhereChoice("shared");
-  drawWhereCard(G.whereAnswer({ nonce: asked.nonce, ...answer }, asked.nonce), "mine");
+  /* Quiet on this side: a small "Shared", not the location — so someone
+     glancing at the phone cannot read it. The one who shared can still tap to
+     see exactly what they sent. */
+  drawWhereShared(G.whereAnswer({ nonce: asked.nonce, ...answer }, asked.nonce));
+}
+
+/** The responder's side after sharing: the small "Shared" line and a tap to
+    see what was sent — the card is drawn only when they ask for it. */
+function drawWhereShared(info) {
+  const line = chatMessages.querySelector(".where-sys");
+  if (!line) return;
+  const text = document.createElement("span");
+  text.textContent = t("whereSharedLine");
+  const review = document.createElement("button");
+  review.type = "button";
+  review.className = "reconnect-sys-btn";
+  review.textContent = t("whereReview");
+  review.onclick = () => { review.remove(); drawWhereCard(info, "mine"); };
+  const actions = document.createElement("div");
+  actions.className = "where-sys-actions";
+  actions.append(review);
+  line.replaceChildren(text, actions);
+  scrollBottom();
 }
 
 function declineWhere() {
