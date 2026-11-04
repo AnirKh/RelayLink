@@ -2056,6 +2056,50 @@ test("notes arrive: opened, kept with who left them, counted and said — and le
   assert.equal(p.log.toasts.length, 1, "and not said again");
 });
 
+test("a note the sender ticked carries their location, sealed; the owner sees it with a map link", async () => {
+  const o = await anOwner();
+  const loc = { lat: 47.918873, lon: 106.917701, acc: 15.2 };
+
+  /* A visitor leaves one: the location is inside the sealed note, nothing of it
+     in the drop the server sees. */
+  const visitor = page({ owner: { lock: o.lock } });
+  await visitor.api.ownerReady();
+  await visitor.api.sendNote({ name: "Anu", text: "I'm here", file: null, loc });
+  const drop = visitor.log.ws.find(m => m.type === "mail-drop");
+  assert.ok(drop, "the note is sent");
+  assert.ok(!("loc" in drop) && !("lat" in drop), "the server sees no location, only the sealed note");
+  const opened = await DC.openNote(o.keys, { box: o.box, id: drop.id, iv: drop.iv, ct: drop.ct });
+  assert.deepEqual(opened.loc, { lat: 47.918873, lon: 106.917701, acc: 15 }, "sealed inside, the accuracy rounded");
+
+  /* The owner opens it: kept with the location, and drawn as a map link. */
+  const p = page({ owner: { lock: o.lock, code: o.code } });
+  await p.api.ownerReady();
+  p.api.ownerAccepted();
+  await p.api.receiveMail({ type: "mail", box: o.box, side: "a", items: [{ id: drop.id, at: Date.now() - 500, iv: drop.iv, ct: drop.ct }] });
+  assert.deepEqual(p.api.get().mailStore.threads[o.box].items[0].loc, { lat: 47.918873, lon: 106.917701, acc: 15 }, "kept on the device");
+  p.els.panelMail.classList.remove("hidden");
+  p.api.inboxViewed();
+  await settle(); await settle();
+  const row = p.els.inboxList.children[0].querySelector(".note-item");
+  const link = row.querySelector(".note-loc").children[0];
+  assert.equal(link.href, "https://www.google.com/maps?q=47.918873,106.917701");
+  assert.match(link.textContent, /47\.91887, 106\.91770/);
+  assert.match(link.textContent, /±15/);
+});
+
+test("a note without a location shows no map link", async () => {
+  const o = await anOwner();
+  const p = page({ owner: { lock: o.lock, code: o.code } });
+  await p.api.ownerReady();
+  p.api.ownerAccepted();
+  await p.api.receiveMail({ type: "mail", box: o.box, side: "a", items: [await noteFor(o, { name: "Bat", text: "no location here" })] });
+  p.els.panelMail.classList.remove("hidden");
+  p.api.inboxViewed();
+  await settle(); await settle();
+  const row = p.els.inboxList.children[0].querySelector(".note-item");
+  assert.equal(row.querySelector(".note-loc"), null);
+});
+
 test("a device that is not the owner's takes no notes, and lets none go", async () => {
   const o = await anOwner();
   const visitor = page({ owner: { lock: o.lock } });
@@ -2391,7 +2435,7 @@ test("the wiring: the hello's word, the server's yes, waiting notes, answers to 
   assert.match(app, /case "mail-dropped":\s*if \(!noteAnswered\(data, true\)\) mailAnswered\(data, true\);/);
   assert.match(app, /case "mail-refused":\s*if \(!noteAnswered\(data, false\)\) mailAnswered\(data, false\);/);
   assert.match(fn("receiveMail"), /ownerBox && data\.box === ownerBox \? takeNotes\(data\) : takeMail\(data\)/);
-  assert.match(app.slice(app.indexOf("leaveSendBtn.onclick = async () => {")), /await sendNote\(\{ name: senderName\.value\.trim\(\)\.slice\(0, DC\.NOTE_NAME_MAX\), text: msg, file: lf \|\| null \}\)/);
+  assert.match(app.slice(app.indexOf("leaveSendBtn.onclick = async () => {")), /await sendNote\(\{ name: senderName\.value\.trim\(\)\.slice\(0, DC\.NOTE_NAME_MAX\), text: msg, file: lf \|\| null, loc \}\)/);
   assert.ok(!/send-message|maxLeaveAttach|resend/i.test(app.replace(/\/\*[\s\S]*?\*\//g, "")), "no email left in the page");
   assert.ok(!/require\("(multer|resend)"\)/.test(server));
   for (const id of ["inboxPane", "inboxList", "inboxClearBtn", "inboxCount", "noteOff", "leaveForm", "ownerLink", "ownerOverlay", "ownerText", "ownerCodeBox",

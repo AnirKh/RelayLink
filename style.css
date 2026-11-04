@@ -663,6 +663,10 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
 .mail-file.getting { opacity: 0.6; cursor: progress; }
 .note-text { font-size: 14px; line-height: 1.45; white-space: pre-wrap; overflow-wrap: anywhere; }
 .note-text a { color: inherit; text-decoration: underline; }
+/* A note's location, when the sender attached one. */
+.note-loc { margin-top: 6px; font-size: 13px; }
+.note-loc a { color: var(--accent-text); text-decoration: none; display: inline-flex; align-items: center; gap: 4px; }
+.note-loc a i { font-size: 15px; }
 .note-item .mail-bubble { margin-top: 6px; display: inline-block; max-width: 100%; }
 .owner-link {
   display: block; margin: 14px auto 0; background: none; border: 0; padding: 4px 8px;
@@ -703,6 +707,9 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
 /* Leave a Message */
 .leave-msg-hint { font-size: 13px; color: var(--muted); margin-bottom: 12px; line-height: 1.5; }
 .leave-file-row { display: flex; align-items: center; gap: 10px; margin-top: 10px; flex-wrap: wrap; }
+/* The "include my location" tick, under the attach row. */
+.leave-loc-row { display: flex; align-items: center; gap: 8px; margin-top: 10px; font-size: 13px; color: var(--muted); cursor: pointer; }
+.leave-loc-row input { width: 16px; height: 16px; accent-color: var(--accent); cursor: pointer; }
 .leave-attach-btn {
   width: auto; margin: 0; padding: 8px 14px; font-size: 13px; min-height: 36px;
   border-radius: 8px; background: var(--input-bg); border: 1px solid var(--border);

@@ -144,6 +144,23 @@ test("a note is believed only in a note's shape", async () => {
   assert.deepEqual(await DC.openNote(keys, { box, id, ...extra }), { name: "a", text: "b", file }, "only what is known is taken");
 });
 
+test("a note may carry the sender's location, in range, and opens with it rounded", async () => {
+  const keys = await keysFor(DC.makeOwnerCode());
+  const box = await DC.inboxName(keys.lock);
+  const loc = { lat: 47.918873, lon: 106.917701, acc: 15.6 };
+  const seal = (body, id = DC.makeMailId()) => DC.sealNote(keys.lock, { box, id }, body).then(s => ({ id, ...s }));
+  const good = await seal({ name: "Bat", text: "I'm here", loc });
+  assert.deepEqual(await DC.openNote(keys, { box, ...good }),
+    { name: "Bat", text: "I'm here", loc: { lat: 47.918873, lon: 106.917701, acc: 16 } }, "the accuracy rounded, the rest kept");
+  for (const bad of [{ lat: 91, lon: 0, acc: 5 }, { lat: 0, lon: 181, acc: 5 }, { lat: 0, lon: 0, acc: -1 },
+                     { lat: "47", lon: 0, acc: 5 }, { lat: NaN, lon: 0, acc: 5 }, { lon: 0, acc: 5 }, null]) {
+    const one = await seal({ name: "", text: "hi", loc: bad });
+    assert.equal(await DC.openNote(keys, { box, ...one }), null, `a note with ${JSON.stringify(bad)} is no note`);
+  }
+  const without = await seal({ name: "", text: "hi" });
+  assert.equal(Object.hasOwn(await DC.openNote(keys, { box, ...without }), "loc"), false, "none when the sender left it off");
+});
+
 test("a note's file is sealed whole to the lock, bound to its note", async () => {
   const keys = await keysFor(DC.makeOwnerCode());
   const box = await DC.inboxName(keys.lock);

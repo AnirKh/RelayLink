@@ -27,7 +27,7 @@
 
    APP_BUILD is written by tools/sync-build.js and by nothing else.
 ══════════════════════════════════════════════ */
-const APP_BUILD = "202611030013-64c9ab55";
+const APP_BUILD = "202611042344-55c1dba9";
 
 function refuseToRunInAStalePage() {
   let builtFor = null;
@@ -229,6 +229,7 @@ const leaveFile        = document.getElementById("leaveFile");
 const leaveFileName    = document.getElementById("leaveFileName");
 const leaveSendBtn     = document.getElementById("leaveSendBtn");
 const leaveStatus      = document.getElementById("leaveStatus");
+const leaveLocation    = document.getElementById("leaveLocation");
 const callRequestModal = document.getElementById("callRequestModal");
 const callRequestTitle = document.getElementById("callRequestTitle");
 const callRequestIcon  = document.getElementById("callRequestIcon");
@@ -3493,7 +3494,7 @@ async function takeNotes(data) {
     const note = await DC.openNote(ownerKeysHere, { box: ownerBox, id: m.id, iv: m.iv, ct: m.ct });
     if (!note || !Number.isSafeInteger(m.at)) { thread.deleting.push(m.id); continue; }
     addToThread(ownerBox, { id: m.id, at: m.at, got: Date.now(), mine: false, pi: true, from: note.name,
-                            ...(note.text ? { text: note.text } : {}), ...(note.file ? { file: note.file } : {}) });
+                            ...(note.text ? { text: note.text } : {}), ...(note.file ? { file: note.file } : {}), ...(note.loc ? { loc: note.loc } : {}) });
     last = note;
     fresh++;
   }
@@ -3556,7 +3557,7 @@ function offerNoteFile(m, chip, size) {
 
 /** A note for the owner, sealed here — its file first, as for messages — and
     the server's answer: { ok: true }, or { ok: false, code }. */
-async function sendNote({ name, text, file }) {
+async function sendNote({ name, text, file, loc }) {
   if (!OWNER_LOCK || !ownerBox) return { ok: false, code: "no-inbox" };
   if (!ws || ws.readyState !== WebSocket.OPEN) return { ok: false, code: "no-answer" };
   const id = DC.makeMailId();
@@ -3575,7 +3576,7 @@ async function sendNote({ name, text, file }) {
     } catch (_) { return { ok: false, code: "no-answer" }; }
     if (!res.ok) return { ok: false, code: await res.json().then(j => j && j.code, () => null) };
   }
-  const sealed = await DC.sealNote(OWNER_LOCK, where, { name, text, ...(meta ? { file: meta } : {}) });
+  const sealed = await DC.sealNote(OWNER_LOCK, where, { name, text, ...(meta ? { file: meta } : {}), ...(loc ? { loc } : {}) });
   return dropNote({ type: "mail-drop", box: ownerBox, to: "a", id, at: Date.now(), iv: sealed.iv, ct: sealed.ct, ...(meta ? { file: true } : {}) });
 }
 
@@ -3742,6 +3743,18 @@ function noteRow(m) {
     words.className = "note-text";
     fillMessage(words, m.text);
     row.appendChild(words);
+  }
+  if (m.loc) {
+    const loc = document.createElement("div");
+    loc.className = "note-loc";
+    const map = document.createElement("a");
+    map.href = `https://www.google.com/maps?q=${m.loc.lat.toFixed(6)},${m.loc.lon.toFixed(6)}`;
+    map.target = "_blank";
+    map.rel = "noopener noreferrer";
+    map.appendChild(tablerIcon("map-pin"));
+    map.appendChild(document.createTextNode(` ${m.loc.lat.toFixed(5)}, ${m.loc.lon.toFixed(5)} (${I18N[LANG].whereAccuracy(m.loc.acc)})`));
+    loc.appendChild(map);
+    row.appendChild(loc);
   }
   if (m.file) {
     const file = document.createElement("div");
@@ -8831,9 +8844,18 @@ leaveSendBtn.onclick = async () => {
   if (msg.length > DC.NOTE_TEXT_MAX) { setLeaveStatus(I18N[LANG].noteTooLong(DC.NOTE_TEXT_MAX), "err"); return; }
   if (lf && lf.size > noteFileMaxBytes) { setLeaveStatus(I18N[LANG].leaveFileTooBig(noteFileMaxMb()), "err"); return; }
   leaveSendBtn.disabled = true;
+  /* The location is the sender's choice: the box is ticked by default, and the
+     browser prompts before the position is read. Unticked, nothing is asked;
+     denied or unavailable, the note still goes, without it. */
+  let loc = null;
+  if (leaveLocation && leaveLocation.checked) {
+    setLeaveStatus(t("leaveFindingLocation"), "sending");
+    const got = await whereLocation();
+    if (got && typeof got.lat === "number") loc = { lat: got.lat, lon: got.lon, acc: got.acc };
+  }
   setLeaveStatus(t("sending"), "sending");
   try {
-    const answer = await sendNote({ name: senderName.value.trim().slice(0, DC.NOTE_NAME_MAX), text: msg, file: lf || null });
+    const answer = await sendNote({ name: senderName.value.trim().slice(0, DC.NOTE_NAME_MAX), text: msg, file: lf || null, loc });
     if (answer.ok) {
       setLeaveStatus(t("msgSent"), "ok");
       leaveMessage.value = "";

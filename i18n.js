@@ -438,6 +438,9 @@ const I18N = {
     whereNet_unknown: "тодорхойгүй",
     whereLanguage:   "Хэл",
     whereScreen:     "Дэлгэц",
+    // A note's location
+    leaveLocation:   "Миний байршлыг хавсаргах",
+    leaveFindingLocation: "Байршлыг тодорхойлж байна…",
   },
   en: {
     aboutLabel:      "About this page",
@@ -834,5 +837,8 @@ const I18N = {
     whereNet_unknown: "unknown",
     whereLanguage:   "Language",
     whereScreen:     "Screen",
+    // A note's location
+    leaveLocation:   "Include my location",
+    leaveFindingLocation: "Finding your location…",
   }
 };

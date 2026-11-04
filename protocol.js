@@ -540,13 +540,22 @@
     return sealData(["dc-notefile-1", box, id]);
   }
 
+  /** A position a note may carry — latitude, longitude and accuracy in metres,
+      each a real number in range. The sender ticks a box to include it. */
+  function noteLocValid(loc) {
+    const num = (v, lo, hi) => typeof v === "number" && isFinite(v) && v >= lo && v <= hi;
+    return Boolean(loc) && typeof loc === "object" &&
+           num(loc.lat, -90, 90) && num(loc.lon, -180, 180) && num(loc.acc, 0, 1e6);
+  }
+
   /** What a note may hold: who it is from (as they wrote it, maybe nothing),
-      the words, and a file's description. */
+      the words, a file's description, and a location if the sender included one. */
   function noteBodyValid(body) {
     return Boolean(body) && typeof body === "object" &&
            typeof body.name === "string" && body.name.length <= NOTE_NAME_MAX &&
            typeof body.text === "string" && body.text.length <= NOTE_TEXT_MAX &&
            (body.file === undefined || fileMetaValid(body.file)) &&
+           (body.loc === undefined || noteLocValid(body.loc)) &&
            (body.text.trim() !== "" || body.file !== undefined);
   }
 
@@ -569,7 +578,8 @@
       const body = JSON.parse(new TextDecoder().decode(plain));
       if (!noteBodyValid(body)) return null;
       return { name: body.name, text: body.text,
-               ...(body.file ? { file: { name: body.file.name, type: body.file.type, size: body.file.size } } : {}) };
+               ...(body.file ? { file: { name: body.file.name, type: body.file.type, size: body.file.size } } : {}),
+               ...(body.loc ? { loc: { lat: body.loc.lat, lon: body.loc.lon, acc: Math.round(body.loc.acc) } } : {}) };
     } catch (_) { return null; }
   }
 
