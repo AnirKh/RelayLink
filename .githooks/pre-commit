@@ -9,11 +9,13 @@
 # Bypass once with:  git commit --no-verify
 #
 
+. "$(dirname "$0")/quietly.sh"
+
 if ! npm run --silent check-csp; then
   echo ""
   echo "pre-commit: index.html's CSP has drifted from csp.js."
   echo "            A stale meta tag only affects the GitHub Pages build, so"
-  echo "            the Render deployment would look fine."
+  echo "            the Pi's own copy would look fine."
   echo "            Fix with:  npm run sync-csp"
   exit 1
 fi
@@ -27,7 +29,7 @@ if ! npm run --silent check-build; then
   exit 1
 fi
 
-if ! npm run --silent test:fast; then
+if ! quietly test:fast pre-commit; then
   echo ""
   echo "pre-commit: fast tests failed."
   echo "            Run 'npm test' for the full suite and detail."

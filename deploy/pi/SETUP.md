@@ -69,8 +69,9 @@ curl -s http://127.0.0.1:3000/api/ping
 
 The last line should print `{"ok":true, …, "knockKey":"B…"}` — `knockKey` not
 null means the keys were read. The timer then checks GitHub every two minutes
-and restarts the server when there is something new. `update.sh` is installed
-as a copy: if it ever changes in the repository, install it again by hand.
+and restarts the server when there is something new that GitHub's tests have
+passed. `update.sh` is installed as a copy: if it ever changes in the
+repository, install it again by hand — see section 9.
 
 ## 5. The public address
 
@@ -147,3 +148,24 @@ journalctl -u direct-connection -n 8 --no-pager | grep Mailbox
 
 The last line should say `Mailbox: kept in /var/lib/direct-connection/mailbox.json`
 — not "in memory only".
+
+## 9. When update.sh changes
+
+The timer runs the installed copy, `/usr/local/sbin/direct-connection-update`,
+not the repository's — so what comes from GitHub never runs as root. When
+`deploy/pi/update.sh` changes, install it again by hand. It did on 2026-11-06:
+the Pi now moves only to a commit whose tests passed on GitHub
+(`deploy/pi/ci-passed.js`), so a push that breaks the tests never reaches it.
+
+```sh
+sudo install -m 755 /opt/direct-connection/deploy/pi/update.sh /usr/local/sbin/direct-connection-update
+grep -c ci-passed /usr/local/sbin/direct-connection-update
+sudo systemctl start direct-connection-update
+journalctl -u direct-connection-update -n 5 --no-pager
+```
+
+The `grep` should print `1`. The journal shows nothing new when the Pi is up
+to date, "Waiting for GitHub's tests to pass for …" while a push is being
+tested or after its tests failed, and "Direct Connection updated to …" once
+they pass. "Could not ask GitHub about the tests" means GitHub did not answer
+— the Pi stays as it is and asks again two minutes later.

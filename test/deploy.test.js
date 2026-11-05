@@ -59,11 +59,10 @@ test("the updater: what came from GitHub runs as dc, installs run no scripts, an
   assert.match(update, /^#!\/bin\/sh\n/);
   assert.match(update, /^set -eu$/m);
   assert.match(update, /as_dc\(\) \{ runuser -u dc -- env HOME=\/var\/lib\/direct-connection "\$@"; \}/);
-  for (const line of update.split("\n").filter(l => /^\s*(git|npm) /.test(l))) {
+  for (const line of update.split("\n").filter(l => /^\s*(TARGET=\$\()?(git|npm|node) /.test(l))) {
     assert.fail(`run as root: ${line}`);
   }
   assert.match(update, /as_dc git fetch --quiet origin main/);
-  assert.match(update, /as_dc git merge --ff-only --quiet origin\/main/, "fast-forward only: never a merge of its own");
   assert.match(update, /as_dc npm ci --omit=dev --ignore-scripts/);
   assert.ok(update.indexOf("exit 0") < update.indexOf("git merge"), "nothing new: nothing restarted");
   assert.ok(update.indexOf("npm ci") < update.indexOf("systemctl restart direct-connection"));
@@ -71,6 +70,59 @@ test("the updater: what came from GitHub runs as dc, installs run no scripts, an
   assert.match(updater, /^Type=oneshot$/m);
   assert.match(timer, /^OnUnitActiveSec=2min$/m);
   assert.match(timer, /^WantedBy=timers.target$/m);
+});
+
+test("the updater moves only as far as GitHub's tests have passed", () => {
+  const ask = update.indexOf("TARGET=$(as_dc node deploy/pi/ci-passed.js $(as_dc git rev-list --max-count=50 HEAD..origin/main))");
+  const none = update.indexOf('if [ -z "$TARGET" ]; then');
+  const merge = update.indexOf('as_dc git merge --ff-only --quiet "$TARGET"');
+  assert.ok(ask > -1, "it asks which of the new commits passed — as dc, with the copy at HEAD");
+  assert.ok(none > ask && merge > none, "and with none passed yet, it stops before merging anything");
+  assert.ok(update.slice(none, merge).includes("exit 0"), "waiting is not a failure of the timer's unit");
+  assert.doesNotMatch(update, /git merge --ff-only --quiet origin\/main/, "never straight to origin/main, tested or not");
+  assert.match(update, /fast-forward|--ff-only/, "fast-forward only: never a merge of its own");
+});
+
+/* deploy/pi/ci-passed.js, run against a stand-in GitHub. */
+const CI = require("../deploy/pi/ci-passed.js");
+const sha = c => c.repeat(40);
+function github(runs, status = 200) {
+  const asked = [];
+  const fetch = async (url, opts) => {
+    asked.push({ url, ua: opts.headers["user-agent"] });
+    return { ok: status === 200, status, json: async () => ({ workflow_runs: runs }) };
+  };
+  return { asked, fetch };
+}
+const passed = s => ({ head_sha: s, status: "completed", conclusion: "success" });
+
+test("the newest new commit whose tests passed — one question to GitHub, however many commits", async () => {
+  const gh = github([passed(sha("b")), passed(sha("a")), passed(sha("9"))]);
+  assert.equal(await CI.newestPassed([sha("c"), sha("b"), sha("a")], { fetch: gh.fetch }), sha("b"),
+    "c is still being tested, or failed: the Pi goes as far as b");
+  assert.deepEqual(gh.asked, [{ url: "https://api.github.com/repos/AnirKh/RelayLink/actions/workflows/tests.yml/runs?branch=main&status=success&per_page=50",
+                                ua: "relaylink-pi-update" }]);
+});
+
+test("none passed, GitHub refusing, or nothing to ask about: no commit to move to", async () => {
+  assert.equal(await CI.newestPassed([sha("c")], { fetch: github([passed(sha("9"))]).fetch }), null, "only older ones passed");
+  assert.equal(await CI.newestPassed([sha("c")], { fetch: github([{ head_sha: sha("c"), conclusion: "failure" }]).fetch }), null,
+    "a run that did not succeed, should one be listed");
+  await assert.rejects(CI.newestPassed([sha("c")], { fetch: github([], 403).fetch }), /GitHub answered 403/,
+    "an hour's 60 questions used up, say: an error, which the script turns into nothing printed");
+  const gh = github([passed(sha("c"))]);
+  assert.equal(await CI.newestPassed([], { fetch: gh.fetch }), null);
+  assert.equal(await CI.newestPassed(["HEAD", "; rm -rf /", ""], { fetch: gh.fetch }), null, "only full commit names are taken");
+  assert.deepEqual(gh.asked, [], "and GitHub is not asked for nothing");
+});
+
+test("the script prints a commit or nothing, and never fails the update for want of an answer", () => {
+  const src = read("deploy/pi/ci-passed.js");
+  assert.match(src, /\.then\(sha => \{ if \(sha\) process\.stdout\.write\(`\$\{sha\}\\n`\); \}\)/);
+  assert.match(src, /\.catch\(err => \{ process\.stderr\.write\(/, "why it could not tell: to the journal, not to TARGET");
+  assert.equal(CI.REPO, "AnirKh/RelayLink");
+  assert.match(setup, /git clone https:\/\/github\.com\/AnirKh\/RelayLink\.git/, "the repository the Pi clones is the one it asks about");
+  assert.ok(fs.existsSync(path.join(__dirname, "..", ".github", "workflows", CI.WORKFLOW)), "the workflow it asks about exists");
 });
 
 test("the steps leave Funnel's own route alone, and ask for no secret", () => {

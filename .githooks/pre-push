@@ -1,17 +1,20 @@
 #!/bin/sh
 #
-# pre-push — the full suite, including the server integration tests (~7s)
+# pre-push — the full suite, including the server integration tests (~45s)
 #
-# Pushing is what deploys: Render redeploys and GitHub Pages republishes. This
-# is the last point at which a failure costs nothing.
+# Pushing is what deploys: GitHub Pages republishes at once, and the Pi
+# follows once GitHub's own run of the tests has passed. This is the last
+# point at which a failure costs nothing.
 #
 # Bypass once with:  git push --no-verify
 #
 
-if ! npm run --silent test; then
+. "$(dirname "$0")/quietly.sh"
+
+if ! quietly test pre-push; then
   echo ""
   echo "pre-push: tests failed — not pushing."
-  echo "          Pushing deploys to Render and GitHub Pages, so this would"
+  echo "          Pushing republishes GitHub Pages at once, so this would"
   echo "          have gone straight to users."
   exit 1
 fi
