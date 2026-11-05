@@ -41,5 +41,7 @@ jobs:
       - run: npm run check-csp
       # every file a browser loads carries the current build stamp
       - run: npm run check-build
-      # unit and integration tests (the latter start a real server)
-      - run: npm test
+      # unit and integration tests (the latter start a real server) — npm test,
+      # plus tools/github-reporter.mjs, which puts each failure on the run's
+      # public page: the job log is shown only to people signed in
+      - run: npm run test:ci
