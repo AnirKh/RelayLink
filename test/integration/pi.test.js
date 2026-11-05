@@ -9,7 +9,7 @@
 const test   = require("node:test");
 const assert = require("node:assert/strict");
 const http   = require("node:http");
-const { startServer, waitForServer } = require("./serve.js");
+const { startServer, waitForServer, stopServer } = require("./serve.js");
 const os     = require("node:os");
 const WebSocket = require("ws");
 
@@ -31,7 +31,7 @@ test.before(async () => {
   await waitForServer(server, async () => (await get("/api/ping")).status === 200);
 });
 
-test.after(() => { if (server) server.kill(); });
+test.after(() => stopServer(server));
 
 test("under its path, everything answers as at the root", async () => {
   const ping = await get("/dc/api/ping");

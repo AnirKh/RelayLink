@@ -11,7 +11,7 @@
 const test   = require("node:test");
 const assert = require("node:assert/strict");
 const path   = require("node:path");
-const { startServer, waitForServer } = require("./serve.js");
+const { startServer, waitForServer, stopServer } = require("./serve.js");
 const http   = require("node:http");
 const WebSocket = require("ws");
 
@@ -68,9 +68,9 @@ test.before(async () => {
   await waitForServer(server, async () => { (await connect()).close(); return true; });
 });
 
-test.after(() => {
+test.after(async () => {
   for (const ws of open) { try { ws.terminate(); } catch (_) {} }
-  if (server) server.kill();
+  await stopServer(server);
 });
 
 /* ══════════════════════════════════════════

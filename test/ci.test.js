@@ -51,6 +51,22 @@ test("test:ci runs exactly what npm test runs, with its reporters before the fil
   assert.equal((ci.match(/--test-reporter-destination=stdout/g) || []).length, 2, "one destination for each reporter");
 });
 
+test("a server test waits for its server to exit before its folder goes or a new one starts", () => {
+  /* On GitHub's Linux runners, on Node 22, two server tests failed with
+     ENOTEMPTY: the folder was deleted while the server, stopped a moment
+     before, was still saving its mailbox on the way out. Windows ends a
+     process without that last save, so it never showed here. */
+  const dir = path.join(ROOT, "test", "integration");
+  const serve = read("test/integration/serve.js");
+  assert.match(serve, /function stopServer\(server\) \{[\s\S]*?server\.once\("exit"/, "stopServer resolves on the process's exit");
+  for (const name of fs.readdirSync(dir).filter(f => f.endsWith(".test.js"))) {
+    const src = read(`test/integration/${name}`);
+    if (!/startServer/.test(src)) continue;
+    assert.doesNotMatch(src, /\.kill\(/, `${name} stops its server without waiting for it — use stopServer()`);
+    assert.match(src, /stopServer\(server\)/, `${name} never stops its server through stopServer()`);
+  }
+});
+
 /** Runs the reporter over the given events, as node --test would. */
 async function report(events, summaryFile) {
   const { default: reporter } = await import(pathToFileURL(path.join(ROOT, "tools/github-reporter.mjs")).href);

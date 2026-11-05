@@ -9,7 +9,7 @@
 const test   = require("node:test");
 const assert = require("node:assert/strict");
 const http   = require("node:http");
-const { startServer, waitForServer } = require("./serve.js");
+const { startServer, waitForServer, stopServer } = require("./serve.js");
 const crypto = require("node:crypto");
 const WebSocket = require("ws");
 const K = require("../../knock.js");
@@ -91,9 +91,9 @@ test.before(async () => {
   await waitForServer(server, async () => { (await connect()).close(); return true; });
 });
 
-test.after(() => {
+test.after(async () => {
   for (const ws of open) { try { ws.terminate(); } catch (_) {} }
-  if (server) server.kill();
+  await stopServer(server);
   if (push) push.close();
   if (rogue) rogue.close();
 });

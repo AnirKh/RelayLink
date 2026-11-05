@@ -92,9 +92,9 @@ test.before(async () => {
   await waitForServer();
 });
 
-test.after(() => {
+test.after(async () => {
   for (const ws of open) { try { ws.terminate(); } catch (_) {} }
-  if (server) server.kill();
+  await serve.stopServer(server);                     // its last save done before the folder goes
   if (push) push.close();
   if (rogue) rogue.close();
   fs.rmSync(DIR, { recursive: true, force: true });
@@ -291,8 +291,7 @@ test("a restart loses nothing waiting", async () => {
   a.send_({ type: "mail-drop", box: box("restart"), to: "b", ...m });
   await waitFor(a, "mail-dropped");
   await sleep(2600);                         // kept to the file within two seconds
-  server.kill();
-  await sleep(500);
+  await serve.stopServer(server);
   startServer();
   await waitForServer();
   const b = await client();

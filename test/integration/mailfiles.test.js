@@ -86,9 +86,9 @@ test.before(async () => {
   await serve.waitForServer(server, async () => (await request({ url: "/api/ping" })).status === 200);
 });
 
-test.after(() => {
+test.after(async () => {
   for (const ws of open) { try { ws.terminate(); } catch (_) {} }
-  if (server) server.kill();
+  await serve.stopServer(server);                     // its last save done before the folder goes
   fs.rmSync(DIR, { recursive: true, force: true });
 });
 

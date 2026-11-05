@@ -110,9 +110,9 @@ test.before(async () => {
   await waitForServer();
 });
 
-test.after(() => {
+test.after(async () => {
   for (const ws of open) { try { ws.terminate(); } catch (_) {} }
-  if (server) server.kill();
+  await serve.stopServer(server);                     // its last save done before the folder goes
   if (push) push.close();
   fs.rmSync(DIR, { recursive: true, force: true });
 });
@@ -253,8 +253,7 @@ test("the owner says where to be alerted — and a note with nobody there alerts
   const kept = JSON.parse(fs.readFileSync(path.join(DIR, "owner.json"), "utf8"));
   assert.equal(kept.alert.endpoint, mine.endpoint);
   assert.equal(kept.box, BOX);
-  server.kill();
-  await sleep(500);
+  await serve.stopServer(server);
   startServer();
   await waitForServer();
   pushed.length = 0;
@@ -273,8 +272,7 @@ test("an alert address the push service says is gone is let go of", async () => 
   me.close();
   await sleep(300);
   pushed.length = 0;
-  server.kill();                                                        // a fresh process: no once-a-minute gap in the way
-  await sleep(500);
+  await serve.stopServer(server);                                       // a fresh process: no once-a-minute gap in the way
   startServer();
   await waitForServer();
   (await client()).send_(await note({ name: "", text: "to a gone address" }));

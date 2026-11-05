@@ -10,6 +10,14 @@
   long as it takes — and if it still does not come up, or ends first, the
   failure says so and carries what the server printed.
 
+  Stopping it is waited for too. On Linux the server saves its mailbox as it
+  exits (SIGTERM → mail.flush() in server.js), so a test that killed it and
+  deleted its folder straight away raced that last save: GitHub's runs on
+  Node 22 failed with ENOTEMPTY removing the folder, and a restart after a
+  fixed half second could find the old process still there. Windows ends a
+  process without running its handlers, which is why it never showed here.
+  stopServer() resolves only once the process has exited.
+
   Not a test file itself: npm test runs test/integration/*.test.js.
 */
 
@@ -19,6 +27,7 @@ const { spawn } = require("node:child_process");
 const path      = require("node:path");
 
 const READY_WITHIN_MS = 30_000;
+const STOP_WITHIN_MS  = 10_000;
 
 /** server.js, started with `env` over this process's own. */
 function startServer(env) {
@@ -49,4 +58,16 @@ async function waitForServer(server, ready) {
   throw new Error(`server not ready within ${READY_WITHIN_MS / 1000}s. It printed:\n${server.output}`);
 }
 
-module.exports = { startServer, waitForServer, READY_WITHIN_MS };
+/** Stops the server and resolves once it has exited — after its last save,
+    so its folder can go and its port be taken again. Killed outright if it
+    is still there after STOP_WITHIN_MS. */
+function stopServer(server) {
+  if (!server || server.ended) return Promise.resolve();
+  return new Promise(resolve => {
+    const hard = setTimeout(() => server.kill("SIGKILL"), STOP_WITHIN_MS);
+    server.once("exit", () => { clearTimeout(hard); resolve(); });
+    server.kill();
+  });
+}
+
+module.exports = { startServer, waitForServer, stopServer, READY_WITHIN_MS, STOP_WITHIN_MS };
