@@ -5,10 +5,10 @@
   the Mongolian text left in the markup to an English reader, or the key's own
   name. Neither throws and neither looks broken on the side that was tested.
 
-  Also here: the page opens straight to the lobby. "About this page" used to be
-  a dialog in front of every visit, with an "approve" button that approved
-  nothing — it only closed the dialog — so returning visitors dismissed it every
-  time. It is now a dropdown beside the lobby title, opened on request.
+  Also here: the page opens straight to the lobby, the title row clear of the
+  fixed language switcher. (What the page is for was once a dialog in front of
+  every visit, then an "about" dropdown beside the title; both are gone now —
+  the author's panel says who made it and why.)
 
   And: the page starts when the browser keeps nothing. With cookies blocked,
   or in an app's web view without storage, reading the saved language threw,
@@ -117,18 +117,10 @@ test("the page opens straight to the lobby", () => {
   assert.ok(!/id="overlay"/.test(html), "the approve dialog is back");
 });
 
-test("what the page is for is a dropdown beside the lobby title", () => {
-  const head = html.match(/<div class="lobby-head">[\s\S]*?<\/details>\s*<\/div>/);
-  assert.ok(head, "the about dropdown is not in the lobby's title row");
-  assert.match(head[0], /<details id="aboutDropdown"/);
-  assert.match(head[0], /data-i18n-aria="aboutLabel"/, "an icon-only button needs a spoken name");
-  assert.match(head[0], /data-i18n="aboutDesc"/);
-});
-
-test("on a phone the about button starts below the language switcher", () => {
+test("the lobby title row starts below the language switcher on a phone", () => {
   /* The switcher is fixed in the top-right corner, and below 480px the title
-     row reaches it: the button sat underneath, and a tap meant for one landed
-     on the other. Measured clear at 320, 360, 375 and 414px wide. */
+     row reaches it: the title sat underneath it. Measured clear at 320, 360,
+     375 and 414px wide. */
   const phone = withoutCssComments(css).match(/@media \(max-width: 480px\) \{([\s\S]*?)\n\}/);
   assert.ok(phone, "phone media query not found");
   assert.match(phone[1], /\.lobby-head\s*\{[^}]*margin-top:\s*28px/);

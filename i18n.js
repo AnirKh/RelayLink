@@ -31,11 +31,9 @@ let LANG = (() => {
 const I18N = {
   mn: {
     // Modal
-    aboutLabel:      "Энэ хуудасны тухай",
     appName:         "Өртөө",
     authorLabel:     "Зохиогчийн тухай",
-    authorAbout:     "Хүмүүс хоорондоо хялбар, чөлөөтэй харилцах боломжийг бүрдүүлэхийн тулд энэхүү аппыг бүтээлээ. Надтай холбогдохыг хүсвэл эндээс холбогдоорой.",
-    aboutDesc:       "Сервер дамжихгүй шууд холбогдох зориулалтаар бүтээлээ.",
+    authorAbout:     "Хүмүүс хоорондоо хялбар, чөлөөтэй харилцах боломжийг бүрдүүлэхийн тулд энэхүү аппыг бүтээлээ. Надтай холбогдохыг хүсвэл өртөөгөөр холбогдоорой.",
     // Lobby
     tabRooms:        "Өрөөнүүд",
     installApp:      "Апп суулгах",
@@ -454,11 +452,9 @@ const I18N = {
     leaveFindingLocation: "Байршлыг тодорхойлж байна…",
   },
   en: {
-    aboutLabel:      "About this page",
     appName:         "RelayLink",
     authorLabel:     "About the author",
-    authorAbout:     "I built this app to make it easier for people to connect and communicate. If you'd like to get in touch with me, you can reach me here.",
-    aboutDesc:       "Built to connect directly, without going through a server.",
+    authorAbout:     "I built this app to make it easier for people to connect and communicate. If you'd like to get in touch with me, you can reach me through Örtöö.",
     tabRooms:        "Rooms",
     installApp:      "Install app",
     appInstalled:    "App installed",

@@ -27,7 +27,7 @@
 
    APP_BUILD is written by tools/sync-build.js and by nothing else.
 ══════════════════════════════════════════════ */
-const APP_BUILD = "202611050304-d749b2f2";
+const APP_BUILD = "202611050947-162bb986";
 
 function refuseToRunInAStalePage() {
   let builtFor = null;
@@ -162,7 +162,6 @@ document.querySelectorAll(".lang-btn").forEach(btn => {
 });
 
 /* ── DOM refs ────────────────────────────────── */
-const aboutDropdown    = document.getElementById("aboutDropdown");
 const lobbyScreen      = document.getElementById("lobbyScreen");
 const chatScreen       = document.getElementById("chatScreen");
 const sessionIdInput   = document.getElementById("sessionId");
@@ -1293,11 +1292,10 @@ fitToVisibleArea();
    expected to; a tap inside — selecting the text — leaves it open.
 ══════════════════════════════════════════════ */
 
-/* The author's panel, at the top left, opens and closes the same way — and
-   opening one closes the other, since the tap that opens it is elsewhere.
-   Escape closes either. */
+/* The author's panel, at the top left: a tap elsewhere closes it, and so does
+   Escape. */
 const authorDropdown = document.getElementById("authorDropdown");
-const DROPDOWNS = [aboutDropdown, authorDropdown];
+const DROPDOWNS = [authorDropdown];
 
 document.addEventListener("click", (e) => {
   for (const d of DROPDOWNS) if (d.open && !d.contains(e.target)) d.open = false;

@@ -80,37 +80,27 @@ test("the photo is small, a JPEG, served by the server, and part of the build", 
 function lobbyPage() {
   const block = app.slice(app.indexOf("const authorDropdown"), app.indexOf("/** Both create buttons"));
   const listeners = {};
-  const dropdown = id => ({ id, open: false, contains: el => el === id || el === `${id}-inside` });
-  const about = dropdown("about"), author = dropdown("author");
-  new Function("document", "aboutDropdown", block)(
+  const author = { id: "author", open: false, contains: el => el === "author" || el === "author-inside" };
+  new Function("document", block)(
     { getElementById: id => (id === "authorDropdown" ? author : null),
-      addEventListener: (type, f) => { listeners[type] = f; } },
-    about);
-  return { about, author, tap: target => listeners.click({ target }), key: key => listeners.keydown({ key }) };
+      addEventListener: (type, f) => { listeners[type] = f; } });
+  return { author, tap: target => listeners.click({ target }), key: key => listeners.keydown({ key }) };
 }
 
-test("a tap elsewhere closes it; a tap inside it does not; opening one closes the other", () => {
+test("a tap elsewhere closes the author panel; a tap inside it does not", () => {
   const p = lobbyPage();
   p.author.open = true;
   p.tap("author-inside");
   assert.equal(p.author.open, true, "reading it, or a link inside it");
   p.tap("somewhere");
   assert.equal(p.author.open, false);
-  p.author.open = true;
-  p.about.open = true;            // the about button, tapped
-  p.tap("about");
-  assert.equal(p.author.open, false, "only one open at a time");
-  assert.equal(p.about.open, true);
 });
 
-test("Escape closes either", () => {
+test("Escape closes it", () => {
   const p = lobbyPage();
   p.author.open = true;
   p.key("a");
   assert.equal(p.author.open, true);
   p.key("Escape");
   assert.equal(p.author.open, false);
-  p.about.open = true;
-  p.key("Escape");
-  assert.equal(p.about.open, false);
 });
