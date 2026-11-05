@@ -828,7 +828,9 @@ npm test
 
 Node's built-in runner, no dependencies.
 
-**`test/` is everything that runs without a server** — pure, and finished in under a second, so it all goes in the pre-commit hook. **`test/integration/` needs a real server** and runs before a push. The split is by directory rather than a list of filenames on purpose: `test:fast` used to name its files, and four pure test files were quietly left out of it.
+**`test/` is everything that runs without a server** — pure, and finished in under a second, so it all goes in the pre-commit hook. **`test/integration/` needs a real server** and runs before a push.
+
+**GitHub runs them too** (`.github/workflows/tests.yml`): on every push to `main` and every pull request, `npm ci`, then `check-csp`, `check-build` and the whole of `npm test`, on Node 22 (the oldest `engines` allows) and 24 (what the Pi runs). The hooks only guard the machine they are installed on; two computers push here, so a push from one without them is still checked. The runners are on UTC, and the suite was run under `TZ=UTC` before this was added. The split is by directory rather than a list of filenames on purpose: `test:fast` used to name its files, and four pure test files were quietly left out of it.
 
 **Each file there starts its server through `test/integration/serve.js`**, which waits up to 30 seconds for it — only as long as it takes — and, if it never comes up or ends first, fails saying so with what the server printed. Each file used to give it six seconds and throw its output away: after three updates in a row the first full run failed every server test at once and the next passed, with nothing to say why — most likely a slow start while the rest of the suite ran beside it and the new files were still being scanned.
 

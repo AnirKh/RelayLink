@@ -1,0 +1,45 @@
+# The whole test suite on every push to main and every pull request — the
+# same checks the local pre-push hook runs, but on GitHub, so a push from a
+# machine without the hooks (or with them skipped) is still checked.
+#
+# Node 22 is the oldest the app supports (engines in package.json); 24 is what
+# the Raspberry Pi runs. Runners are on UTC, which the tests are also run
+# against locally before this was added.
+name: Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# A newer push to the same branch makes an older run pointless.
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Node ${{ matrix.node }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        node: [22, 24]
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      # index.html's CSP meta tag still matches csp.js
+      - run: npm run check-csp
+      # every file a browser loads carries the current build stamp
+      - run: npm run check-build
+      # unit and integration tests (the latter start a real server)
+      - run: npm test
