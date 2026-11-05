@@ -1,0 +1,36 @@
+# Is the Pi answering? Every ten minutes, from outside the home network, the
+# way users reach it. A GitHub issue opens when it stops (you are mentioned,
+# so GitHub emails you) and closes when it answers again — one email each
+# way, not one every ten minutes. See tools/pi-uptime.js.
+#
+# GitHub runs scheduled jobs late when it is busy, sometimes by a quarter of
+# an hour, and pauses them in a public repository after 60 days without a
+# commit (its own email says so; Actions → Pi uptime → Enable brings it back).
+name: Pi uptime
+
+on:
+  schedule:
+    - cron: "*/10 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+# One check at a time, so two cannot both open an issue.
+concurrency:
+  group: pi-uptime
+  cancel-in-progress: false
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+      - run: node tools/pi-uptime.js
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
