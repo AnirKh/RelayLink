@@ -660,6 +660,13 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
 .note-delete .ti { font-size: 16px; }
 .note-delete.asking { color: var(--danger-text); font-weight: 600; }
 .mail-file.to-get { cursor: pointer; }
+
+/* A location sent in a chat: who, how sure, and a map to open. */
+.location-bubble { display: flex; flex-direction: column; gap: 3px; }
+.location-title { display: flex; align-items: center; gap: 6px; font-weight: 600; }
+.location-title .ti { font-size: 18px; }
+.location-acc { font-size: 12.5px; opacity: 0.8; }
+.location-map { color: inherit; text-decoration: underline; font-size: 14px; }
 .mail-file.getting { opacity: 0.6; cursor: progress; }
 .note-text { font-size: 14px; line-height: 1.45; white-space: pre-wrap; overflow-wrap: anywhere; }
 .note-text a { color: inherit; text-decoration: underline; }

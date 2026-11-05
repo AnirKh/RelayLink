@@ -1609,6 +1609,17 @@
    *            model: string, osVersion: string, net: string|null, speed: string|null,
    *            lang: string, screen: {w: number, h: number}|null}|null}
    */
+  /**
+   * A location sent in a chat by choice ("Location" in the attach menu): a
+   * place on the earth, and how sure the phone was of it, in metres — or null.
+   *
+   * @returns {{lat: number, lon: number, acc: number}|null}
+   */
+  function chatLocation(d) {
+    if (!d || !within(d.lat, -90, 90) || !within(d.lon, -180, 180) || !within(d.acc, 0, 1e6)) return null;
+    return { lat: d.lat, lon: d.lon, acc: Math.round(d.acc) };
+  }
+
   function whereAnswer(d, nonce) {
     if (!d || typeof nonce !== "string" || !WHERE_NONCE.test(nonce) || d.nonce !== nonce) return null;
     const code = v => (typeof v === "string" && /^[a-z]{1,12}$/.test(v) ? v : null);
@@ -1759,7 +1770,7 @@
     SAVED_SECRET, SAVED_ROOM, PERSON_NAME_MAX, SAVED_PEOPLE_MAX,
     personName, savedPeople, mayOfferSave, saveOfferValid, keepTheirOffer, mayUsePlainKey,
     knockAddressValid, knockState,
-    WHERE_NET_TYPES, WHERE_NET_SPEEDS, WHERE_LOC_ERRORS, mayAskWhere, whereAskValid, whereAnswer, ipPlace,
+    WHERE_NET_TYPES, WHERE_NET_SPEEDS, WHERE_LOC_ERRORS, mayAskWhere, whereAskValid, whereAnswer, chatLocation, ipPlace,
     MAIL_THREAD_MAX, MAIL_SEEN_MAX, MAIL_FILE_MAX, mailFileValid, otherSide, mailStore, mailUnread, arrivedAt, mailRefusalKey,
     inAppBrowser, inAppAdvice, safariUrl, androidIntentUrl,
     CLEAR_TYPES, mayRenderText, mayHandleFrame,

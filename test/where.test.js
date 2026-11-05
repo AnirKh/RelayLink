@@ -228,7 +228,7 @@ function el(tag) {
 const text = n => (n.tagName ? `${n.textContent}${n.children.map(text).join("")}` : n.text);
 
 /** One device: the block, with this side's chat, keys and phone stood in for. */
-function device({ owner = null, lock, code = CODE, green = true, phone = {}, addresses = null, lookup = null, lang = "en" } = {}) {
+function device({ owner = null, lock, code = CODE, green = true, phone = {}, addresses = null, lookup = null, lang = "en", linkUp = true } = {}) {
   const log = { sent: [], toasts: [], sys: [], noticed: 0, fetched: [], geo: [] };
   const chatMessages = el("div");
   const whereBtn = el("button");
@@ -251,17 +251,21 @@ function device({ owner = null, lock, code = CODE, green = true, phone = {}, add
   };
   const names = ["G", "DC", "DCS", "I18N", "LANG", "t", "document", "navigator", "screen", "fetch", "AbortSignal",
     "chatMessages", "whereBtn", "ownerKeysHere", "OWNER_LOCK", "e2eReady", "e2eSecureMode", "e2eVerified", "e2eVerifyCode",
-    "MY_DEVICE", "_lastAddresses", "showToast", "dcSendE2e", "appendSys", "noticeArrival", "scrollBottom", "tablerIcon", "now", "log"];
+    "MY_DEVICE", "_lastAddresses", "showToast", "dcSendE2e", "appendSys", "noticeArrival", "scrollBottom", "tablerIcon", "now", "log",
+    "attachMenu", "sendLocationBtn", "dcReady"];
   const values = [G, DC, DCS, I18N, lang, k => I18N[lang][k] ?? k, document, navigator, { width: 412, height: 915 }, fetch,
     { timeout: ms => ({ ms }) }, chatMessages, whereBtn, owner, lock, true, green, false, code,
     phone.device || { os: "android", browser: "chrome" }, addresses, m => log.toasts.push(m),
     async m => { log.sent.push(JSON.parse(JSON.stringify(m))); return true; }, s => log.sys.push(s), () => { log.noticed++; },
-    () => {}, name => { const i = el("i"); i.className = `ti ti-${name}`; return i; }, () => "12:00", log];
+    () => {}, name => { const i = el("i"); i.className = `ti ti-${name}`; return i; }, () => "12:00", log,
+    el("div"), el("button"), () => linkUp];
   const api = new Function(...names, `${BLOCK}
     return { askWhere, receiveWhereAsk, receiveWhereAnswer, receiveWhereDecline, drawWhereBtn, shareWhere, declineWhere,
+             sendLocation, receiveLocation,
              state: () => ({ whereAsked, whereAskedHere }) };`)(...values);
   /** What arrives from the other side, handed to the case the switch would pick. */
-  const deliver = m => ({ "where-ask": api.receiveWhereAsk, "where-answer": api.receiveWhereAnswer, "where-decline": api.receiveWhereDecline })[m.type](m);
+  const deliver = m => ({ "where-ask": api.receiveWhereAsk, "where-answer": api.receiveWhereAnswer, "where-decline": api.receiveWhereDecline,
+                           "location": api.receiveLocation })[m.type](m);
   const line = () => chatMessages.querySelector(".where-sys");
   const buttons = () => { const l = line(); const a = l && l.querySelector(".where-sys-actions"); return a ? a.children : []; };
   const cards = () => chatMessages.all("where-card");
@@ -504,4 +508,88 @@ test("the lookup is allowed for the page only, and the Pi's copy may ask for the
   assert.equal(DEFAULT_ALLOWED_ORIGINS.includes("https://ipinfo.io"), false, "not an origin the server lets in");
   assert.match(read("index.html"), /connect-src [^"]*https:\/\/ipinfo\.io/);
   assert.match(read("server.js"), /"Permissions-Policy", "camera=\(self\), microphone=\(self\), geolocation=\(self\), payment=\(\), usb=\(\)"/);
+});
+
+/* ══════════════════════════════════════════
+   My location, sent by choice
+══════════════════════════════════════════ */
+
+const bubbles = d => d.chatMessages.all("bubble-row");
+
+test("Location, from the attach menu: the phone asks for it, it goes sealed, and both sides get the same bubble — the numbers only in the map's link", async () => {
+  const k = await keys();
+  const me = device({ lock: k.owner.lock }), them = device({ lock: k.owner.lock });
+  await me.api.sendLocation();
+  assert.deepEqual(me.log.geo, [{ enableHighAccuracy: true, timeout: 20000, maximumAge: 0 }], "a fresh, careful reading — asked of the phone, which asks its user");
+  const sent = me.log.sent.at(-1);
+  assert.deepEqual(sent, { type: "location", lat: 47.918, lon: 106.917, acc: 12 }, "where, how sure — nothing else about the phone");
+  them.deliver(sent);
+  for (const [d, who, says] of [[me, "me", "My location"], [them, "peer", "Their location"]]) {
+    const [row] = bubbles(d);
+    assert.equal(row.className, `bubble-row ${who}`);
+    assert.equal(text(row.querySelector(".location-title")), says);
+    assert.equal(text(row.querySelector(".location-acc")), I18N.en.whereAccuracy(12));
+    const map = row.querySelector(".location-map");
+    assert.equal(map.href, "https://www.google.com/maps?q=47.918000,106.917000");
+    assert.deepEqual([map.target, map.rel, text(map)], ["_blank", "noopener noreferrer", "Open map"]);
+    assert.ok(!text(row).includes("47.9"), "the numbers are not on the screen");
+  }
+  assert.equal(them.log.noticed, 1, "it arrives like a message");
+  assert.equal(me.log.noticed, 0);
+});
+
+test("a chat not checked: asked first — Send goes on, Cancel leaves nothing", async () => {
+  const k = await keys();
+  const me = device({ lock: k.owner.lock, green: false });
+  await me.api.sendLocation();
+  assert.deepEqual([me.log.geo, me.log.sent], [[], []], "nothing asked of the phone yet");
+  const line = me.chatMessages.querySelector(".location-check");
+  assert.equal(text(line.children[0]), I18N.en.locationUncheckedAsk);
+  const [send, cancel] = line.querySelector(".where-sys-actions").children;
+  assert.equal(text(cancel), "Cancel");
+  cancel.onclick();
+  assert.equal(me.chatMessages.querySelector(".location-check"), null);
+  assert.deepEqual(me.log.sent, []);
+  await me.api.sendLocation();
+  await me.chatMessages.querySelector(".location-check").querySelector(".where-sys-actions").children[0].onclick();
+  await settle();
+  assert.equal(me.log.sent.at(-1).type, "location", "Send: it goes");
+  assert.equal(me.chatMessages.querySelector(".location-check"), null);
+});
+
+test("the phone says no, or cannot tell: said so, and nothing sent; no link: nothing asked", async () => {
+  const k = await keys();
+  const denied = device({ lock: k.owner.lock, phone: { geo: "denied" } });
+  await denied.api.sendLocation();
+  assert.deepEqual(denied.log.sent, []);
+  assert.equal(denied.log.toasts.at(-1), I18N.en.locationDenied);
+  const none = device({ lock: k.owner.lock, phone: { geo: "none" } });
+  await none.api.sendLocation();
+  assert.equal(none.log.toasts.at(-1), I18N.en.locationUnavailable);
+  const down = device({ lock: k.owner.lock, linkUp: false });
+  await down.api.sendLocation();
+  assert.deepEqual([down.log.geo, down.log.sent, down.log.toasts], [[], [], [I18N.en.messageNotSent]]);
+});
+
+test("a location that is no place is not drawn", () => {
+  const d = device({ lock: null });
+  for (const bad of [{ lat: 91, lon: 0, acc: 5 }, { lat: 0, lon: -181, acc: 5 }, { lat: "47", lon: 106, acc: 5 }, { lat: 1, lon: 1, acc: -1 },
+                     { lat: NaN, lon: 1, acc: 1 }, { lat: 1, lon: 1 }, null]) {
+    d.api.receiveLocation(bad);
+    assert.equal(G.chatLocation(bad), null, JSON.stringify(bad));
+  }
+  assert.deepEqual(bubbles(d), []);
+  assert.deepEqual(G.chatLocation({ lat: -33.86, lon: 151.2, acc: 8.6, extra: "x" }), { lat: -33.86, lon: 151.2, acc: 9 }, "only the place, its accuracy rounded");
+});
+
+test("the wiring: in the attach menu, handled only sealed, and said in both languages", () => {
+  assert.match(between('    case "location":', "      break;"), /receiveLocation\(data\);/);
+  assert.ok(!G.mayHandleFrame("location", false) && G.mayHandleFrame("location", true), "never believed in the clear");
+  const html = read("index.html");
+  const menu = html.slice(html.indexOf('id="attachMenu"'), html.indexOf("</div>", html.indexOf('id="attachMenu"')));
+  assert.match(menu, /<button id="sendLocationBtn">[\s\S]*?data-i18n="locationSend"/);
+  for (const key of ["locationSend", "locationFinding", "locationMine", "locationTheirs", "locationOpen", "locationDenied", "locationTimeout",
+                     "locationUnavailable", "locationUncheckedAsk", "locationSendAnyway", "locationCancel"]) {
+    for (const lang of ["mn", "en"]) assert.equal(typeof I18N[lang][key], "string", `${lang}.${key}`);
+  }
 });

@@ -27,7 +27,7 @@
 
    APP_BUILD is written by tools/sync-build.js and by nothing else.
 ══════════════════════════════════════════════ */
-const APP_BUILD = "202611042344-55c1dba9";
+const APP_BUILD = "202611050304-d749b2f2";
 
 function refuseToRunInAStalePage() {
   let builtFor = null;
@@ -201,6 +201,7 @@ const srAnnouncer      = document.getElementById("srAnnouncer");
 const sendBtn          = document.getElementById("sendBtn");
 const attachBtn        = document.getElementById("attachBtn");
 const attachMenu       = document.getElementById("attachMenu");
+const sendLocationBtn  = document.getElementById("sendLocationBtn");   // see "My location, sent by choice"
 const sendImageBtn     = document.getElementById("sendImageBtn");
 const sendFileBtn      = document.getElementById("sendFileBtn");
 const imageInput       = document.getElementById("imageInput");
@@ -5615,6 +5616,11 @@ function handleTextMessage(data, sealed = false) {
       receiveWhereDecline(data);
       break;
 
+    /* A location sent by choice — sealed only, like the rest. */
+    case "location":
+      receiveLocation(data);
+      break;
+
     case "transfer-meta":
       handleTransferMeta(data);
       break;
@@ -8813,6 +8819,97 @@ async function lookUpPlace(dd, ip) {
 }
 
 if (whereBtn) whereBtn.onclick = askWhere;
+
+/* ── My location, sent by choice ─────────────
+   Asked for: if the owner can ask where someone is, anyone can also just say
+   — "Location" in the attach menu, in any chat. The tap is the choice, and the
+   phone asks for its permission too. The location goes sealed like a
+   message, and both sides get the same bubble: how sure the phone was, and a
+   map to open. The numbers themselves are in the map's link, not on the
+   screen, for someone glancing at either phone. In a chat not checked, it
+   asks first: someone in between could read it. */
+let locationFinding = false;
+
+async function sendLocation(evenUnchecked = false) {
+  attachMenu.classList.add("hidden");
+  if (!dcReady() || !e2eReady) { showToast(t("messageNotSent"), "warn"); return; }
+  if (!chatGreen() && !evenUnchecked) { drawLocationCheck(); return; }
+  if (locationFinding) return;
+  locationFinding = true;
+  showToast(t("locationFinding"), "info");
+  const loc = await whereLocation();
+  locationFinding = false;
+  if (loc.err) {
+    showToast(t({ denied: "locationDenied", timeout: "locationTimeout" }[loc.err] || "locationUnavailable"), "warn");
+    return;
+  }
+  const sent = { type: "location", lat: loc.lat, lon: loc.lon, acc: Math.round(loc.acc) };
+  if (!await dcSendE2e(sent)) { showToast(t("messageNotSent"), "error"); return; }
+  drawLocation("me", G.chatLocation(sent));
+}
+
+/** Theirs: drawn if it is a place. */
+function receiveLocation(data) {
+  const loc = G.chatLocation(data);
+  if (!loc) return;
+  drawLocation("peer", loc);
+  noticeArrival();
+}
+
+/** In a chat not checked: said, and asked — Send or Cancel. */
+function drawLocationCheck() {
+  const old = chatMessages.querySelector(".location-check");
+  if (old) old.remove();
+  const line = document.createElement("div");
+  line.className = "save-sys location-check";
+  const text = document.createElement("span");
+  text.textContent = t("locationUncheckedAsk");
+  const send = document.createElement("button");
+  send.type = "button";
+  send.className = "reconnect-sys-btn";
+  send.append(tablerIcon("map-pin"), document.createTextNode(t("locationSendAnyway")));
+  send.onclick = () => { line.remove(); sendLocation(true); };
+  const cancel = document.createElement("button");
+  cancel.type = "button";
+  cancel.className = "reconnect-sys-btn";
+  cancel.textContent = t("locationCancel");
+  cancel.onclick = () => line.remove();
+  const actions = document.createElement("div");
+  actions.className = "where-sys-actions";
+  actions.append(send, cancel);
+  line.append(text, actions);
+  chatMessages.appendChild(line);
+  scrollBottom();
+}
+
+/** The bubble, the same on both sides but for who it says it is. */
+function drawLocation(who, loc) {
+  const row = document.createElement("div");
+  row.className = `bubble-row ${who}`;
+  const bubble = document.createElement("div");
+  bubble.className = "bubble location-bubble";
+  const title = document.createElement("div");
+  title.className = "location-title";
+  title.append(tablerIcon("map-pin"), document.createTextNode(t(who === "me" ? "locationMine" : "locationTheirs")));
+  const sure = document.createElement("div");
+  sure.className = "location-acc";
+  sure.textContent = I18N[LANG].whereAccuracy(loc.acc);
+  const map = document.createElement("a");
+  map.className = "location-map";
+  map.href = `https://www.google.com/maps?q=${loc.lat.toFixed(6)},${loc.lon.toFixed(6)}`;
+  map.target = "_blank";
+  map.rel = "noopener noreferrer";
+  map.textContent = t("locationOpen");
+  bubble.append(title, sure, map);
+  const meta = document.createElement("div");
+  meta.className = "bubble-meta";
+  meta.textContent = now();
+  row.append(bubble, meta);
+  chatMessages.appendChild(row);
+  scrollBottom(who === "me");
+}
+
+if (sendLocationBtn) sendLocationBtn.onclick = () => sendLocation();
 
 /* ══════════════════════════════════════════════
    LEAVE A MESSAGE
