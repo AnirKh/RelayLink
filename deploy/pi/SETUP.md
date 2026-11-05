@@ -164,7 +164,8 @@ sudo systemctl start direct-connection-update
 journalctl -u direct-connection-update -n 5 --no-pager
 ```
 
-The `grep` should print `1`. The journal shows nothing new when the Pi is up
+The `grep` should print `2` (a comment and the line that asks); `0` means
+the old copy is still installed. The journal shows nothing new when the Pi is up
 to date, "Waiting for GitHub's tests to pass for …" while a push is being
 tested or after its tests failed, and "Direct Connection updated to …" once
 they pass. "Could not ask GitHub about the tests" means GitHub did not answer
