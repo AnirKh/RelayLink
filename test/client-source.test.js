@@ -675,7 +675,7 @@ test("the guest introduces itself first, and each side only once", () => {
      guest ready. An introduction sent then can overtake the confirmation and
      be dropped, and the guest never learns what it is talking to. */
   const fns = topLevelFunctions(withoutComments(appSrc));
-  assert.match(fns.get("e2eActivate"), /if \(!isHost\) \{ sendPeerInfo\(\); shareKnockAddress\(\); flushOutbox\(\); \}/,
+  assert.match(fns.get("e2eActivate"), /if \(!isHost\) \{ sendPeerInfo\(\); shareKnockAddress\(\); rotateMailKey\(\); flushOutbox\(\); \}/,
     "and where to knock for it, the same way");
 
   const send = fns.get("sendPeerInfo");

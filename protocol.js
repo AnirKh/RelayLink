@@ -291,12 +291,27 @@
 
   const MAILBOX_INFO_LABEL = "direct-connection/mailbox/v1";
 
-  /** The pair's key for waiting messages, from their shared secret. */
+  /** The pair's key for waiting messages, from their shared secret — epoch 0,
+      until the two first meet live and hand over a key of their own. */
   async function mailboxKey(secret) {
     const ikm = await subtle.importKey("raw", utf8.encode(secret), "HKDF", false, ["deriveKey"]);
     return subtle.deriveKey(
       { name: "HKDF", hash: "SHA-256", salt: new Uint8Array(0), info: utf8.encode(MAILBOX_INFO_LABEL) },
       ikm, { name: "AES-GCM", length: 256 }, false, ["encrypt", "decrypt"]);
+  }
+
+  /** A fresh key for a pair's waiting messages, handed over at a live
+      meeting: 32 random bytes, base64url. Worked out from nothing, so once
+      both devices have let it go, nothing kept anywhere brings it back. */
+  function makeMailKey() {
+    return b64urlBytes(globalThis.crypto.getRandomValues(new Uint8Array(32)));
+  }
+
+  /** One such key, as an AES-256-GCM key the page cannot read back out. */
+  async function importMailKey(b64) {
+    const raw = unb64url(b64);
+    if (raw.length !== 32) throw new Error("a mailbox key is 32 bytes");
+    return subtle.importKey("raw", raw, { name: "AES-GCM" }, false, ["encrypt", "decrypt"]);
   }
 
   /** What a waiting message is bound to. */
@@ -655,7 +670,7 @@
     compareBytes, makeSharedVerificationCode, normalizeVerifyCode,
     packChunk, unpackChunk, splitChunkBody, makeTransferId,
     SEAL_ROLES, SEAL_WINDOW, messageAad, chunkAad, confirmAad, sealWindow, takeSeal,
-    mailboxKey, mailAad, makeMailId, sealMail, openMail, sealMailBody, openMailBody, fileMetaValid,
+    mailboxKey, makeMailKey, importMailKey, mailAad, makeMailId, sealMail, openMail, sealMailBody, openMailBody, fileMetaValid,
     mailFileAad, sealMailFile, openMailFile,
     OWNER_LOCK, OWNER_CODE_CHARS, NOTE_NAME_MAX, NOTE_TEXT_MAX, NOTE_SEAL_EXTRA,
     makeOwnerCode, normalizeOwnerCode, ownerKeys, parseLock, inboxName,

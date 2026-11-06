@@ -1400,7 +1400,10 @@
       out.push({ name, secret: p.secret, room: p.room, side: p.side, savedAt: Number.isFinite(p.savedAt) ? p.savedAt : 0,
                  /* Where to knock for them, if they have alerts on — a bad
                     one is dropped, not the person. */
-                 ...(knockAddressValid(p.knock) ? { knock: { endpoint: p.knock.endpoint, p256dh: p.knock.p256dh, auth: p.knock.auth } } : {}) });
+                 ...(knockAddressValid(p.knock) ? { knock: { endpoint: p.knock.endpoint, p256dh: p.knock.p256dh, auth: p.knock.auth } } : {}),
+                 /* The mailbox keys handed over at live meetings — see
+                    mailKeyState. None yet: epoch 0, the secret's. */
+                 ...(Object.keys(mailKeyState(p.mk).keys).length ? { mk: mailKeyState(p.mk) } : {}) });
       if (out.length === SAVED_PEOPLE_MAX) break;
     }
     return out;
@@ -1468,6 +1471,87 @@
   /** The other side of a saved pair. */
   function otherSide(side) {
     return side === "a" ? "b" : side === "b" ? "a" : null;
+  }
+
+  /* ── A fresh mailbox key each time the two meet live ──
+     A waiting message was sealed with a key worked out from the pair's
+     secret, the same for as long as they stay saved: whoever later had that
+     secret, and a copy of what passed through the server, could read every
+     one. Now each time the two meet in a live chat, side "a" makes a new
+     random key and hands it over, sealed, in that chat; side "b" seals with
+     it at once, side "a" once "b" has said it has it. Only a few are kept, so
+     a key taken from a device later opens only what was sent around the last
+     few meetings.
+
+     Epoch 0 is the key from the secret, as before: never kept (it can always
+     be worked out again), still tried last when opening — for what was sent
+     before the first meeting, or by a device not yet updated — and not sealed
+     with again once a meeting has passed one on. */
+
+  const MAIL_KEY = /^[A-Za-z0-9_-]{43}$/;    // 32 random bytes, base64url
+  const MAIL_KEYS_KEPT = 2;                  // besides the one sealed with
+
+  /** A key handed over in a live chat, in the shape of one. */
+  function mailKeyOfferValid(d) {
+    return Boolean(d) && Number.isSafeInteger(d.epoch) && d.epoch >= 1 && d.epoch <= 1e9 &&
+           typeof d.key === "string" && MAIL_KEY.test(d.key);
+  }
+
+  const epochsOf = mk => Object.keys(mk.keys).map(Number);
+
+  /** Keeps the key sealed with, and the MAIL_KEYS_KEPT newest others. */
+  function pruneMailKeys(mk) {
+    const others = epochsOf(mk).filter(e => e !== mk.send).sort((x, y) => y - x).slice(0, MAIL_KEYS_KEPT);
+    const keys = {};
+    for (const e of [mk.send, ...others]) if (mk.keys[e]) keys[e] = mk.keys[e];
+    return { send: mk.send, keys };
+  }
+
+  /** One saved person's mailbox keys, as stored — anything out of shape
+      dropped — or none: epoch 0, the secret's, alone. */
+  function mailKeyState(mk) {
+    if (!mk || typeof mk !== "object" || !mk.keys || typeof mk.keys !== "object") return { send: 0, keys: {} };
+    const keys = {};
+    for (const [name, key] of Object.entries(mk.keys)) {
+      const epoch = Number(name);
+      if (String(epoch) === name && mailKeyOfferValid({ epoch, key })) keys[epoch] = key;
+    }
+    const send = Number.isSafeInteger(mk.send) && keys[mk.send] ? mk.send : 0;
+    return pruneMailKeys({ send, keys });
+  }
+
+  /** Side "a", at a live meeting: a new key, one past every epoch it has.
+      Kept at once — their messages under it must open here — but not sealed
+      with until they say they have it (confirmMailKey). */
+  function proposeMailKey(mk, key) {
+    const now = mailKeyState(mk);
+    const epoch = Math.max(now.send, ...epochsOf(now)) + 1;
+    return { mk: pruneMailKeys({ send: now.send, keys: { ...now.keys, [epoch]: key } }), epoch };
+  }
+
+  /** Side "b": a key handed over. Newer than any it has: kept, and sealed
+      with from now on. The same one again: yes again (the first may have been
+      lost). Anything else: no. */
+  function acceptMailKey(mk, offer) {
+    const now = mailKeyState(mk);
+    if (!mailKeyOfferValid(offer)) return { mk: now, ack: false };
+    if (offer.epoch <= Math.max(now.send, ...epochsOf(now))) return { mk: now, ack: now.keys[offer.epoch] === offer.key };
+    return { mk: pruneMailKeys({ send: offer.epoch, keys: { ...now.keys, [offer.epoch]: offer.key } }), ack: true };
+  }
+
+  /** Side "a": they have it — sealed with from now on. */
+  function confirmMailKey(mk, epoch) {
+    const now = mailKeyState(mk);
+    if (!Number.isSafeInteger(epoch) || !now.keys[epoch] || epoch <= now.send) return now;
+    return pruneMailKeys({ send: epoch, keys: now.keys });
+  }
+
+  /** The epochs to try opening with, most likely first: the one sealed with,
+      the newer, the older — and 0, the secret's, last. */
+  function mailKeyOrder(mk) {
+    const now = mailKeyState(mk);
+    const others = epochsOf(now).filter(e => e !== now.send).sort((x, y) => y - x);
+    return [...(now.send ? [now.send] : []), ...others, 0];
   }
 
   /** A note in the owner's inbox says who left it — as they wrote it, maybe
@@ -1772,6 +1856,7 @@
     knockAddressValid, knockState,
     WHERE_NET_TYPES, WHERE_NET_SPEEDS, WHERE_LOC_ERRORS, mayAskWhere, whereAskValid, whereAnswer, chatLocation, ipPlace,
     MAIL_THREAD_MAX, MAIL_SEEN_MAX, MAIL_FILE_MAX, mailFileValid, otherSide, mailStore, mailUnread, arrivedAt, mailRefusalKey,
+    MAIL_KEYS_KEPT, mailKeyOfferValid, mailKeyState, proposeMailKey, acceptMailKey, confirmMailKey, mailKeyOrder,
     inAppBrowser, inAppAdvice, safariUrl, androidIntentUrl,
     CLEAR_TYPES, mayRenderText, mayHandleFrame,
     mayDeliverRecording, mayStartRecording, mayKeepMicOpen,

@@ -27,7 +27,7 @@
 
    APP_BUILD is written by tools/sync-build.js and by nothing else.
 ══════════════════════════════════════════════ */
-const APP_BUILD = "202611050947-162bb986";
+const APP_BUILD = "202611060011-8f8de814";
 
 function refuseToRunInAStalePage() {
   let builtFor = null;
@@ -831,7 +831,7 @@ function e2eActivate(key, secure) {
      never learn what it is talking to. The guest only gets here because the
      host is already listening. Where to knock for us goes the same way, and
      so does whatever waited for the link. */
-  if (!isHost) { sendPeerInfo(); shareKnockAddress(); flushOutbox(); }
+  if (!isHost) { sendPeerInfo(); shareKnockAddress(); rotateMailKey(); flushOutbox(); }
 }
 
 /** Tells the other side which system and browser this is — once per channel,
@@ -2899,7 +2899,7 @@ if (knockSupported) {
 
    A photo or file can wait too — see "Photos and files" below.             */
 const MAIL_KEY = "dc-mail";
-const mailKeys = new Map();              // room → the pair's key, worked out once
+const mailKeys = new Map();              // "room:epoch" → that key, worked out or imported once
 
 function loadMail() {
   try { return G.mailStore(JSON.parse(localStorage.getItem(MAIL_KEY) || "null")); }
@@ -2925,9 +2925,78 @@ function addToThread(room, item) {
   if (thread.items.length > G.MAIL_THREAD_MAX) thread.items.splice(0, thread.items.length - G.MAIL_THREAD_MAX);
 }
 
+/** One epoch of a pair's mailbox key: 0 worked out from their secret, as it
+    always was; any other handed over at a live meeting (see "A fresh mailbox
+    key at each meeting"). */
+function mailKeyAt(p, epoch) {
+  const id = `${p.room}:${epoch}`;
+  if (!mailKeys.has(id)) mailKeys.set(id, epoch === 0 ? DC.mailboxKey(p.secret) : DC.importMailKey(G.mailKeyState(p.mk).keys[epoch]));
+  return mailKeys.get(id);
+}
+
+/** The key ours are sealed with now. */
 function mailKeyFor(p) {
-  if (!mailKeys.has(p.room)) mailKeys.set(p.room, DC.mailboxKey(p.secret));
-  return mailKeys.get(p.room);
+  return mailKeyAt(p, G.mailKeyState(p.mk).send);
+}
+
+/** Every key theirs might be sealed with, most likely first. */
+function mailKeysToTry(p) {
+  return Promise.all(G.mailKeyOrder(p.mk).map(epoch => mailKeyAt(p, epoch)));
+}
+
+/* ── A fresh mailbox key at each meeting ─────
+   Asked for: messages that wait on the Pi were sealed with one key for as
+   long as two people stayed saved, so whoever later had it — and a copy of
+   what passed through the server — could read them all. Now, once in each
+   live chat in a saved person's own room, side "a" makes a new random key
+   and hands it over sealed in that chat (mail-key); side "b" keeps it and
+   seals with it at once, and says so (mail-key-ok); side "a" seals with it
+   from then on. A chat that ends before the yes leaves "a" sealing with the
+   old one — nothing is lost — and the next meeting hands over another. The
+   rules are in guards.js (proposeMailKey, acceptMailKey, confirmMailKey). */
+let mailKeySent = false;      // this channel's key, offered once
+let mailKeyOffer = null;      // ours: { room, epoch } until they say they have it
+
+/** The saved person this chat is with — in their own room only. */
+function mailKeyPeer() {
+  return roomKind === "saved" && meeting && chatGreen() ? meeting : null;
+}
+
+function rotateMailKey() {
+  const p = mailKeyPeer();
+  if (mailKeySent || !p || p.side !== "a") return;
+  mailKeySent = true;
+  const { mk, epoch } = G.proposeMailKey(p.mk, DC.makeMailKey());
+  if (!setMailKeys(p.room, mk)) return;             // kept first: theirs under it must open here
+  mailKeyOffer = { room: p.room, epoch };
+  dcSendE2e({ type: "mail-key", epoch, key: mk.keys[epoch] }).catch(() => {});
+}
+
+function receiveMailKey(data) {
+  const p = mailKeyPeer();
+  if (!p || p.side !== "b") return;
+  const { mk, ack } = G.acceptMailKey(p.mk, data);
+  if (!ack || !setMailKeys(p.room, mk)) return;     // not kept: no yes, and they go on with the old one
+  dcSendE2e({ type: "mail-key-ok", epoch: data.epoch }).catch(() => {});
+}
+
+function receiveMailKeyOk(data) {
+  if (!mailKeyOffer || !data || data.epoch !== mailKeyOffer.epoch) return;
+  const p = people.find(q => q.room === mailKeyOffer.room);
+  mailKeyOffer = null;
+  if (p) setMailKeys(p.room, G.confirmMailKey(p.mk, data.epoch));
+}
+
+/** Kept with the person, and what this page holds of the old keys let go. */
+function setMailKeys(room, mk) {
+  const next = people.map(q => (q.room === room ? { ...q, mk } : q));
+  if (!storePeople(next)) return false;
+  people = next;
+  for (const id of [...mailKeys.keys()]) if (id.startsWith(`${room}:`)) mailKeys.delete(id);
+  const now = people.find(q => q.room === room);
+  if (now && meeting && meeting.room === room) meeting = now;
+  if (now && savedInChat && savedInChat.room === room) savedInChat = now;
+  return true;
 }
 
 /** The envelope by their name, with how many of theirs are new. */
@@ -3017,7 +3086,7 @@ async function takeMail(data) {
   const p = people.find(q => q.room === data.box && q.side === data.side);
   const items = Array.isArray(data.items) ? data.items.filter(m => m && typeof m.id === "string") : [];
   if (!p || !items.length) return;
-  const key = await mailKeyFor(p);
+  const keys = await mailKeysToTry(p);
   const seen = new Set(mailStore.seen[p.room] || []);
   const taken = [];                                      // the server may let these go
   let fresh = 0;
@@ -3025,10 +3094,11 @@ async function takeMail(data) {
   for (const m of items) {
     if (seen.has(m.id)) { taken.push(m.id); continue; }  // delivered before: shown once
     const where = { box: p.room, from: G.otherSide(p.side), to: p.side, id: m.id };
-    const body = await DC.openMailBody(key, { ...where, at: m.at, iv: m.iv, ct: m.ct });
+    let body = null;
+    for (const key of keys) if ((body = await DC.openMailBody(key, { ...where, at: m.at, iv: m.iv, ct: m.ct }))) break;
     const file = body && body.file && G.mailFileValid(body.file) && Number.isSafeInteger(m.at) ? body.file : null;
     if (file) {
-      const got = await fetchMailFile(p, key, where, file);
+      const got = await fetchMailFile(p, keys, where, file);
       if (got === "later") continue;                     // no answer: left there, asked for next time
       seen.add(m.id);
       taken.push(m.id);
@@ -3269,9 +3339,17 @@ async function deliverMailFile(p, item) {
 }
 
 /** Theirs, fetched, opened and kept here: "ok"; "gone" — the server has no
-    such file, or it does not open as this one; or "later" — no answer. */
-async function fetchMailFile(p, key, where, meta) {
-  return fetchSealedFile(`${p.room}:${p.side}:${where.id}`, sealed => DC.openMailFile(key, where, sealed), meta, p.room, where.id);
+    such file, or it does not open as this one; or "later" — no answer. Each
+    key is tried: the file is sealed when it is sent, which can be after a
+    meeting handed over a newer key than its message was sealed with. */
+async function fetchMailFile(p, keys, where, meta) {
+  return fetchSealedFile(`${p.room}:${p.side}:${where.id}`, async sealed => {
+    for (const key of keys) {
+      const bytes = await DC.openMailFile(key, where, sealed);
+      if (bytes) return bytes;
+    }
+    return null;
+  }, meta, p.room, where.id);
 }
 
 /** A waiting file — a message's or a note's — fetched by its "box:side:id",
@@ -3923,6 +4001,8 @@ function closePeerConnection() {
   if (saveDialog && saveDialog.mode !== "rename") closeSaveDialog();
   knockShared = false;                     // a new channel is told again
   knockEarly = null;
+  mailKeySent = false;                     // and hands over a fresh mailbox key; an unanswered one is let be
+  mailKeyOffer = null;
   whereAsked = null;                       // a question, and its answer, belong to the channel too
   whereAskedHere = null;
   e2eVerifyCode = "";
@@ -5593,12 +5673,22 @@ function handleTextMessage(data, sealed = false) {
       peerDevice = { os: data.os, browser: data.browser };
       renderShieldFacts();
       sendPeerInfo();   // the host's answer; a no-op for the guest, who went first
-      if (isHost) { shareKnockAddress(); flushOutbox(); }   // likewise: the guest is listening now
+      if (isHost) { shareKnockAddress(); rotateMailKey(); flushOutbox(); }   // likewise: the guest is listening now
       if (isHost) quickCallPeerReady();  // and a call asked for from their row can ring there
       break;
 
     case "knock-address":
       receiveKnockAddress(data);
+      break;
+
+    /* A fresh mailbox key — see "A fresh mailbox key at each meeting".
+       Sealed only, like everything after the handshake. */
+    case "mail-key":
+      receiveMailKey(data);
+      break;
+
+    case "mail-key-ok":
+      receiveMailKeyOk(data);
       break;
 
     /* "Where are you?" — sealed only, like everything after the handshake. */

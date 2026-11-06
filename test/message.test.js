@@ -607,8 +607,8 @@ test("the send button stays on while a message may wait, and goes off when it ma
 test("the wiring: what waited goes as the other side starts listening; a chat ending or left settles it; a new chat starts empty", () => {
   const app = read("app.js");
   assert.match(fn("e2eActivate"), /chatHadKey\s*= true;/);
-  assert.match(fn("e2eActivate"), /if \(!isHost\) \{ sendPeerInfo\(\); shareKnockAddress\(\); flushOutbox\(\); \}/);
-  assert.match(app, /if \(isHost\) \{ shareKnockAddress\(\); flushOutbox\(\); \}/);
+  assert.match(fn("e2eActivate"), /if \(!isHost\) \{ sendPeerInfo\(\); shareKnockAddress\(\); rotateMailKey\(\); flushOutbox\(\); \}/);
+  assert.match(app, /if \(isHost\) \{ shareKnockAddress\(\); rotateMailKey\(\); flushOutbox\(\); \}/);
   assert.match(fn("showReconnectButton"), /settleOutbox\(\);/);
   const leave = app.slice(app.indexOf("leaveBtn.onclick = (e) => {"), app.indexOf("\n};", app.indexOf("leaveBtn.onclick = (e) => {")));
   assert.match(leave, /settleOutbox\(\);/);
