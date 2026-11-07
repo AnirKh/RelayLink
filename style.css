@@ -357,14 +357,20 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
   text-align: center; font-size: 24px; font-weight: 700;
   letter-spacing: -0.5px;
 }
-/* The title with the about button beside it. Positioned so the panel hangs
-   from the whole row — centred under the title — rather than from the button,
-   which would push a wide panel off the right edge of a phone. */
+/* The title, with the portal's download button just to its right. */
 .lobby-head {
   position: relative;
-  display: flex; align-items: center; justify-content: center;
+  display: flex; align-items: center; justify-content: center; gap: 10px;
   margin-bottom: 24px;
 }
+/* A small square with a pin on it — there, but quieter than the title. */
+.portal-btn {
+  display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+  width: 30px; height: 30px; border-radius: 8px;
+  border: 1px solid var(--border); background: var(--card);
+  color: var(--muted); font-size: 17px; text-decoration: none;
+}
+.portal-btn:hover, .portal-btn:focus-visible { color: var(--text); border-color: var(--accent); }
 /* The author, at the top left of the lobby — the language switch is at the
    top right. A small round photo; a tap opens who made this, briefly, with
    the places to find them as icons. Inside the lobby, so it goes with it. */

@@ -33,7 +33,8 @@ const I18N = {
     // Modal
     appName:         "Өртөө",
     authorLabel:     "Зохиогчийн тухай",
-    authorAbout:     "Хүмүүс хоорондоо хялбар, чөлөөтэй харилцах боломжийг бүрдүүлэхийн тулд энэхүү аппыг бүтээлээ. Надтай холбогдохыг хүсвэл өртөөгөөр холбогдоорой.",
+    portalDownload:  "Порталыг татах",
+    authorAbout:    "Хүмүүс хоорондоо хялбар, чөлөөтэй харилцах боломжийг бүрдүүлэхийн тулд энэхүү аппыг бүтээлээ. Надтай холбогдохыг хүсвэл өртөөгөөр холбогдоорой.",
     // Lobby
     tabRooms:        "Өрөөнүүд",
     installApp:      "Апп суулгах",
@@ -454,7 +455,8 @@ const I18N = {
   en: {
     appName:         "RelayLink",
     authorLabel:     "About the author",
-    authorAbout:     "I built this app to make it easier for people to connect and communicate. If you'd like to get in touch with me, you can reach me through Örtöö.",
+    portalDownload:  "Download the portal",
+    authorAbout:    "I built this app to make it easier for people to connect and communicate. If you'd like to get in touch with me, you can reach me through Örtöö.",
     tabRooms:        "Rooms",
     installApp:      "Install app",
     appInstalled:    "App installed",

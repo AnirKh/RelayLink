@@ -27,7 +27,7 @@
 
    APP_BUILD is written by tools/sync-build.js and by nothing else.
 ══════════════════════════════════════════════ */
-const APP_BUILD = "202611060011-8f8de814";
+const APP_BUILD = "202611070823-6bdf19b3";
 
 function refuseToRunInAStalePage() {
   let builtFor = null;
@@ -129,6 +129,10 @@ function applyI18n() {
   document.querySelectorAll("[data-i18n-aria]").forEach(el => {
     const val = I18N[LANG][el.dataset.i18nAria];
     if (typeof val === "string") el.setAttribute("aria-label", val);
+  });
+  document.querySelectorAll("[data-i18n-title]").forEach(el => {
+    const val = I18N[LANG][el.dataset.i18nTitle];
+    if (typeof val === "string") el.title = val;
   });
   // lang toggle active state
   document.querySelectorAll(".lang-btn").forEach(btn => {
