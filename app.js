@@ -27,7 +27,7 @@
 
    APP_BUILD is written by tools/sync-build.js and by nothing else.
 ══════════════════════════════════════════════ */
-const APP_BUILD = "202611070823-6bdf19b3";
+const APP_BUILD = "202611152250-72f5648f";
 
 function refuseToRunInAStalePage() {
   let builtFor = null;
@@ -7484,8 +7484,19 @@ function screenProfile(withSound) {
    directly with the microphone: the call has one sound to send. The
    microphone stays its own track underneath, so muting it mutes the voice and
    leaves the shared sound playing. Speakers still reach the microphone too;
-   headphones on the sharing side keep it clean, which a tip says once.     */
+   headphones on the sharing side keep it clean, which a tip says once.
+
+   And the shared sound dips while the sharer talks — reported: a voice over
+   a video was hard to hear. The microphone is listened to on its way in, and
+   the screen's sound turned down to a quarter while it hears talking; see
+   duck.js. It runs on the audio thread (an AudioWorklet), which keeps time
+   while this page is hidden behind what is being shown. Until it has loaded,
+   or where it cannot, the sound goes in at full volume as before.         */
 let screenMix = null;
+
+/* The voice's speech band, which is all the listening needs: below it is
+   hum and desk knocks, above it hiss. */
+const DUCK_EAR = { high: 250, low: 3500 };
 
 function mixScreenSound(mic, sound) {
   const Ctx = window.AudioContext || window.webkitAudioContext;
@@ -7498,13 +7509,36 @@ function mixScreenSound(mic, sound) {
   };
   let micNode = source(mic);
   const soundNode = source(sound);
+  let ear = null, closed = false;
+  if (ctx.audioWorklet && typeof AudioWorkletNode === "function") {
+    ctx.audioWorklet.addModule(`duck.js?v=${APP_BUILD}`).then(() => {
+      if (closed) return;                   // sharing stopped while it loaded
+      const duck = new AudioWorkletNode(ctx, "duck", { numberOfInputs: 2, numberOfOutputs: 1, outputChannelCount: [2] });
+      const high = ctx.createBiquadFilter();
+      high.type = "highpass"; high.frequency.value = DUCK_EAR.high;
+      const low = ctx.createBiquadFilter();
+      low.type = "lowpass"; low.frequency.value = DUCK_EAR.low;
+      high.connect(low);
+      low.connect(duck, 0, 1);              // the voice, to be listened to
+      ear = high;
+      micNode.connect(ear);
+      soundNode.disconnect();
+      soundNode.connect(duck, 0, 0);        // the screen's sound, to be turned down
+      duck.connect(out);
+    }).catch(err => console.warn("The shared sound will not dip while talking:", err));
+  }
   if (ctx.state === "suspended") ctx.resume().catch(() => {});
   const track = out.stream.getAudioTracks()[0];
   track.contentHint = "music";              // not squeezed as if it were only a voice
   return {
     track,
-    setMic(next) { micNode.disconnect(); micNode = source(next); },
+    setMic(next) {
+      micNode.disconnect();
+      micNode = source(next);
+      if (ear) micNode.connect(ear);        // headphones' microphone is listened to now
+    },
     close() {
+      closed = true;
       try { micNode.disconnect(); soundNode.disconnect(); } catch (_) { /* already apart */ }
       sound.stop();
       track.stop();

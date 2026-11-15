@@ -60,11 +60,14 @@ const CLIENT_FILES = [
   "vendor/tabler/tabler-icons.min.css",
   /* The knock worker. index.html does not load it — app.js registers it, at
      sw.js?v=<the build> — so it is hashed but not stamped there. */
-  "sw.js"
+  "sw.js",
+  /* The shared sound's dip while talking, an AudioWorklet. app.js loads it,
+     at duck.js?v=<the build>, so like sw.js it is hashed but not stamped. */
+  "duck.js"
 ];
 
 /** Client files that index.html does not load itself. */
-const NOT_IN_PAGE = ["sw.js"];
+const NOT_IN_PAGE = ["sw.js", "duck.js"];
 
 /* Pictures are hashed as the bytes they are. Read as text, two different
    pictures could hash the same: every byte that is not valid UTF-8 decodes to
