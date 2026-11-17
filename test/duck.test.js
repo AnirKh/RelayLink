@@ -55,7 +55,7 @@ test("talking turns the shared sound down quickly, and keeps it down between wor
   s = talk(s, 2000, {}, (x, t) => seen.push([t, x.gain]));
   const at = ms => seen.find(([t]) => t >= ms)[1];
   assert.ok(at(100) < 0.75, `already dipping at 0.1 s: ${at(100)}`);
-  assert.ok(at(250) <= 0.3, `down at a quarter by 0.25 s: ${at(250)}`);
+  assert.ok(at(250) <= 0.3, `well down by 0.25 s: ${at(250)}`);
   for (const [t, g] of seen) if (t >= 250) assert.ok(g <= 0.3, `down through the gaps between words, at ${t.toFixed(0)} ms: ${g}`);
   assert.ok(Math.abs(s.gain - D.DUCK.low) < 0.01);
 });
@@ -112,7 +112,7 @@ test("a microphone muted mid-sentence lets the sound come back", () => {
   assert.ok(s.gain > 0.95, `back up: ${s.gain}`);
 });
 
-test("the sound is only ever turned down, and never below a quarter", () => {
+test("the sound is only ever turned down, and never below its low", () => {
   let seed = 7;
   const rand = () => (seed = (seed * 1103515245 + 12345) % 2147483648) / 2147483648;
   for (let run = 0; run < 40; run++) {
@@ -173,7 +173,7 @@ test("the worklet turns the screen's sound down while the microphone hears talki
     p.process([[block(0.5), block(0.5)], [sine(0.1, i * 128)]], [out]);
     for (const v of out[0]) { assert.ok(v <= last + 1e-9 && last - v < 0.01, "eased, never a step"); last = v; }
   }
-  assert.ok(Math.abs(out[0][127] - 0.5 * D.DUCK.low) < 0.01, `down to a quarter: ${out[0][127]}`);
+  assert.ok(Math.abs(out[0][127] - 0.5 * D.DUCK.low) < 0.01, `down to its low: ${out[0][127]}`);
   assert.deepEqual(out[1], out[0], "both channels alike");
 });
 
@@ -198,17 +198,22 @@ const grab = (pattern, what) => {
 };
 const MIX = [
   grab(/^const DUCK_EAR = [^\n]*;$/m,                         "DUCK_EAR"),
+  grab(/^const SHARE_MIX = [^\n]*;$/m,                        "SHARE_MIX"),
+  grab(/^function softLimitCurve\([^)]*\)\s*\{[\s\S]*?^\}/m,  "softLimitCurve"),
   grab(/^function mixScreenSound\([^)]*\)\s*\{[\s\S]*?^\}/m, "mixScreenSound")
 ].join("\n");
+const { SHARE_MIX, softLimitCurve } = new Function(`${MIX}\nreturn { SHARE_MIX, softLimitCurve };`)();
 
 function mixer({ worklet: hasWorklet = true, loadFails = false } = {}) {
-  const edges = new Set(), log = { loaded: [], made: [], warned: [] };
+  const edges = new Set(), log = { loaded: [], made: [], warned: [], gains: [], shapers: [] };
   let load;
   const loading = new Promise((resolve, reject) => { load = () => (loadFails ? reject(new Error("blocked")) : resolve()); });
-  const node = name => ({
-    name,
-    connect(to, output = 0, input = 0) { edges.add(`${name} → ${to.name}${input ? `:${input}` : ""}`); },
-    disconnect() { for (const e of [...edges]) if (e.startsWith(`${name} → `)) edges.delete(e); }
+  /* A node's name is read when it is wired, so a gain can be named by what
+     it was set to: the voice raised, or the mix scaled into the limit. */
+  const node = (name, nameNow = () => name) => ({
+    get name() { return nameNow(); },
+    connect(to, output = 0, input = 0) { edges.add(`${nameNow()} → ${to.name}${input ? `:${input}` : ""}`); },
+    disconnect() { for (const e of [...edges]) if (e.startsWith(`${nameNow()} → `)) edges.delete(e); }
   });
   const track = name => ({ name, stop() {} });
   class MediaStream {
@@ -222,6 +227,17 @@ function mixer({ worklet: hasWorklet = true, loadFails = false } = {}) {
     }
     createMediaStreamDestination() { return { ...node("out"), stream: new MediaStream([track("mix")]) }; }
     createMediaStreamSource(stream) { return node(stream.tracks[0].name); }
+    createGain() {
+      const gain = { value: 1 };
+      const n = Object.assign(node(null, () => (gain.value > 1 ? "voice" : gain.value < 1 ? "limit" : "gain")), { gain });
+      log.gains.push(n);
+      return n;
+    }
+    createWaveShaper() {
+      const n = Object.assign(node("shaper"), { curve: null });
+      log.shapers.push(n);
+      return n;
+    }
     createBiquadFilter() {
       const n = node(`filter ${this.filters = (this.filters || 0) + 1}`);
       n.frequency = { value: 0 };
@@ -239,27 +255,70 @@ function mixer({ worklet: hasWorklet = true, loadFails = false } = {}) {
   return { mix, edges, log, load, track, settle: () => new Promise(r => setTimeout(r, 0)) };
 }
 
+/* Wired whatever else happens: the voice raised into the limit, and the
+   limit out to what is sent. */
+const LIMIT = ["limit → shaper", "shaper → out", "voice → limit"];
+
+test("the voice is raised a little, and everything sent goes through the soft limit", () => {
+  const m = mixer({ worklet: false });
+  m.mix(m.track("mic"), m.track("screen sound"));
+  assert.deepEqual([...m.edges].sort(), [...LIMIT, "mic → voice", "screen sound → limit"].sort());
+  assert.deepEqual(m.log.gains.map(g => g.gain.value).sort(), [1 / SHARE_MIX.range, SHARE_MIX.voice].sort());
+  const db = 20 * Math.log10(SHARE_MIX.voice);
+  assert.ok(db > 2 && db < 4, `a little louder, about 3 dB: ${db.toFixed(1)} dB`);
+  assert.equal(m.log.shapers.length, 1);
+  assert.ok(m.log.shapers[0].curve instanceof Float32Array && m.log.shapers[0].curve.length > 1000, "the limit's shape is set");
+});
+
+/** What a WaveShaper with this curve sends for a mix sample `v`: the mix is
+    scaled by 1/range first, and the shaper reads its curve between points. */
+function limited(curve, v) {
+  const x = Math.max(-1, Math.min(1, v / SHARE_MIX.range));
+  const at = (x + 1) / 2 * (curve.length - 1);
+  const i = Math.min(curve.length - 2, Math.floor(at));
+  return curve[i] + (curve[i + 1] - curve[i]) * (at - i);
+}
+
+test("the soft limit leaves the mix alone below its knee, and never lets a peak past full scale", () => {
+  const curve = softLimitCurve();
+  for (let v = -SHARE_MIX.knee; v <= SHARE_MIX.knee; v += 0.01) {
+    assert.ok(Math.abs(limited(curve, v) - v) < 1e-6, `untouched at ${v.toFixed(2)}: ${limited(curve, v)}`);
+  }
+  let before = -Infinity;
+  for (let v = -3; v <= 3; v += 0.005) {
+    const y = limited(curve, v);
+    assert.ok(y >= before - 1e-9, `only ever rising, at ${v.toFixed(3)}`);
+    assert.ok(Math.abs(y) <= 1, `never past full scale, at ${v.toFixed(3)}: ${y}`);
+    assert.ok(Math.abs(y + limited(curve, -v)) < 1e-6, "the same both ways");
+    before = y;
+  }
+  assert.ok(limited(curve, 1) > 0.9, `a full-scale peak is bent, not squashed: ${limited(curve, 1)}`);
+  assert.ok(limited(curve, SHARE_MIX.knee + 0.01) - SHARE_MIX.knee < 0.0101, "no jump at the knee");
+});
+
 test("the screen's sound goes through the dip, and the voice is listened to on its way in", async () => {
   const m = mixer();
   const screenMix = m.mix(m.track("mic"), m.track("screen sound"));
-  assert.deepEqual([...m.edges].sort(), ["mic → out", "screen sound → out"], "at full volume until it has loaded");
+  assert.deepEqual([...m.edges].sort(), [...LIMIT, "mic → voice", "screen sound → limit"].sort(),
+    "at full volume until it has loaded");
   assert.deepEqual(m.log.loaded, ["duck.js?v=202611160000-abcdef12"], "this build's copy");
   m.load(); await m.settle();
   assert.deepEqual([...m.edges].sort(), [
-    "duck → out",                           // the screen's sound, turned down as needed
+    ...LIMIT,
+    "duck → limit",                         // the screen's sound, turned down as needed
     "filter 1 → filter 2",                  // the speech band
     "filter 2 → duck:1",                    // listened to
-    "mic → filter 1",
-    "mic → out",                            // the voice itself, sent as it is
+    "mic → filter 1",                       // as it comes, not raised
+    "mic → voice",                          // the voice itself, sent a little louder
     "screen sound → duck"
-  ]);
+  ].sort());
   assert.equal(m.log.made.length, 1);
   assert.equal(m.log.made[0][0], "duck");
   assert.deepEqual(m.log.made[0][1], { numberOfInputs: 2, numberOfOutputs: 1, outputChannelCount: [2] });
 
   /* Headphones plugged in: their microphone is sent and listened to. */
   screenMix.setMic(m.track("headset"));
-  assert.ok(m.edges.has("headset → out") && m.edges.has("headset → filter 1"));
+  assert.ok(m.edges.has("headset → voice") && m.edges.has("headset → filter 1"));
   assert.ok(![...m.edges].some(e => e.startsWith("mic → ")), "the old microphone is out of it");
 });
 
@@ -274,14 +333,14 @@ test("where the dip cannot load, or the browser has none, the sound goes in at f
   const failed = mixer({ loadFails: true });
   failed.mix(failed.track("mic"), failed.track("screen sound"));
   failed.load(); await failed.settle();
-  assert.deepEqual([...failed.edges].sort(), ["mic → out", "screen sound → out"]);
+  assert.deepEqual([...failed.edges].sort(), [...LIMIT, "mic → voice", "screen sound → limit"].sort());
   assert.equal(failed.log.warned.length, 1);
 
   const none = mixer({ worklet: false });
   const mix = none.mix(none.track("mic"), none.track("screen sound"));
   assert.deepEqual(none.log.loaded, []);
   mix.setMic(none.track("headset"));
-  assert.deepEqual([...none.edges].sort(), ["headset → out", "screen sound → out"]);
+  assert.deepEqual([...none.edges].sort(), [...LIMIT, "headset → voice", "screen sound → limit"].sort());
 });
 
 /* ══════════════════════════════════════════

@@ -9,7 +9,7 @@
   hard to hear on the other side — the two go out mixed in one track (see
   mixScreenSound() in app.js), at full volume each. Now the microphone is
   listened to on its way into the mix: when the sharer starts talking the
-  screen's sound drops to a quarter within a fraction of a second, stays down
+  screen's sound drops to 15% within a fraction of a second, stays down
   through the pauses between words, and comes back up smoothly once they have
   been quiet for a moment. Radio calls it ducking.
 
@@ -39,7 +39,7 @@
 
 /* How it behaves, in decibels and milliseconds. */
 const DUCK = Object.freeze({
-  low:          0.25,   // the screen's sound while talking: a quarter, about −12 dB
+  low:          0.15,   // the screen's sound while talking: 15%, about −16 dB (was a quarter; asked lower)
   quietDb:      -50,    // below this the microphone is hearing nothing much
   aboveFloorDb: 10,     // talking is this far above the quietest it has lately been
   floorRiseDb:  10,     // per second: how fast a steady background raises that line

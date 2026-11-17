@@ -70,6 +70,8 @@ const SOURCE = [
   grab(/^const SCREEN_PROFILES = [^\n]*;$/m,                          "SCREEN_PROFILES"),
   grab(/^const SCREEN_CAPTURE = [^\n]*;$/m,                           "SCREEN_CAPTURE"),
   grab(/^function screenProfile\([^)]*\)\s*\{[\s\S]*?^\}/m,           "screenProfile"),
+  grab(/^const SHARE_MIX = [^\n]*;$/m,                                "SHARE_MIX"),
+  grab(/^function softLimitCurve\([^)]*\)\s*\{[\s\S]*?^\}/m,          "softLimitCurve"),
   grab(/^function mixScreenSound\([^)]*\)\s*\{[\s\S]*?^\}/m,          "mixScreenSound"),
   grab(/^function screenScale\([^)]*\)\s*\{[\s\S]*?^\}/m,             "screenScale"),
   grab(/^function screenConstraints\([^)]*\)\s*\{[\s\S]*?^\}/m,       "screenConstraints"),
@@ -155,6 +157,8 @@ function call({ inCall = true, video = true, camOff = false, busy = false, suppo
     window: { AudioContext: class {
       constructor() { if (mixFails) throw new Error("NotAllowedError"); this.state = "running"; }
       createMediaStreamDestination() { return { stream: new MediaStream([track("audio", "mix")]) }; }
+      createGain() { return { gain: { value: 1 }, connect() {}, disconnect() {} }; }
+      createWaveShaper() { return { curve: null, connect() {}, disconnect() {} }; }
       createMediaStreamSource(stream) {
         const name = stream.getTracks()[0].name;
         return { connect() { log.mixed.push(`in ${name}`); }, disconnect() { log.mixed.push(`out ${name}`); } };

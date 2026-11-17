@@ -27,7 +27,7 @@
 
    APP_BUILD is written by tools/sync-build.js and by nothing else.
 ══════════════════════════════════════════════ */
-const APP_BUILD = "202611152303-10902031";
+const APP_BUILD = "202611170308-e7aa3c86";
 
 function refuseToRunInAStalePage() {
   let builtFor = null;
@@ -7488,27 +7488,61 @@ function screenProfile(withSound) {
 
    And the shared sound dips while the sharer talks — reported: a voice over
    a video was hard to hear. The microphone is listened to on its way in, and
-   the screen's sound turned down to a quarter while it hears talking; see
-   duck.js. It runs on the audio thread (an AudioWorklet), which keeps time
-   while this page is hidden behind what is being shown. Until it has loaded,
-   or where it cannot, the sound goes in at full volume as before.         */
+   the screen's sound turned down while it hears talking; see duck.js. It
+   runs on the audio thread (an AudioWorklet), which keeps time while this
+   page is hidden behind what is being shown. Until it has loaded, or where
+   it cannot, the sound goes in at full volume as before.
+
+   Then, tried: the voice a little louder still. So in this mix the voice is
+   raised by SHARE_MIX.voice — about 3 dB. The browser already keeps a voice
+   near the top of the scale, so raised, and over a video, a peak could pass
+   it and crackle: everything sent goes through a soft limit, untouched up to
+   SHARE_MIX.knee (about −2 dB) and bent smoothly from there, never past
+   full scale.                                                            */
 let screenMix = null;
 
 /* The voice's speech band, which is all the listening needs: below it is
    hum and desk knocks, above it hiss. */
 const DUCK_EAR = { high: 250, low: 3500 };
 
+/* The voice raised ×1.4 (≈ +3 dB); the limit straight up to 0.8 (≈ −2 dBFS),
+   and room above it for a peak of up to twice full scale before it flattens. */
+const SHARE_MIX = { voice: 1.4, knee: 0.8, range: 2 };
+
+/** The soft limit's shape, for a WaveShaper fed 1/range of the mix — a
+    WaveShaper only takes −1…1. Out is the mix itself up to the knee, then
+    eased toward full scale and never past it. */
+function softLimitCurve(n = 4097, { knee, range } = SHARE_MIX) {
+  const curve = new Float32Array(n);
+  for (let i = 0; i < n; i++) {
+    const x = (i / (n - 1) * 2 - 1) * range;
+    const a = Math.abs(x);
+    curve[i] = Math.sign(x) * (a <= knee ? a : knee + (1 - knee) * Math.tanh((a - knee) / (1 - knee)));
+  }
+  return curve;
+}
+
 function mixScreenSound(mic, sound) {
   const Ctx = window.AudioContext || window.webkitAudioContext;
   const ctx = new Ctx();
   const out = ctx.createMediaStreamDestination();
-  const source = track => {
+  /* Everything sent: scaled into the limit's range, then through it. */
+  const limit = ctx.createGain();
+  limit.gain.value = 1 / SHARE_MIX.range;
+  const shaper = ctx.createWaveShaper();
+  shaper.curve = softLimitCurve();
+  limit.connect(shaper);
+  shaper.connect(out);
+  const voice = ctx.createGain();
+  voice.gain.value = SHARE_MIX.voice;
+  voice.connect(limit);
+  const source = (track, into) => {
     const node = ctx.createMediaStreamSource(new MediaStream([track]));
-    node.connect(out);
+    node.connect(into);
     return node;
   };
-  let micNode = source(mic);
-  const soundNode = source(sound);
+  let micNode = source(mic, voice);
+  const soundNode = source(sound, limit);
   let ear = null, closed = false;
   if (ctx.audioWorklet && typeof AudioWorkletNode === "function") {
     ctx.audioWorklet.addModule(`duck.js?v=${APP_BUILD}`).then(() => {
@@ -7524,7 +7558,7 @@ function mixScreenSound(mic, sound) {
       micNode.connect(ear);
       soundNode.disconnect();
       soundNode.connect(duck, 0, 0);        // the screen's sound, to be turned down
-      duck.connect(out);
+      duck.connect(limit);
     }).catch(err => console.warn("The shared sound will not dip while talking:", err));
   }
   if (ctx.state === "suspended") ctx.resume().catch(() => {});
@@ -7534,7 +7568,7 @@ function mixScreenSound(mic, sound) {
     track,
     setMic(next) {
       micNode.disconnect();
-      micNode = source(next);
+      micNode = source(next, voice);
       if (ear) micNode.connect(ear);        // headphones' microphone is listened to now
     },
     close() {
