@@ -1108,6 +1108,29 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
 #localVideo.back-camera { transform: none; }
 /* Nor a shared screen: what the other side sees, as they see it. */
 #localVideo.screen-share { transform: none; }
+/* A shared screen, big, with both people small over it — see showScreenBig()
+   in app.js. Only while a screen is shared in a channel of its own: theirs
+   when they share, yours when you do. The other person goes small in the top
+   corner, the size and shape of your own picture, which stays where it was. */
+#screenVideo { display: none; }
+.call-overlay.screen-big #screenVideo {
+  display: block;
+  position: absolute; inset: 0;
+  width: 100%; height: 100%;
+  object-fit: contain;                    /* all of the screen, black bars rather than cropping */
+  background: #000;
+}
+.call-overlay.screen-big:not(.mini) #remoteVideo {
+  inset: auto;
+  top: calc(54px + var(--safe-top));       /* under the language switch, which stays over the call */
+  right: calc(14px + var(--safe-right));
+  width: min(34vw, 156px); min-width: 86px; height: auto;
+  max-height: min(28vh, 180px);
+  aspect-ratio: var(--remote-video-aspect, 16 / 9);
+  border-radius: 10px; border: 2px solid rgba(255,255,255,0.25);
+  background: #111;
+  z-index: 10;
+}
 /* Lit while sharing, so it is plain that the screen is going out. */
 #shareBtn.sharing { background: var(--accent); color: var(--on-accent); }
 /* Under the status line, so it covers neither the picture's middle nor the
@@ -1265,6 +1288,15 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
   pointer-events: none;
 }
 .call-overlay.mini #localVideo.cam-off { display: none; }
+/* Small while a screen is shared: the screen and the other person. */
+.call-overlay.mini.screen-big #screenVideo {
+  position: static; flex: none;
+  width: var(--mini-tile); height: auto;
+  aspect-ratio: var(--mini-shape);
+  border-radius: 8px; background: #111;
+  pointer-events: none;
+}
+.call-overlay.mini.screen-big #localVideo { display: none; }
 .call-overlay.mini .call-mini-bar {
   display: flex; gap: 8px; z-index: 11;
   position: absolute; left: 0; right: 0; bottom: 6px; justify-content: center;
@@ -1373,6 +1405,7 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
   .bubble img { max-width: min(200px, 58vw); }
   .voice-bubble audio { width: min(160px, 45vw); }
   #localVideo { width: min(36vw, 128px); min-width: 78px; }
+  .call-overlay.screen-big:not(.mini) #remoteVideo { width: min(36vw, 128px); min-width: 78px; }
   /* Up to six call buttons on an iPhone (mute, camera, flip, loudspeaker,
      chat, end): 6 × 48px and their gaps is 338px, inside a 375px screen. */
   .call-controls { gap: 10px; }

@@ -27,7 +27,7 @@
 
    APP_BUILD is written by tools/sync-build.js and by nothing else.
 ══════════════════════════════════════════════ */
-const APP_BUILD = "202611191431-84a3c438";
+const APP_BUILD = "202611192251-8142717f";
 
 function refuseToRunInAStalePage() {
   let builtFor = null;
@@ -216,6 +216,7 @@ const whereBtn         = document.getElementById("whereBtn");
 const callOverlay      = document.getElementById("callOverlay");
 const callStatusLabel  = document.getElementById("callStatusLabel");
 const remoteVideo      = document.getElementById("remoteVideo");
+const screenVideo      = document.getElementById("screenVideo");
 const localVideo       = document.getElementById("localVideo");
 const toggleMuteBtn    = document.getElementById("toggleMuteBtn");
 const toggleCamBtn     = document.getElementById("toggleCamBtn");
@@ -4088,8 +4089,10 @@ function createCallPeerConnection() {
   };
 
   callPc.ontrack = ({ track, transceiver }) => {
-    /* The other side's screen sound, in its own channel: played apart from their voice. */
+    /* The other side's screen, in channels of its own: its sound played apart
+       from their voice, its picture big while they say they share it. */
     if (transceiver && transceiver === screenSoundTransceiver(callPc)) { playScreenSound(track); return; }
+    if (transceiver && transceiver === screenVideoTransceiver(callPc)) { peerScreenTrack = track; showScreenBig(); return; }
     // Always store the stream even if inCall hasn't been set yet —
     // the callee's ontrack fires during setRemoteDescription(offer),
     // which happens before inCall = true on their side.
@@ -5798,6 +5801,14 @@ function handleTextMessage(data, sealed = false) {
       peerMicSilent = data.silent === true;
       updateCallPauseNote();
       break;
+
+    case "call-screen":
+      /* They began sharing their screen in its own channel, or stopped (see
+         "A shared screen, big"). */
+      if (!inCall) break;
+      peerSharing = data.on === true;
+      showScreenBig();
+      break;
   }
 }
 
@@ -6669,7 +6680,8 @@ function keepSelfViewInside() {
 let callSwapped = false;
 
 function setCallSwapped(on) {
-  if (on && (callMini || callOverlay.classList.contains("voice-only") || callOverlay.classList.contains("hidden"))) return;
+  if (on && (callMini || callOverlay.classList.contains("voice-only") || callOverlay.classList.contains("hidden") ||
+             callOverlay.classList.contains("screen-big"))) return;
   callSwapped = on;
   callOverlay.classList.toggle("swapped", on);
   if (on) {
@@ -6684,6 +6696,38 @@ function setCallSwapped(on) {
 }
 
 remoteVideo.addEventListener("click", () => { if (callSwapped) setCallSwapped(false); });
+
+/* Theirs small keeps its own shape — swapped, or beside a shared screen. */
+remoteVideo.addEventListener("resize", () => {
+  if (remoteVideo.videoWidth && remoteVideo.videoHeight) {
+    remoteVideo.style.setProperty("--remote-video-aspect", `${remoteVideo.videoWidth} / ${remoteVideo.videoHeight}`);
+  }
+});
+
+/* ── A shared screen, big ───────────────────
+   Asked for: while a screen is shared, the screen big and both people
+   small. Shared in a channel of its own, the camera goes on beside it: the
+   screen fills the call, the other person goes small in the top corner, and
+   your own picture stays small where it was. Theirs when they share — they
+   say so (call-screen) — and yours when you do; theirs first if both. The
+   two pictures are not swapped meanwhile. With an older page on the other
+   side the screen takes the camera's place, as before, and nothing here
+   changes. */
+let peerSharing = false;         // the other side says it is sharing its screen
+let peerScreenTrack = null;      // the picture in their screen channel
+let sharedScreen = null;         // our own screen, while shared beside the camera
+
+function showScreenBig() {
+  const track = (peerSharing && peerScreenTrack) || sharedScreen;
+  const big = Boolean(track);
+  if (!big) screenVideo.srcObject = null;
+  else if (screenVideo.srcObject?.getVideoTracks()[0] !== track) {
+    screenVideo.srcObject = new MediaStream([track]);
+    screenVideo.play().catch(() => {});
+  }
+  if (big && callSwapped) setCallSwapped(false);
+  callOverlay.classList.toggle("screen-big", big);
+}
 
 if (window.ResizeObserver) {
   const selfViewSizes = new ResizeObserver(keepSelfViewInside);
@@ -6826,8 +6870,10 @@ function ensureOutgoingCallTransceivers(withVideo) {
   const hasVideo = callPc.getTransceivers().some(t => t.receiver?.track?.kind === "video" && !t.stopped);
   if (!hasAudio) callPc.addTransceiver("audio", { direction: "sendrecv" });
   if (withVideo && !hasVideo) callPc.addTransceiver("video", { direction: "sendrecv" });
-  /* And, after the voice and the picture, a channel for a shared screen's sound. */
+  /* And, after the voice and the picture, channels for a shared screen: its
+     sound, and its picture. */
   if (withVideo && !screenSoundTransceiver(callPc)) callPc.addTransceiver("audio", { direction: "sendrecv" });
+  if (withVideo && !screenVideoTransceiver(callPc)) callPc.addTransceiver("video", { direction: "sendrecv" });
 }
 
 /* ── The screen's sound, a channel of its own ──
@@ -6843,22 +6889,33 @@ function ensureOutgoingCallTransceivers(withVideo) {
    ways — so starting to share is only a track put into it, with nothing to
    agree again. It is the second sound channel on both sides, in the order
    the caller made them. A side on an older page has none to offer, or answers
-   without sending on it; then the film is mixed in with the voice, as before. */
-function screenSoundTransceiver(pc) {
-  if (!pc || typeof pc.getTransceivers !== "function") return null;
-  return pc.getTransceivers().filter(t => t.receiver?.track?.kind === "audio")[1] || null;
-}
+   without sending on it; then the film is mixed in with the voice, as before.
 
-/** The screen sound's own sender — only where both sides have agreed it. */
-function screenSoundSender(pc) {
-  const channel = screenSoundTransceiver(pc);
+   The screen's picture has a channel of its own the same way, the second
+   picture channel — asked for: the shared screen big and both people small,
+   so the camera goes on beside the screen rather than giving it its place
+   (see "A shared screen, big"). Agreed by a page one version back, the
+   sound channel may be there without it; then the screen takes the
+   camera's place, as before.                                              */
+function screenChannel(pc, kind) {
+  if (!pc || typeof pc.getTransceivers !== "function") return null;
+  return pc.getTransceivers().filter(t => t.receiver?.track?.kind === kind)[1] || null;
+}
+function screenSoundTransceiver(pc) { return screenChannel(pc, "audio"); }
+function screenVideoTransceiver(pc) { return screenChannel(pc, "video"); }
+
+/** A screen channel's own sender — only where both sides have agreed it. */
+function agreedSender(channel) {
   return channel && !channel.stopped && channel.currentDirection === "sendrecv" ? channel.sender : null;
 }
+function screenSoundSender(pc) { return agreedSender(screenSoundTransceiver(pc)); }
+function screenVideoSender(pc) { return agreedSender(screenVideoTransceiver(pc)); }
 
-/** The answering side takes the channel both ways, so its own share can use it too. */
-function acceptScreenSoundChannel() {
-  const channel = screenSoundTransceiver(callPc);
-  if (channel && !channel.stopped) channel.direction = "sendrecv";
+/** The answering side takes the channels both ways, so its own share can use them too. */
+function acceptScreenChannels() {
+  for (const channel of [screenSoundTransceiver(callPc), screenVideoTransceiver(callPc)]) {
+    if (channel && !channel.stopped) channel.direction = "sendrecv";
+  }
 }
 
 /* The other side's screen sound, played on its own — not through the voice's
@@ -6903,9 +6960,9 @@ function stopLocalCallMedia() {
 
 async function attachCallTrack(track, stream) {
   if (!callPc) return;
-  const screenSound = screenSoundTransceiver(callPc);     // kept for a shared screen's sound
+  const kept = [screenSoundTransceiver(callPc), screenVideoTransceiver(callPc)];   // for a shared screen
   const reusable = callPc.getTransceivers().find(transceiver =>
-    transceiver !== screenSound &&
+    !kept.includes(transceiver) &&
     transceiver.receiver?.track?.kind === track.kind &&
     !transceiver.sender?.track &&
     !transceiver.stopped
@@ -7123,7 +7180,7 @@ async function handleIncomingCallOffer(data) {
     await callPc.setRemoteDescription(new RTCSessionDescription(data.offer));
     await drainCallIceQueue();
     await attachCallMedia(withVideo);
-    acceptScreenSoundChannel();
+    acceptScreenChannels();
     preferCallVideoCodecs();
     const answer = await callPc.createAnswer();
     await setCallLocalDescription(answer);
@@ -7158,6 +7215,10 @@ function stopCallMedia(clearOverlay = true) {
   speakerBtn.classList.add("hidden");
   sharingScreen = false;                    // the screen's track went with the rest
   if (screenMix) { screenMix.close(); screenMix = null; }   // and its sound, which was never in localStream
+  if (sharedScreen) { sharedScreen.onended = null; sharedScreen.stop(); sharedScreen = null; }   // nor a screen beside the camera
+  peerSharing = false;
+  peerScreenTrack = null;
+  showScreenBig();
   updateShareBtn();
   audioInputsSeen = null;                   // the next call notes its own
   watchCallStats(false);
@@ -7425,7 +7486,7 @@ toggleCamBtn.onclick = () => {
      the world, and text in it should read the right way round here too.     */
 async function flipCamera() {
   const current = localStream?.getVideoTracks()[0];
-  if (!G.mayFlipCamera({ inCall, hasVideo: Boolean(current), busy: restartingCallMedia, sharing: sharingScreen })) return;
+  if (!G.mayFlipCamera({ inCall, hasVideo: Boolean(current), busy: restartingCallMedia, sharing: sharingScreen && !sharedScreen })) return;
   restartingCallMedia = true;               // shared with the restart after a lock: one change at a time
   flipCamBtn.disabled = true;
   const pc = callPc;
@@ -7478,7 +7539,7 @@ async function flipCamera() {
     camera, and never a shared screen. */
 function showCameraFacing() {
   localVideo.classList.toggle("back-camera", cameraFacing === "environment");
-  localVideo.classList.toggle("screen-share", sharingScreen);
+  localVideo.classList.toggle("screen-share", sharingScreen && !sharedScreen);
 }
 
 /** Shown only on a device with a camera on each side — see G.flipCameraOffered.
@@ -7501,11 +7562,16 @@ flipCamBtn.onclick = () => flipCamera();
    browser can share its screen. The browser's own picker chooses the screen,
    window or tab, and is the consent: nothing is shared without it.
 
-   The screen takes the camera's place in the same sender (replaceTrack): no new
-   call, and the other side sees the screen where the camera was. The camera is
-   stopped meanwhile — nothing is captured that is not being sent — and opened
-   again when sharing stops, by the button or by the browser's own "Stop
-   sharing" (the track ending).
+   The screen goes out in a channel of its own beside the camera, made with
+   the call (see "The screen's sound, a channel of its own"): no new call, and
+   both sides show it big with both people small (showScreenBig). The camera
+   goes on, sent small meanwhile, since it is only seen small.
+
+   With an older page on the other side, the screen takes the camera's place
+   in the same sender (replaceTrack), as before: the camera is stopped
+   meanwhile — nothing is captured that is not being sent — and opened again
+   when sharing stops, by the button or by the browser's own "Stop sharing"
+   (the track ending).
 
    While sharing, the self-view shows what is shared, not mirrored; the flip
    has nothing to flip; headphones moving move only the microphone; and the
@@ -7687,6 +7753,21 @@ async function limitScreenSender(sender, screen, profile = SCREEN_PROFILES.still
   } catch (_) { /* a browser that will not take limits sends as it would have */ }
 }
 
+/* Beside a shared screen the camera is only seen small, so it is sent small:
+   the two together cost little more than the screen alone. Lifted again by
+   limitScreenSender(sender, null) when sharing stops. */
+const CAMERA_BESIDE_SCREEN = { maxBitrate: 500_000, maxFramerate: 15, scaleResolutionDownBy: 2 };
+
+async function limitCameraSender(sender) {
+  if (!sender || typeof sender.getParameters !== "function") return;
+  try {
+    const params = sender.getParameters();
+    if (!params.encodings || !params.encodings.length) return;
+    for (const encoding of params.encodings) Object.assign(encoding, CAMERA_BESIDE_SCREEN);
+    await sender.setParameters(params);
+  } catch (_) { /* a browser that will not take limits sends as it would have */ }
+}
+
 async function startScreenShare() {
   const camera = localStream?.getVideoTracks()[0];
   if (sharingScreen) return;
@@ -7715,10 +7796,19 @@ async function startScreenShare() {
     /* The track is asked again for the profile's size and rate — and where the
        picker did not hold to Full HD, for that too. */
     try { await screen.applyConstraints(screenConstraints(profile)); } catch (_) { /* the sender's limit still holds */ }
-    const sender = pc.getSenders().find(s => s.track === camera);
-    if (sender) await sender.replaceTrack(screen);
-    else        await attachCallTrack(screen, localStream);
-    await limitScreenSender(pc.getSenders().find(s => s.track === screen), screen, profile);
+    /* Beside the camera, in its own channel, where both sides have one;
+       otherwise in the camera's place. */
+    const apart = screenVideoSender(pc);
+    const cameraSender = pc.getSenders().find(s => s.track === camera);
+    if (apart) {
+      await apart.replaceTrack(screen);
+      await limitScreenSender(apart, screen, profile);
+      await limitCameraSender(cameraSender);
+    } else {
+      if (cameraSender) await cameraSender.replaceTrack(screen);
+      else              await attachCallTrack(screen, localStream);
+      await limitScreenSender(pc.getSenders().find(s => s.track === screen), screen, profile);
+    }
     if (sound) {
       const mic = localStream.getAudioTracks()[0] || null;
       /* Its own channel, where both sides have one; otherwise mixed in with the
@@ -7743,14 +7833,21 @@ async function startScreenShare() {
         screenMix = null;
       }
     }
-    camera.stop();                          // only once the screen is in its place
     sharingScreen = true;
-    camOffBeforeShare = isCamOff;
-    isCamOff = false;                       // sharing is choosing to be seen — the screen, not the camera
-    toggleCamBtn.replaceChildren(tablerIcon("camera"));
-    localStream = new MediaStream([...localStream.getAudioTracks(), screen]);
-    localVideo.srcObject = localStream;
-    localVideo.play().catch(() => {});
+    if (apart) {
+      /* The camera goes on as it was; the screen is shown big, here and there. */
+      sharedScreen = screen;
+      showScreenBig();
+      dcSendCallSignal({ type: "call-screen", on: true }).catch(() => {});
+    } else {
+      camera.stop();                        // only once the screen is in its place
+      camOffBeforeShare = isCamOff;
+      isCamOff = false;                     // sharing is choosing to be seen — the screen, not the camera
+      toggleCamBtn.replaceChildren(tablerIcon("camera"));
+      localStream = new MediaStream([...localStream.getAudioTracks(), screen]);
+      localVideo.srcObject = localStream;
+      localVideo.play().catch(() => {});
+    }
     showCameraFacing();
     updateFlipCamBtn();
   } finally {
@@ -7761,7 +7858,7 @@ async function startScreenShare() {
 }
 
 async function stopScreenShare() {
-  const screen = localStream?.getVideoTracks()[0];
+  const screen = sharedScreen || localStream?.getVideoTracks()[0];
   if (!sharingScreen || !screen) return;
   /* Another change is finishing — the share only just began, say. Once it has. */
   if (restartingCallMedia) { setTimeout(stopScreenShare, 300); return; }
@@ -7769,13 +7866,21 @@ async function stopScreenShare() {
   shareBtn.disabled = true;
   sharingScreen = false;
   screen.onended = null;
-  /* As it was before sharing: a camera turned off then is off again now. */
-  isCamOff = camOffBeforeShare;
-  toggleCamBtn.replaceChildren(tablerIcon(isCamOff ? "camera-off" : "camera"));
+  const apart = Boolean(sharedScreen);
+  if (apart) {
+    /* Beside the camera: the call goes back to the two people, here and there. */
+    sharedScreen = null;
+    showScreenBig();
+    if (dcReady()) dcSendCallSignal({ type: "call-screen", on: false }).catch(() => {});
+  } else {
+    /* As it was before sharing: a camera turned off then is off again now. */
+    isCamOff = camOffBeforeShare;
+    toggleCamBtn.replaceChildren(tablerIcon(isCamOff ? "camera-off" : "camera"));
+  }
   const pc = callPc;
   const sender = pc?.getSenders().find(s => s.track === screen);
   try {
-    if (!G.mayCaptureForCall(inCall)) return;   // hung up: the call's own ending stops everything
+    if (!G.mayCaptureForCall(inCall)) { if (apart) screen.stop(); return; }   // hung up: the call's own ending stops the rest
     /* The screen's sound out of the call: its own channel left empty, or the
        voice alone again in the sender the mix was in. */
     if (screenMix) {
@@ -7785,6 +7890,16 @@ async function stopScreenShare() {
       else if (carrier && mic) await carrier.replaceTrack(mic);
       screenMix.close();
       screenMix = null;
+    }
+    if (apart) {
+      /* Its channel left empty, and the camera sent at its own size again. */
+      if (sender) {
+        await sender.replaceTrack(null);
+        await limitScreenSender(sender, null);
+      }
+      await limitScreenSender(pc?.getSenders().find(s => s.track && s.track === localStream?.getVideoTracks()[0]), null);
+      screen.stop();
+      return;
     }
     let camera = null;
     try {

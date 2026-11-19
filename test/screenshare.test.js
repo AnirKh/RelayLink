@@ -72,8 +72,9 @@ const SOURCE = [
   grab(/^const SCREEN_SOUND = [^\n]*;$/m,                             "SCREEN_SOUND"),
   grab(/^function screenProfile\([^)]*\)\s*\{[\s\S]*?^\}/m,           "screenProfile"),
   grab(/^function mixScreenSound\([^)]*\)\s*\{[\s\S]*?^\}/m,          "mixScreenSound"),
-  grab(/^function screenSoundTransceiver\([^)]*\)\s*\{[\s\S]*?^\}/m,   "screenSoundTransceiver"),
-  grab(/^function screenSoundSender\([^)]*\)\s*\{[\s\S]*?^\}/m,        "screenSoundSender"),
+  grab(/^function screenChannel\([\s\S]*?^function screenVideoSender\([^\n]*\n/m, "the screen's channels"),
+  grab(/^const CAMERA_BESIDE_SCREEN = [^\n]*;$/m,                     "CAMERA_BESIDE_SCREEN"),
+  grab(/^async function limitCameraSender\([^)]*\)\s*\{[\s\S]*?^\}/m, "limitCameraSender"),
   grab(/^function screenScale\([^)]*\)\s*\{[\s\S]*?^\}/m,             "screenScale"),
   grab(/^function screenConstraints\([^)]*\)\s*\{[\s\S]*?^\}/m,       "screenConstraints"),
   grab(/^async function limitScreenSender\([^)]*\)\s*\{[\s\S]*?^\}/m,  "limitScreenSender"),
@@ -93,7 +94,7 @@ function call({ inCall = true, video = true, camOff = false, busy = false, suppo
                 cancel = false, cameraRefuses = false, screenSize = [2560, 1600], refuseLimits = false,
                 withSound = false, mixFails = false, channel = null, surface = "monitor", kept = false } = {}) {
   const log = { order: [], picker: [], asked: [], replaced: [], attached: [], watched: [], toasts: [], flipUpdates: 0,
-                applied: [], params: [], mixed: [] };
+                applied: [], params: [], mixed: [], signals: [] };
   let gate = null;
   const track = (kind, name) => ({ kind, name, readyState: "live", enabled: true,
     stop() { this.readyState = "ended"; log.order.push(`stop ${name}`); },
@@ -109,15 +110,18 @@ function call({ inCall = true, video = true, camOff = false, busy = false, suppo
   const mic = track("audio", "mic");
   const cam = video ? track("video", "camera") : null;
   if (cam) cam.enabled = !camOff;
-  /* channel: "agreed" — both sides made a sound channel for the screen;
-     "one-way" — the other side, an older page, answered without sending on it. */
-  const tracks = [mic, cam].filter(Boolean);
-  if (channel) tracks.push(null);
-  const senders = tracks.map(t => {
+  /* channel: "agreed" — both sides made channels for the screen, its sound
+     and its picture; "one-way" — the other side, an older page, answered
+     without sending on them; "sound-only" — a page one version back, which
+     agreed the sound's channel but not the picture's. */
+  const slots = [[mic, "audio"], [cam, "video"]].filter(([t]) => t);
+  if (channel) slots.push([null, "audio"], [null, "video"]);
+  const agreed = i => channel === "agreed" || (channel === "sound-only" && i === 2);
+  const senders = slots.map(([t, kind]) => {
     let params = { transactionId: "t1", encodings: [{ active: true, scaleResolutionDownBy: 1 }] };
     return {
       track: t, replaceTrack(n) { log.order.push(`replace with ${n ? n.name : "nothing"}`); log.replaced.push(n); this.track = n; return Promise.resolve(); },
-      kind: t ? t.kind : "audio",
+      kind,
       getParameters: () => JSON.parse(JSON.stringify(params)),
       setParameters: async p => {
         if (refuseLimits) throw new Error("InvalidModificationError");
@@ -159,6 +163,9 @@ function call({ inCall = true, video = true, camOff = false, busy = false, suppo
     callVideo: () => ({ facingMode: "environment" }),
     tablerIcon: name => name,
     remoteCallStream: new MediaStream([track("audio", "their voice"), track("video", "their camera")]),
+    showScreenBig: () => log.order.push("screen big"),
+    dcReady: () => true,
+    dcSendCallSignal: async m => { log.signals.push(m); },
     setTimeout: (f) => { log.order.push("retry later"); },
     shareBtn, toggleCamBtn,
     /* A stand-in Web Audio: what goes into the mix, and a mixed track out. */
@@ -177,7 +184,7 @@ function call({ inCall = true, video = true, camOff = false, busy = false, suppo
         ? { getSenders: () => senders,
             getTransceivers: () => senders.map((sender, i) => ({
               sender, stopped: false, receiver: { track: { kind: sender.kind } },
-              currentDirection: i === 2 && channel === "one-way" ? "sendonly" : "sendrecv" })) }
+              currentDirection: i < 2 || agreed(i) ? "sendrecv" : "sendonly" })) }
         : { getSenders: () => senders },
       localStream: new MediaStream([mic, cam].filter(Boolean)),
       localVideo: { srcObject: null, classList: classes(), style: { removeProperty() {} }, play() { return Promise.resolve(); } }
@@ -186,11 +193,11 @@ function call({ inCall = true, video = true, camOff = false, busy = false, suppo
   const names = Object.keys(env).filter(n => n !== "state");
   const api = new Function(...names, "state", `
     let { inCall, isCamOff, restartingCallMedia, cameraFacing, callPc, localStream, localVideo } = state;
-    let sharingScreen = false, camOffBeforeShare = false, screenMix = null;
+    let sharingScreen = false, camOffBeforeShare = false, screenMix = null, sharedScreen = null;
     ${SOURCE}
     return {
       startScreenShare, stopScreenShare, updateShareBtn,
-      now: () => ({ inCall, isCamOff, restartingCallMedia, localStream, localVideo, sharingScreen, screenMix }),
+      now: () => ({ inCall, isCamOff, restartingCallMedia, localStream, localVideo, sharingScreen, screenMix, sharedScreen }),
       hangUp: () => { inCall = false; localStream = null; }
     };
   `)(...names.map(n => env[n]), env.state);
@@ -308,6 +315,73 @@ test("a window or the whole screen, or a tab the browser still plays itself: not
     assert.ok(!c.log.mixed.includes("here: screen sound"), `${surface}, kept off: ${kept}`);
     assert.equal(c.now().screenMix.playsHere, false);
   }
+});
+
+/* ── Beside the camera ── */
+
+test("beside the camera: the screen in its own channel, the camera going on, sent small — shown big, and the other side told", async () => {
+  /* Asked for: while sharing, the screen big and both people small. */
+  const c = call({ channel: "agreed" });
+  await c.startScreenShare();
+  assert.equal(c.senders[3].track.name, "screen", "in the channel kept for it: no new call");
+  assert.equal(c.senders[1].track, c.cam, "the camera stays in its own");
+  assert.ok(!c.log.order.includes("stop camera"), "and goes on");
+  assert.deepEqual(c.now().localStream.getVideoTracks(), [c.cam], "the self-view is still the camera");
+  assert.equal(c.now().sharedScreen.name, "screen");
+  const camera = c.senders[1].encoding();
+  assert.deepEqual([camera.maxBitrate, camera.maxFramerate, camera.scaleResolutionDownBy], [500000, 15, 2],
+    "only seen small, so sent small");
+  assert.equal(c.senders[3].encoding().maxBitrate, 2500000, "the screen held to its profile, as ever");
+  assert.ok(c.log.order.includes("screen big"), "shown big here");
+  assert.deepEqual(c.log.signals, [{ type: "call-screen", on: true }], "and the other side told, to show it big there");
+  assert.equal(c.now().localVideo.classList.contains("screen-share"), false, "the self-view mirrored, as the camera");
+  assert.equal(c.now().sharingScreen, true);
+});
+
+test("stopping beside the camera: the channel left empty, the camera at its own size, nothing reopened", async () => {
+  const c = call({ channel: "agreed" });
+  await c.startScreenShare();
+  c.log.order.length = 0;
+  await c.stopScreenShare();
+  assert.equal(c.senders[3].track, null, "the screen's channel empty again");
+  assert.equal(c.senders[1].track, c.cam);
+  assert.equal(c.senders[1].encoding().maxBitrate, undefined, "the camera at its own size again");
+  assert.equal(c.senders[1].encoding().scaleResolutionDownBy, 1);
+  assert.equal(c.senders[3].encoding().maxBitrate, undefined);
+  assert.equal(c.log.asked.length, 0, "the camera was never stopped, so nothing to open again");
+  assert.ok(c.log.order.includes("stop screen"));
+  assert.ok(c.log.order.includes("screen big"), "the big screen taken down");
+  assert.deepEqual(c.log.signals, [{ type: "call-screen", on: true }, { type: "call-screen", on: false }]);
+  assert.equal(c.now().sharedScreen, null);
+  assert.equal(c.now().sharingScreen, false);
+});
+
+test("beside the camera, a camera turned off stays off — the screen is shared, not the face", async () => {
+  const c = call({ channel: "agreed", camOff: true });
+  await c.startScreenShare();
+  assert.equal(c.now().isCamOff, true);
+  assert.equal(c.cam.enabled, false);
+  await c.stopScreenShare();
+  assert.equal(c.now().isCamOff, true);
+});
+
+test("the browser's own Stop sharing, beside the camera, does the same", async () => {
+  const c = call({ channel: "agreed" });
+  await c.startScreenShare();
+  c.now().sharedScreen.onended();
+  await new Promise(r => setTimeout(r, 0));
+  assert.equal(c.senders[3].track, null);
+  assert.equal(c.now().sharingScreen, false);
+});
+
+test("a page one version back — the sound's channel but not the picture's: the screen takes the camera's place", async () => {
+  const c = call({ channel: "sound-only", withSound: true });
+  await c.startScreenShare();
+  assert.equal(c.senders[1].track.name, "screen", "in the camera's place, as before");
+  assert.ok(c.log.order.includes("stop camera"));
+  assert.equal(c.senders[3].track, null, "a picture channel they will not show is left empty");
+  assert.equal(c.senders[2].track.name, "mix", "its sound still in its own channel");
+  assert.deepEqual(c.log.signals, [], "nothing to show big there");
 });
 
 test("with an older page on the other side, the screen's sound is mixed in with the voice, as before", async () => {
@@ -535,4 +609,73 @@ test("a sharer in another window is not reported as gone away", () => {
 test("the shared screen is never mirrored on this screen", () => {
   const css = fs.readFileSync(path.join(__dirname, "..", "style.css"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
   assert.match(css, /#localVideo\.screen-share\s*\{[^}]*transform:\s*none/);
+});
+
+/* ── A shared screen, big ── */
+
+test("big: their screen while they say they share it, yours while you do — theirs first — and the pictures unswapped", () => {
+  const body = grab(/^function showScreenBig\(\)\s*\{[\s\S]*?^\}/m, "showScreenBig");
+  const overlay = { classList: classes(["swapped"]) };
+  const screenVideo = { srcObject: null, plays: 0, play() { this.plays++; return Promise.resolve(); } };
+  class MediaStream { constructor(t) { this.t = t; } getVideoTracks() { return this.t; } }
+  const s = new Function("callOverlay", "screenVideo", "MediaStream", `
+    let peerSharing = false, peerScreenTrack = null, sharedScreen = null, callSwapped = true;
+    function setCallSwapped(on) { callSwapped = on; callOverlay.classList.toggle("swapped", on); }
+    ${body}
+    return {
+      showScreenBig,
+      set: o => { ({ peerSharing = peerSharing, peerScreenTrack = peerScreenTrack, sharedScreen = sharedScreen } = o); },
+      swapped: () => callSwapped
+    };`)(overlay, screenVideo, MediaStream);
+  const theirs = { name: "their screen" }, mine = { name: "my screen" };
+  const shown = () => screenVideo.srcObject && screenVideo.srcObject.getVideoTracks()[0];
+
+  s.set({ peerScreenTrack: theirs });
+  s.showScreenBig();
+  assert.equal(overlay.classList.contains("screen-big"), false, "their channel is there from the call's start — not big until they share");
+  assert.equal(s.swapped(), true, "and a swap is left alone meanwhile");
+
+  s.set({ peerSharing: true });
+  s.showScreenBig();
+  assert.equal(overlay.classList.contains("screen-big"), true);
+  assert.equal(shown(), theirs);
+  assert.equal(s.swapped(), false, "the pictures go back the usual way round");
+
+  s.set({ sharedScreen: mine });
+  s.showScreenBig();
+  assert.equal(shown(), theirs, "both sharing: theirs, which is the one to watch");
+
+  s.set({ peerSharing: false });
+  s.showScreenBig();
+  assert.equal(shown(), mine, "then yours");
+  const plays = screenVideo.plays;
+  s.showScreenBig();
+  assert.equal(screenVideo.plays, plays, "the same screen is not handed over again");
+
+  s.set({ sharedScreen: null });
+  s.showScreenBig();
+  assert.equal(overlay.classList.contains("screen-big"), false);
+  assert.equal(screenVideo.srcObject, null);
+});
+
+test("their screen's picture is kept out of their camera's, shown big only on their word, and all of it ends with the call", () => {
+  assert.match(app, /if \(transceiver && transceiver === screenVideoTransceiver\(callPc\)\) \{ peerScreenTrack = track; showScreenBig\(\); return; \}/,
+    "not added to the stream their camera plays in");
+  assert.match(app, /case "call-screen":[\s\S]*?if \(!inCall\) break;\s*peerSharing = data\.on === true;\s*showScreenBig\(\);/);
+  const stop = grab(/^function stopCallMedia\([^)]*\)\s*\{[\s\S]*?^\}/m, "stopCallMedia");
+  assert.match(stop, /if \(sharedScreen\) \{ sharedScreen\.onended = null; sharedScreen\.stop\(\); sharedScreen = null; \}/,
+    "a screen beside the camera was never in localStream, so is stopped here");
+  assert.match(stop, /peerSharing = false;\s*peerScreenTrack = null;\s*showScreenBig\(\);/);
+  const swap = grab(/^function setCallSwapped\([^)]*\)\s*\{[\s\S]*?^\}/m, "setCallSwapped");
+  assert.match(swap, /callOverlay\.classList\.contains\("screen-big"\)/, "no swapping while a screen is big");
+});
+
+test("the screen big fills the call, and the other person goes small over it", () => {
+  const css = fs.readFileSync(path.join(__dirname, "..", "style.css"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
+  assert.match(css, /#screenVideo\s*\{\s*display:\s*none;\s*\}/, "hidden unless a screen is big");
+  assert.match(css, /\.call-overlay\.screen-big #screenVideo\s*\{[^}]*inset:\s*0[^}]*object-fit:\s*contain/);
+  assert.match(css, /\.call-overlay\.screen-big:not\(\.mini\) #remoteVideo\s*\{[^}]*z-index:\s*10/);
+  const html = fs.readFileSync(path.join(__dirname, "..", "index.html"), "utf8");
+  assert.match(html, /<video id="screenVideo" autoplay playsinline muted><\/video>\s*<video id="remoteVideo"/,
+    "under the two pictures, and silent: its sound has a channel of its own");
 });
