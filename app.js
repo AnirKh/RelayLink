@@ -27,7 +27,7 @@
 
    APP_BUILD is written by tools/sync-build.js and by nothing else.
 ══════════════════════════════════════════════ */
-const APP_BUILD = "202611190954-b45f43f5";
+const APP_BUILD = "202611191354-4dc9fbd6";
 
 function refuseToRunInAStalePage() {
   let builtFor = null;
@@ -6403,6 +6403,11 @@ function consentedVideo(peerWantsVideo) {
    facing whichever way it was last flipped, so a restart after the screen was
    locked does not quietly turn a back camera round to the front. */
 const CALL_VIDEO = { facingMode: "user", width: { ideal: 1280 }, height: { ideal: 720 } };
+/* The call's microphone, with the browser's echo canceller asked to take out
+   everything this computer plays — a film in another program too — not only
+   the other person's voice. Asked, not demanded: a browser without the
+   choice reads it as plain echo cancelling, on as it always was. */
+const CALL_MIC = { echoCancellation: "all" };
 let cameraFacing = "user";              // "user" is the front camera, "environment" the back
 function callVideo() {
   return { ...CALL_VIDEO, facingMode: cameraFacing };
@@ -6416,7 +6421,7 @@ async function attachCallMedia(withVideo) {
   cameraFacing = "user";                // every call starts on the front camera
   showCameraFacing();
   localStream = await navigator.mediaDevices.getUserMedia({
-    audio: true,
+    audio: CALL_MIC,
     video: withVideo ? callVideo() : false
   });
   localStream.getTracks().forEach(watchCallTrack);
@@ -7491,7 +7496,11 @@ function screenProfile(withSound) {
    the screen's sound turned down while it hears talking; see duck.js. It
    runs on the audio thread (an AudioWorklet), which keeps time while this
    page is hidden behind what is being shown. Until it has loaded, or where
-   it cannot, the sound goes in at full volume as before.
+   it cannot, the sound goes in at full volume as before. The screen's sound
+   is listened to as well, through the same band as the voice: the film's
+   own voices come back through the microphone off the speakers, and were
+   taken for the sharer talking until the dip could tell how much of what
+   the microphone hears the film alone would explain.
 
    The voice itself goes in exactly as the microphone gave it. It was raised
    once, asked louder — which raised its hiss too, and needed a limit against
@@ -7518,17 +7527,21 @@ function mixScreenSound(mic, sound) {
   if (ctx.audioWorklet && typeof AudioWorkletNode === "function") {
     ctx.audioWorklet.addModule(`duck.js?v=${APP_BUILD}`).then(() => {
       if (closed) return;                   // sharing stopped while it loaded
-      const duck = new AudioWorkletNode(ctx, "duck", { numberOfInputs: 2, numberOfOutputs: 1, outputChannelCount: [2] });
-      const high = ctx.createBiquadFilter();
-      high.type = "highpass"; high.frequency.value = DUCK_EAR.high;
-      const low = ctx.createBiquadFilter();
-      low.type = "lowpass"; low.frequency.value = DUCK_EAR.low;
-      high.connect(low);
-      low.connect(duck, 0, 1);              // the voice, to be listened to
-      ear = high;
+      const duck = new AudioWorkletNode(ctx, "duck", { numberOfInputs: 3, numberOfOutputs: 1, outputChannelCount: [2] });
+      const band = input => {
+        const high = ctx.createBiquadFilter();
+        high.type = "highpass"; high.frequency.value = DUCK_EAR.high;
+        const low = ctx.createBiquadFilter();
+        low.type = "lowpass"; low.frequency.value = DUCK_EAR.low;
+        high.connect(low);
+        low.connect(duck, 0, input);
+        return high;
+      };
+      ear = band(1);                        // the voice, to be listened to
       micNode.connect(ear);
       soundNode.disconnect();
       soundNode.connect(duck, 0, 0);        // the screen's sound, to be turned down
+      soundNode.connect(band(2));           // and listened to, to know it in the microphone
       duck.connect(out);
     }).catch(err => console.warn("The shared sound will not dip while talking:", err));
   }
@@ -7779,7 +7792,7 @@ async function followAudioDevice() {
   restartingCallMedia = true;               // one change to the call's devices at a time
   const pc = callPc;
   try {
-    const fresh = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+    const fresh = await navigator.mediaDevices.getUserMedia({ audio: CALL_MIC, video: false });
     /* Hung up, or another call begun, while it was opening: put it straight back. */
     if (!G.mayCaptureForCall(inCall) || callPc !== pc || !localStream) {
       fresh.getTracks().forEach(track => track.stop());
@@ -7829,7 +7842,7 @@ async function restartLikeCallStart() {
      capture starts, and it has to start. stop() fires no "ended". */
   old.getTracks().forEach(track => track.stop());
   try {
-    const fresh = await navigator.mediaDevices.getUserMedia({ audio: true, video: withVideo ? callVideo() : false });
+    const fresh = await navigator.mediaDevices.getUserMedia({ audio: CALL_MIC, video: withVideo ? callVideo() : false });
     /* Hung up, or another call begun, while it was opening: put it straight back. */
     if (!G.mayCaptureForCall(inCall) || callPc !== pc || !localStream) {
       fresh.getTracks().forEach(track => track.stop());
@@ -8028,7 +8041,7 @@ async function restartEndedCallMedia() {
   callMediaRestarts++;
   try {
     const fresh = await navigator.mediaDevices.getUserMedia({
-      audio: kinds.includes("audio"),
+      audio: kinds.includes("audio") ? CALL_MIC : false,
       video: kinds.includes("video") ? callVideo() : false
     });
     /* Hung up while the phone was asking: put it all straight back. */

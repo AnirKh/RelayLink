@@ -117,6 +117,7 @@ function call({ video = true, inCall = true, refuse = false, muted = false, camO
     restartLikeCallStart: () => { log.restarted++; },
     attachCallTrack: async t => { log.attached.push(t); },
     callVideo: () => ({ facingMode: "user" }),
+    CALL_MIC: { echoCancellation: "all" },
     state: { inCall, callPc: { connectionState: "connected", getSenders: () => senders },
              localStream: new MediaStream([mic, cam].filter(Boolean)), isMuted: muted, isCamOff: camOff,
              localVideo: { srcObject: null, play() { log.played++; return Promise.resolve(); } } }
@@ -173,7 +174,7 @@ test("back from a lock that ended the microphone and camera: both start again, i
   c.mic.stop(); c.cam.stop();          // the phone ended them while locked
   await c.show(true);
   assert.equal(c.log.asked.length, 1);
-  assert.equal(c.log.asked[0].audio, true);
+  assert.deepEqual(c.log.asked[0].audio, { echoCancellation: "all" }, "the call's microphone, as the call opened it");
   assert.deepEqual(c.log.asked[0].video, { facingMode: "user" });
   assert.deepEqual(c.log.replaced.map(([kind]) => kind), ["audio", "video"], "swapped into the call, no new call");
   assert.ok(c.senders.every(s => s.track.readyState === "live"));

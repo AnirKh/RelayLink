@@ -79,6 +79,7 @@ const grab = (pattern, what) => {
   return m[0];
 };
 const SOURCE = [
+  grab(/^const CALL_MIC = [^\n]*;$/m,                              "CALL_MIC"),
   grab(/^async function audioInputsNow\(\)\s*\{[\s\S]*?^\}/m,       "audioInputsNow"),
   grab(/^function micCount\([^)]*\)\s*\{[\s\S]*?^\}/m,              "micCount"),
   grab(/^async function followAudioDevice\(\)\s*\{[\s\S]*?^\}/m,    "followAudioDevice"),
@@ -161,7 +162,7 @@ function call({ inCall = true, audio = true, video = true, muted = false, camOff
 test("headphones connected: the microphone alone is opened again, swapped in, and only then the old one stopped", async () => {
   const c = call();
   await c.followAudioDevice();
-  assert.deepEqual(c.log.asked, [{ audio: true, video: false }], "the phone's preferred microphone, the camera untouched");
+  assert.deepEqual(c.log.asked, [{ audio: { echoCancellation: "all" }, video: false }], "the phone's preferred microphone, the camera untouched");
   assert.deepEqual(c.log.order, ["open mic", "replace with headphones mic", "stop phone mic"],
     "stopped after the swap, so a failure would have left the call its sound");
   assert.equal(c.senders[0].track.name, "headphones mic", "the same sender: no new call");
@@ -236,14 +237,14 @@ test("the new microphone will not open: the call keeps the one it had", async ()
 test("headphones taken off in a video call: microphone and camera open again, as the call started", async () => {
   const c = call({ devices: [PHONE_MIC, CAMERA], seen: SEEN_AIRPODS, next: "phone" });
   await c.followAudioDevice();
-  assert.deepEqual(c.log.asked, [{ audio: true, video: { facingMode: "user" } }], "both, with the call's camera settings");
+  assert.deepEqual(c.log.asked, [{ audio: { echoCancellation: "all" }, video: { facingMode: "user" } }], "both, with the call's camera settings");
   assert.equal(c.now().audioInputsSeen, SEEN_PHONE);
 });
 
 test("headphones taken off in a voice call: the microphone alone, no camera", async () => {
   const c = call({ video: false, devices: [PHONE_MIC], seen: SEEN_AIRPODS, next: "phone" });
   await c.followAudioDevice();
-  assert.deepEqual(c.log.asked, [{ audio: true, video: false }]);
+  assert.deepEqual(c.log.asked, [{ audio: { echoCancellation: "all" }, video: false }]);
 });
 
 /* ── the restart itself, as the button and the headphones leaving run it ── */
@@ -273,7 +274,7 @@ test("muted stays muted and camera off stays off through it", async () => {
 test("a voice call is never given a camera by it", async () => {
   const c = call({ video: false });
   await c.restartLikeCallStart();
-  assert.deepEqual(c.log.asked, [{ audio: true, video: false }]);
+  assert.deepEqual(c.log.asked, [{ audio: { echoCancellation: "all" }, video: false }]);
 });
 
 test("no call, or another change under way: nothing is stopped and nothing opens", async () => {

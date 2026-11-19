@@ -9,31 +9,41 @@
   hard to hear on the other side — the two go out mixed in one track (see
   mixScreenSound() in app.js), at full volume each. Now the microphone is
   listened to on its way into the mix: when the sharer starts talking the
-  screen's sound fades down to 12% within a fraction of a second, stays down
+  screen's sound fades down to 6% within a fraction of a second, stays down
   through the pauses between words, and fades back up once they have been
   quiet for a second. Radio calls it ducking.
 
-  Tuned once more, by ear. First a quarter, quick; then the voice was asked
-  louder and the video lower, and the voice was raised too — which raised its
-  hiss with it, and the limit that kept a raised voice from clipping bent the
-  video's own loud moments: it came out dirty. So nothing is raised now: the
-  voice goes out exactly as the microphone gave it, and stands out because
-  the video goes lower, 12% (about −18 dB). And it fades at an even pace in
-  decibels, as a hand on a fader would — eased in plain volume, most of a
-  fade happened in its first moment, which sounded like a jump.
+  Tuned by ear, more than once. First a quarter, quick; then the voice was
+  asked louder and the video lower, and the voice was raised too — which
+  raised its hiss with it, and the limit that kept a raised voice from
+  clipping bent the video's own loud moments: it came out dirty. So nothing
+  is raised: the voice goes out exactly as the microphone gave it, and stands
+  out because the video goes lower — 12%, and then, asked again, 6% (about
+  −24 dB). And it fades at an even pace in decibels, as a hand on a fader
+  would — eased in plain volume, most of a fade happened in its first moment,
+  which sounded like a jump.
 
   Only the sharer's own voice can do this. The other person's voice is not in
   this mix, and what plays on the sharer's own computer — another tab, another
   program — is beyond a web page's reach.
 
   Telling a voice from the room. A microphone near speakers hears the screen's
-  sound too, and that must not count as talking. So the level is compared not
-  with a fixed line but with the quietest it has lately been: speech comes in
-  syllables, dropping back between them, while a steady background — a fan, or
-  music leaking off the speakers — sits high and pulls that line up after it.
-  Talking is a level well above it, and above near-silence, for long enough
-  that a click or a tap on the desk is not mistaken for a word. Headphones on
-  the sharing side still keep it cleanest, which a tip says.
+  sound too, and that must not count as talking. Two things keep it from
+  being taken for a voice:
+    - The level is compared not with a fixed line but with the quietest it has
+      lately been: speech comes in syllables, dropping back between them,
+      while a steady background — a fan, or music leaking off the speakers —
+      sits high and pulls that line up after it.
+    - And the screen's own sound is heard here too, as it was before it went
+      to the speakers, so how much of it comes back through the microphone
+      can be learned: the loudest the microphone has lately been, against the
+      loudest the screen's sound has. A film's voices come in syllables just
+      as the sharer's do, and the first rule alone took them for talking;
+      now the microphone has to be clearly louder than what the film would
+      put in it by itself.
+  Talking is a level above both, and above near-silence, for long enough that
+  a click or a tap on the desk is not mistaken for a word. Headphones on the
+  sharing side still keep it cleanest, which a tip says.
 
   The same file is two things:
     - an AudioWorklet module, loaded by app.js as duck.js?v=<the build>. It
@@ -48,21 +58,39 @@
 
 /* How it behaves, in decibels and milliseconds. */
 const DUCK = Object.freeze({
-  low:          0.12,   // the screen's sound while talking: 12%, about −18 dB
+  low:          0.06,   // the screen's sound while talking: 6%, about −24 dB
   quietDb:      -50,    // below this the microphone is hearing nothing much
   aboveFloorDb: 10,     // talking is this far above the quietest it has lately been
   floorRiseDb:  10,     // per second: how fast a steady background raises that line
   envMs:        25,     // the level is smoothed over this, so one slice is not a word
   onsetMs:      50,     // loud for this long before it counts as talking
   holdMs:       1000,   // and still talking until quiet for this long
-  downDbPerSec: 120,    // fading down: all the way in about 0.15 s
-  upDbPerSec:   24,     // fading back up: all the way in about 0.75 s
+  downDbPerSec: 160,    // fading down: all the way in about 0.15 s
+  upDbPerSec:   30,     // fading back up: all the way in about 0.8 s
+
+  /* The screen's sound coming back through the microphone. */
+  aboveFilmDb:  10,     // talking is this far above what the film alone would put in the microphone
+  peakMs:       400,    // the film at its loudest over this long: it reaches the microphone late,
+                        // through the speakers and the room — Bluetooth ones a quarter of a second
+  learnMs:      1500,   // how much of it comes back is learned from the loudest of each over this long,
+                        // so a moment's lateness is a small part of it
+  stepMs:       25,     // both kept as the loudest of each stretch this long
+  leakStartDb:  0,      // before anything is learned: as if the microphone heard the film at full
+  leakDownDbPerSec: 20, // what is learned follows the film getting quieter in the room readily —
+                        // not at once, as a film turned up reaches the microphone a moment late —
+  leakUpDbPerSec:   2,  // louder slowly, so a long stretch of talking is not learned as film,
+  leakUpTalkingDbPerSec: 0.1, // and hardly at all while the sound is down for a voice: the
+                        // film's own quieter moments, music between its lines, catch it up
+
   minDb:        -100    // silence, as a number
 });
 
 /** Before anything is heard: full volume, nothing learned about the room. */
 function duckInit() {
-  return { env: null, floor: null, voicedMs: 0, sinceVoiceMs: Infinity, gainDb: 0, gain: 1 };
+  return {
+    env: null, floor: null, voicedMs: 0, sinceVoiceMs: Infinity, gainDb: 0, gain: 1,
+    filmEnv: null, filmNear: null, filmLong: null, micLong: null, filmOnMs: 0, micOnMs: 0, leakDb: null
+  };
 }
 
 /** The share of the way toward a target that `ms` covers, for a smoothing
@@ -71,18 +99,70 @@ function ease(ms, tc) {
   return tc > 0 ? 1 - Math.exp(-ms / tc) : 1;
 }
 
+/** A level, smoothed: the slice's own the first time. */
+function smooth(was, db, ms, c) {
+  return was === null ? db : was + (db - was) * ease(ms, c.envMs);
+}
+
+/** The loudest over the last `windowMs`, kept as the loudest of each
+    c.stepMs: a new stretch begun when the newest is full, the oldest let go.
+    Returns the next record; its `db` is the loudest in it. (Held and let go
+    evenly instead, a syllable a shade below the one before let go of it
+    early, and the film and the microphone stopped lining up.) */
+function loudest(was, db, ms, windowMs, c) {
+  const steps = Math.max(1, Math.round(windowMs / c.stepMs));
+  let maxes, into;
+  if (!was) {
+    maxes = [db]; into = ms;
+  } else if (was.ms + ms <= c.stepMs) {
+    maxes = was.maxes.slice();
+    maxes[maxes.length - 1] = Math.max(maxes[maxes.length - 1], db);
+    into = was.ms + ms;
+  } else {
+    maxes = was.maxes.slice(Math.max(0, was.maxes.length - steps + 1));
+    maxes.push(db); into = ms;
+  }
+  return { maxes, ms: into, db: Math.max(...maxes) };
+}
+
 /**
- * One slice of sound: the microphone's level in it (dBFS) and how long it
- * lasted. Returns the next state; its `gain` is how loud the screen's sound
- * is to be by the end of this slice, 1 being as it came.
+ * One slice of sound: the microphone's level in it (dBFS), how long it
+ * lasted, and the level of the screen's own sound in the same slice. Returns
+ * the next state; its `gain` is how loud the screen's sound is to be by the
+ * end of this slice, 1 being as it came.
  */
-function duckStep(state, levelDb, ms, c = DUCK) {
+function duckStep(state, levelDb, ms, filmLevelDb = -Infinity, c = DUCK) {
   const s = state || duckInit();
-  const db = Number.isFinite(levelDb) ? Math.max(c.minDb, levelDb) : c.minDb;
-  const env = s.env === null ? db : s.env + (db - s.env) * ease(ms, c.envMs);
+  const heard = Number.isFinite(levelDb) && levelDb > c.minDb;   // a muted track, or one gone, is silence
+  const db = heard ? levelDb : c.minDb;
+  const env = smooth(s.env, db, ms, c);
   /* The quietest it has lately been: down at once, up only slowly. */
   const floor = s.floor === null ? env : Math.min(env, s.floor + c.floorRiseDb * ms / 1000);
-  const loud = env >= c.quietDb && env >= floor + c.aboveFloorDb;
+
+  /* The film, and how much of it the microphone hears: the loudest of each
+     over the same stretch, compared. Learned only once the film has been
+     playing longer than it takes to come round through the room, and the
+     microphone hearing for the whole stretch — a muted microphone's silence
+     says nothing about it. */
+  const filmDb = Number.isFinite(filmLevelDb) ? Math.max(c.minDb, filmLevelDb) : c.minDb;
+  const filmEnv = smooth(s.filmEnv, filmDb, ms, c);
+  const film = loudest(s.filmNear, filmEnv, ms, c.peakMs, c);
+  const filmLong = loudest(s.filmLong, filmEnv, ms, c.learnMs, c);
+  const micLong = loudest(s.micLong, env, ms, c.learnMs, c);
+  const playing = film.db >= c.quietDb;
+  const filmOnMs = playing ? s.filmOnMs + ms : 0;
+  const micOnMs = heard ? s.micOnMs + ms : 0;
+  let leakDb = s.leakDb;
+  if (filmOnMs >= c.peakMs && micOnMs >= c.learnMs) {
+    const now = micLong.db - filmLong.db;
+    const up = s.sinceVoiceMs < c.holdMs ? c.leakUpTalkingDbPerSec : c.leakUpDbPerSec;
+    leakDb = leakDb === null ? now
+      : now < leakDb ? Math.max(now, leakDb - c.leakDownDbPerSec * ms / 1000)
+      : Math.min(now, leakDb + up * ms / 1000);
+  }
+  const filmLine = playing ? film.db + (leakDb === null ? c.leakStartDb : leakDb) + c.aboveFilmDb : -Infinity;
+
+  const loud = env >= c.quietDb && env >= floor + c.aboveFloorDb && env >= filmLine;
   const voicedMs = loud ? s.voicedMs + ms : 0;
   const sinceVoiceMs = voicedMs >= c.onsetMs ? 0 : s.sinceVoiceMs + ms;
   /* Toward the target at an even pace in decibels, never past it. */
@@ -91,7 +171,10 @@ function duckStep(state, levelDb, ms, c = DUCK) {
   const gainDb = targetDb < was
     ? Math.max(targetDb, was - c.downDbPerSec * ms / 1000)
     : Math.min(targetDb, was + c.upDbPerSec * ms / 1000);
-  return { env, floor, voicedMs, sinceVoiceMs, gainDb, gain: gainDb === 0 ? 1 : 10 ** (gainDb / 20) };
+  return {
+    env, floor, voicedMs, sinceVoiceMs, gainDb, gain: gainDb === 0 ? 1 : 10 ** (gainDb / 20),
+    filmEnv, filmNear: film, filmLong, micLong, filmOnMs, micOnMs, leakDb
+  };
 }
 
 /** The level of a slice across all its channels, in dBFS. Nothing → −∞. */
@@ -107,6 +190,8 @@ function levelDb(channels) {
 /* ── On the audio thread ───────────────────────
    Input 0: the screen's sound. Input 1: the microphone, only its speech band
    — app.js filters it on the way here; this is for listening, not sending.
+   Input 2: the screen's sound again, through the same band, so the two are
+   measured alike.
    Output: the screen's sound at the level the rule says, eased across each
    slice so a change is never a click. */
 if (typeof registerProcessor === "function" && typeof AudioWorkletProcessor === "function") {
@@ -120,7 +205,7 @@ if (typeof registerProcessor === "function" && typeof AudioWorkletProcessor === 
       const out = outputs[0] || [];
       const frames = out[0] ? out[0].length : 128;
       const before = this.state.gain;
-      this.state = duckStep(this.state, levelDb(inputs[1]), frames / sampleRate * 1000);
+      this.state = duckStep(this.state, levelDb(inputs[1]), frames / sampleRate * 1000, levelDb(inputs[2]));
       const after = this.state.gain;
       for (let ch = 0; ch < out.length; ch++) {
         const from = sound[Math.min(ch, sound.length - 1)];
