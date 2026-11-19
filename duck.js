@@ -9,9 +9,18 @@
   hard to hear on the other side — the two go out mixed in one track (see
   mixScreenSound() in app.js), at full volume each. Now the microphone is
   listened to on its way into the mix: when the sharer starts talking the
-  screen's sound drops to 15% within a fraction of a second, stays down
-  through the pauses between words, and comes back up smoothly once they have
-  been quiet for a moment. Radio calls it ducking.
+  screen's sound fades down to 12% within a fraction of a second, stays down
+  through the pauses between words, and fades back up once they have been
+  quiet for a second. Radio calls it ducking.
+
+  Tuned once more, by ear. First a quarter, quick; then the voice was asked
+  louder and the video lower, and the voice was raised too — which raised its
+  hiss with it, and the limit that kept a raised voice from clipping bent the
+  video's own loud moments: it came out dirty. So nothing is raised now: the
+  voice goes out exactly as the microphone gave it, and stands out because
+  the video goes lower, 12% (about −18 dB). And it fades at an even pace in
+  decibels, as a hand on a fader would — eased in plain volume, most of a
+  fade happened in its first moment, which sounded like a jump.
 
   Only the sharer's own voice can do this. The other person's voice is not in
   this mix, and what plays on the sharer's own computer — another tab, another
@@ -39,21 +48,21 @@
 
 /* How it behaves, in decibels and milliseconds. */
 const DUCK = Object.freeze({
-  low:          0.15,   // the screen's sound while talking: 15%, about −16 dB (was a quarter; asked lower)
+  low:          0.12,   // the screen's sound while talking: 12%, about −18 dB
   quietDb:      -50,    // below this the microphone is hearing nothing much
   aboveFloorDb: 10,     // talking is this far above the quietest it has lately been
   floorRiseDb:  10,     // per second: how fast a steady background raises that line
   envMs:        25,     // the level is smoothed over this, so one slice is not a word
   onsetMs:      50,     // loud for this long before it counts as talking
-  holdMs:       700,    // and still talking until quiet for this long
-  downMs:       40,     // how quickly the sound dips
-  upMs:         400,    // and how gently it comes back
+  holdMs:       1000,   // and still talking until quiet for this long
+  downDbPerSec: 120,    // fading down: all the way in about 0.15 s
+  upDbPerSec:   24,     // fading back up: all the way in about 0.75 s
   minDb:        -100    // silence, as a number
 });
 
 /** Before anything is heard: full volume, nothing learned about the room. */
 function duckInit() {
-  return { env: null, floor: null, voicedMs: 0, sinceVoiceMs: Infinity, gain: 1 };
+  return { env: null, floor: null, voicedMs: 0, sinceVoiceMs: Infinity, gainDb: 0, gain: 1 };
 }
 
 /** The share of the way toward a target that `ms` covers, for a smoothing
@@ -76,9 +85,13 @@ function duckStep(state, levelDb, ms, c = DUCK) {
   const loud = env >= c.quietDb && env >= floor + c.aboveFloorDb;
   const voicedMs = loud ? s.voicedMs + ms : 0;
   const sinceVoiceMs = voicedMs >= c.onsetMs ? 0 : s.sinceVoiceMs + ms;
-  const target = sinceVoiceMs < c.holdMs ? c.low : 1;
-  const gain = s.gain + (target - s.gain) * ease(ms, target < s.gain ? c.downMs : c.upMs);
-  return { env, floor, voicedMs, sinceVoiceMs, gain };
+  /* Toward the target at an even pace in decibels, never past it. */
+  const targetDb = sinceVoiceMs < c.holdMs ? 20 * Math.log10(c.low) : 0;
+  const was = Number.isFinite(s.gainDb) ? s.gainDb : 0;
+  const gainDb = targetDb < was
+    ? Math.max(targetDb, was - c.downDbPerSec * ms / 1000)
+    : Math.min(targetDb, was + c.upDbPerSec * ms / 1000);
+  return { env, floor, voicedMs, sinceVoiceMs, gainDb, gain: gainDb === 0 ? 1 : 10 ** (gainDb / 20) };
 }
 
 /** The level of a slice across all its channels, in dBFS. Nothing → −∞. */
