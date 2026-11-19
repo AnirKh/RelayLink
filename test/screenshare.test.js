@@ -71,6 +71,8 @@ const SOURCE = [
   grab(/^const SCREEN_CAPTURE = [^\n]*;$/m,                           "SCREEN_CAPTURE"),
   grab(/^function screenProfile\([^)]*\)\s*\{[\s\S]*?^\}/m,           "screenProfile"),
   grab(/^function mixScreenSound\([^)]*\)\s*\{[\s\S]*?^\}/m,          "mixScreenSound"),
+  grab(/^function screenSoundTransceiver\([^)]*\)\s*\{[\s\S]*?^\}/m,   "screenSoundTransceiver"),
+  grab(/^function screenSoundSender\([^)]*\)\s*\{[\s\S]*?^\}/m,        "screenSoundSender"),
   grab(/^function screenScale\([^)]*\)\s*\{[\s\S]*?^\}/m,             "screenScale"),
   grab(/^function screenConstraints\([^)]*\)\s*\{[\s\S]*?^\}/m,       "screenConstraints"),
   grab(/^async function limitScreenSender\([^)]*\)\s*\{[\s\S]*?^\}/m,  "limitScreenSender"),
@@ -88,7 +90,7 @@ function classes(initial = []) {
 
 function call({ inCall = true, video = true, camOff = false, busy = false, supported = true,
                 cancel = false, cameraRefuses = false, screenSize = [2560, 1600], refuseLimits = false,
-                withSound = false, mixFails = false } = {}) {
+                withSound = false, mixFails = false, channel = null } = {}) {
   const log = { order: [], picker: [], asked: [], replaced: [], attached: [], watched: [], toasts: [], flipUpdates: 0,
                 applied: [], params: [], mixed: [] };
   let gate = null;
@@ -105,10 +107,15 @@ function call({ inCall = true, video = true, camOff = false, busy = false, suppo
   const mic = track("audio", "mic");
   const cam = video ? track("video", "camera") : null;
   if (cam) cam.enabled = !camOff;
-  const senders = [mic, cam].filter(Boolean).map(t => {
+  /* channel: "agreed" — both sides made a sound channel for the screen;
+     "one-way" — the other side, an older page, answered without sending on it. */
+  const tracks = [mic, cam].filter(Boolean);
+  if (channel) tracks.push(null);
+  const senders = tracks.map(t => {
     let params = { transactionId: "t1", encodings: [{ active: true, scaleResolutionDownBy: 1 }] };
     return {
       track: t, replaceTrack(n) { log.order.push(`replace with ${n ? n.name : "nothing"}`); log.replaced.push(n); this.track = n; return Promise.resolve(); },
+      kind: t ? t.kind : "audio",
       getParameters: () => JSON.parse(JSON.stringify(params)),
       setParameters: async p => {
         if (refuseLimits) throw new Error("InvalidModificationError");
@@ -163,7 +170,12 @@ function call({ inCall = true, video = true, camOff = false, busy = false, suppo
     } },
     state: {
       inCall, isCamOff: camOff, restartingCallMedia: busy, cameraFacing: "user",
-      callPc: { getSenders: () => senders },
+      callPc: channel
+        ? { getSenders: () => senders,
+            getTransceivers: () => senders.map((sender, i) => ({
+              sender, stopped: false, receiver: { track: { kind: sender.kind } },
+              currentDirection: i === 2 && channel === "one-way" ? "sendonly" : "sendrecv" })) }
+        : { getSenders: () => senders },
       localStream: new MediaStream([mic, cam].filter(Boolean)),
       localVideo: { srcObject: null, classList: classes(), style: { removeProperty() {} }, play() { return Promise.resolve(); } }
     }
@@ -259,7 +271,35 @@ test("a browser that will not take limits still shares", async () => {
 
 /* ── Sharing with sound ── */
 
-test("shared with its sound: the voice and the screen's sound go out mixed, in the voice's own sender", async () => {
+test("shared with its sound: the screen's sound goes out in a channel of its own, and the voice in its own, untouched", async () => {
+  /* Reported: with a film and the voice in one track, the voice came out
+     altered and the two were hard to tell apart. */
+  const c = call({ withSound: true, channel: "agreed" });
+  await c.startScreenShare();
+  assert.deepEqual(c.log.mixed, ["in screen sound"], "only the screen's sound goes out of the mix — the microphone is only listened to");
+  assert.equal(c.senders[2].track.name, "mix", "in the channel kept for it: no new call");
+  assert.equal(c.senders[2].track.contentHint, "music");
+  assert.equal(c.senders[0].track, c.mic, "the voice goes out as the microphone gave it, as in any call");
+  assert.deepEqual(c.log.toasts, ["shareSoundTip"]);
+
+  await c.stopScreenShare();
+  assert.equal(c.senders[2].track, null, "the channel left empty again");
+  assert.equal(c.senders[0].track, c.mic);
+  assert.ok(c.log.mixed.includes("closed"));
+  assert.equal(c.now().screenMix, null);
+});
+
+test("with an older page on the other side, the screen's sound is mixed in with the voice, as before", async () => {
+  for (const channel of [null, "one-way"]) {
+    const c = call({ withSound: true, channel });
+    await c.startScreenShare();
+    assert.deepEqual(c.log.mixed, ["in mic", "in screen sound"], `both into the one mix (${channel})`);
+    assert.equal(c.senders[0].track.name, "mix");
+    if (channel) assert.equal(c.senders[2].track, null, "a channel they will not hear is left empty");
+  }
+});
+
+test("shared with its sound, mixed: the voice and the screen's sound go out together, in the voice's own sender", async () => {
   /* Reported: a video playing on the laptop sounded bad on the phone — only
      its picture was shared, and its sound reached the call off the laptop's
      speakers through a microphone made for speech. */

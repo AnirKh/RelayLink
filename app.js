@@ -27,7 +27,7 @@
 
    APP_BUILD is written by tools/sync-build.js and by nothing else.
 ══════════════════════════════════════════════ */
-const APP_BUILD = "202611191354-4dc9fbd6";
+const APP_BUILD = "202611191410-1558dfbd";
 
 function refuseToRunInAStalePage() {
   let builtFor = null;
@@ -4087,7 +4087,9 @@ function createCallPeerConnection() {
     }
   };
 
-  callPc.ontrack = ({ track }) => {
+  callPc.ontrack = ({ track, transceiver }) => {
+    /* The other side's screen sound, in its own channel: played apart from their voice. */
+    if (transceiver && transceiver === screenSoundTransceiver(callPc)) { playScreenSound(track); return; }
     // Always store the stream even if inCall hasn't been set yet —
     // the callee's ontrack fires during setRemoteDescription(offer),
     // which happens before inCall = true on their side.
@@ -6403,11 +6405,6 @@ function consentedVideo(peerWantsVideo) {
    facing whichever way it was last flipped, so a restart after the screen was
    locked does not quietly turn a back camera round to the front. */
 const CALL_VIDEO = { facingMode: "user", width: { ideal: 1280 }, height: { ideal: 720 } };
-/* The call's microphone, with the browser's echo canceller asked to take out
-   everything this computer plays — a film in another program too — not only
-   the other person's voice. Asked, not demanded: a browser without the
-   choice reads it as plain echo cancelling, on as it always was. */
-const CALL_MIC = { echoCancellation: "all" };
 let cameraFacing = "user";              // "user" is the front camera, "environment" the back
 function callVideo() {
   return { ...CALL_VIDEO, facingMode: cameraFacing };
@@ -6420,8 +6417,11 @@ async function attachCallMedia(withVideo) {
   clearTimeout(audioChangeTimer);
   cameraFacing = "user";                // every call starts on the front camera
   showCameraFacing();
+  /* audio: true — the browser's echo cancelling, as it chooses. Asking it to
+     take out everything the computer plays ("all") was tried: the voice came
+     out far and altered while a film played, worked over along with it. */
   localStream = await navigator.mediaDevices.getUserMedia({
-    audio: CALL_MIC,
+    audio: true,
     video: withVideo ? callVideo() : false
   });
   localStream.getTracks().forEach(watchCallTrack);
@@ -6826,6 +6826,62 @@ function ensureOutgoingCallTransceivers(withVideo) {
   const hasVideo = callPc.getTransceivers().some(t => t.receiver?.track?.kind === "video" && !t.stopped);
   if (!hasAudio) callPc.addTransceiver("audio", { direction: "sendrecv" });
   if (withVideo && !hasVideo) callPc.addTransceiver("video", { direction: "sendrecv" });
+  /* And, after the voice and the picture, a channel for a shared screen's sound. */
+  if (withVideo && !screenSoundTransceiver(callPc)) callPc.addTransceiver("audio", { direction: "sendrecv" });
+}
+
+/* ── The screen's sound, a channel of its own ──
+   Reported: with a film and the voice mixed into one track, the voice came
+   out altered and the two were hard to tell apart — and on the other side the
+   voice's leveller evened out the film along with the voice, undoing its dip.
+   So a video call carries a second sound channel, for a shared screen's
+   sound: the voice goes out in its own, exactly as in any call, and the film
+   in this one, turned down while the sharer talks (see mixScreenSound). The
+   other side plays it apart from the voice, as it came.
+
+   It is made with the call — the caller offers it, the answerer takes it both
+   ways — so starting to share is only a track put into it, with nothing to
+   agree again. It is the second sound channel on both sides, in the order
+   the caller made them. A side on an older page has none to offer, or answers
+   without sending on it; then the film is mixed in with the voice, as before. */
+function screenSoundTransceiver(pc) {
+  if (!pc || typeof pc.getTransceivers !== "function") return null;
+  return pc.getTransceivers().filter(t => t.receiver?.track?.kind === "audio")[1] || null;
+}
+
+/** The screen sound's own sender — only where both sides have agreed it. */
+function screenSoundSender(pc) {
+  const channel = screenSoundTransceiver(pc);
+  return channel && !channel.stopped && channel.currentDirection === "sendrecv" ? channel.sender : null;
+}
+
+/** The answering side takes the channel both ways, so its own share can use it too. */
+function acceptScreenSoundChannel() {
+  const channel = screenSoundTransceiver(callPc);
+  if (channel && !channel.stopped) channel.direction = "sendrecv";
+}
+
+/* The other side's screen sound, played on its own — not through the voice's
+   leveller, and already dipped on the sharing side. */
+let screenSoundOut = null;
+
+function playScreenSound(track) {
+  if (!screenSoundOut) screenSoundOut = document.createElement("audio");
+  screenSoundOut.srcObject = new MediaStream([track]);
+  track.onunmute = playScreenSoundOut;      // the other side began sharing its sound
+  playScreenSoundOut();
+}
+
+function playScreenSoundOut() {
+  if (!screenSoundOut || !screenSoundOut.srcObject) return;
+  screenSoundOut.play().catch(err => {
+    if (err && err.name === "NotAllowedError" && inCall) callTapToHear.classList.remove("hidden");
+  });
+}
+
+function stopScreenSoundOut() {
+  if (!screenSoundOut) return;
+  screenSoundOut.srcObject = null;
 }
 
 function stopLocalCallMedia() {
@@ -6847,7 +6903,9 @@ function stopLocalCallMedia() {
 
 async function attachCallTrack(track, stream) {
   if (!callPc) return;
+  const screenSound = screenSoundTransceiver(callPc);     // kept for a shared screen's sound
   const reusable = callPc.getTransceivers().find(transceiver =>
+    transceiver !== screenSound &&
     transceiver.receiver?.track?.kind === track.kind &&
     !transceiver.sender?.track &&
     !transceiver.stopped
@@ -7065,6 +7123,7 @@ async function handleIncomingCallOffer(data) {
     await callPc.setRemoteDescription(new RTCSessionDescription(data.offer));
     await drainCallIceQueue();
     await attachCallMedia(withVideo);
+    acceptScreenSoundChannel();
     preferCallVideoCodecs();
     const answer = await callPc.createAnswer();
     await setCallLocalDescription(answer);
@@ -7088,6 +7147,7 @@ async function handleIncomingCallOffer(data) {
 function stopCallMedia(clearOverlay = true) {
   stopLocalCallMedia();
   stopLevellingVoice();
+  stopScreenSoundOut();
   remoteVideo.srcObject = null;
   isMuted = false;
   isCamOff = false;
@@ -7505,24 +7565,29 @@ function screenProfile(withSound) {
    The voice itself goes in exactly as the microphone gave it. It was raised
    once, asked louder — which raised its hiss too, and needed a limit against
    clipping that bent the video's own loud moments: dirty. It stands out by
-   the video going lower instead.                                          */
+   the video going lower instead.
+
+   And where the call has a channel for the screen's sound (see "The screen's
+   sound, a channel of its own"), the voice is not in this at all: the
+   microphone is only listened to, and what comes out is the film alone, for
+   that channel. Mixed in with the voice is for a call with an older page.  */
 let screenMix = null;
 
 /* The voice's speech band, which is all the listening needs: below it is
    hum and desk knocks, above it hiss. */
 const DUCK_EAR = { high: 250, low: 3500 };
 
-function mixScreenSound(mic, sound) {
+function mixScreenSound(mic, sound, withVoice) {
   const Ctx = window.AudioContext || window.webkitAudioContext;
   const ctx = new Ctx();
   const out = ctx.createMediaStreamDestination();
-  const source = track => {
+  const source = (track, sent) => {
     const node = ctx.createMediaStreamSource(new MediaStream([track]));
-    node.connect(out);
+    if (sent) node.connect(out);
     return node;
   };
-  let micNode = source(mic);
-  const soundNode = source(sound);
+  let micNode = mic ? source(mic, withVoice) : null;   // sent only when mixed in; listened to either way
+  const soundNode = source(sound, true);
   let ear = null, closed = false;
   if (ctx.audioWorklet && typeof AudioWorkletNode === "function") {
     ctx.audioWorklet.addModule(`duck.js?v=${APP_BUILD}`).then(() => {
@@ -7538,7 +7603,7 @@ function mixScreenSound(mic, sound) {
         return high;
       };
       ear = band(1);                        // the voice, to be listened to
-      micNode.connect(ear);
+      if (micNode) micNode.connect(ear);
       soundNode.disconnect();
       soundNode.connect(duck, 0, 0);        // the screen's sound, to be turned down
       soundNode.connect(band(2));           // and listened to, to know it in the microphone
@@ -7550,14 +7615,15 @@ function mixScreenSound(mic, sound) {
   track.contentHint = "music";              // not squeezed as if it were only a voice
   return {
     track,
+    carriesVoice: Boolean(withVoice),
     setMic(next) {
-      micNode.disconnect();
-      micNode = source(next);
-      if (ear) micNode.connect(ear);        // headphones' microphone is listened to now
+      if (micNode) micNode.disconnect();
+      micNode = next ? source(next, withVoice) : null;
+      if (ear && micNode) micNode.connect(ear);   // headphones' microphone is listened to now
     },
     close() {
       closed = true;
-      try { micNode.disconnect(); soundNode.disconnect(); } catch (_) { /* already apart */ }
+      try { if (micNode) micNode.disconnect(); soundNode.disconnect(); } catch (_) { /* already apart */ }
       sound.stop();
       track.stop();
       ctx.close().catch(() => {});
@@ -7632,12 +7698,15 @@ async function startScreenShare() {
     else        await attachCallTrack(screen, localStream);
     await limitScreenSender(pc.getSenders().find(s => s.track === screen), screen, profile);
     if (sound) {
-      const mic = localStream.getAudioTracks()[0];
-      const voice = pc.getSenders().find(s => s.track === mic);
+      const mic = localStream.getAudioTracks()[0] || null;
+      /* Its own channel, where both sides have one; otherwise mixed in with the
+         voice, in the voice's sender. */
+      const own = screenSoundSender(pc);
+      const voice = own ? null : pc.getSenders().find(s => s.track === mic);
       try {
-        if (!mic || !voice) throw new Error("no microphone in the call to mix with");
-        screenMix = mixScreenSound(mic, sound);
-        await voice.replaceTrack(screenMix.track);
+        if (!own && (!mic || !voice)) throw new Error("no microphone in the call to mix with");
+        screenMix = mixScreenSound(mic, sound, !own);
+        await (own || voice).replaceTrack(screenMix.track);
         showToast(t("shareSoundTip"), "info");
       } catch (err) {
         /* The picture is still shared; only its sound is not. */
@@ -7679,11 +7748,13 @@ async function stopScreenShare() {
   const sender = pc?.getSenders().find(s => s.track === screen);
   try {
     if (!G.mayCaptureForCall(inCall)) return;   // hung up: the call's own ending stops everything
-    /* The voice alone again, in the sender the mix was in. */
+    /* The screen's sound out of the call: its own channel left empty, or the
+       voice alone again in the sender the mix was in. */
     if (screenMix) {
-      const voice = pc?.getSenders().find(s => s.track === screenMix.track);
+      const carrier = pc?.getSenders().find(s => s.track === screenMix.track);
       const mic = localStream?.getAudioTracks()[0];
-      if (voice && mic) await voice.replaceTrack(mic);
+      if (carrier && !screenMix.carriesVoice) await carrier.replaceTrack(null);
+      else if (carrier && mic) await carrier.replaceTrack(mic);
       screenMix.close();
       screenMix = null;
     }
@@ -7792,7 +7863,7 @@ async function followAudioDevice() {
   restartingCallMedia = true;               // one change to the call's devices at a time
   const pc = callPc;
   try {
-    const fresh = await navigator.mediaDevices.getUserMedia({ audio: CALL_MIC, video: false });
+    const fresh = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
     /* Hung up, or another call begun, while it was opening: put it straight back. */
     if (!G.mayCaptureForCall(inCall) || callPc !== pc || !localStream) {
       fresh.getTracks().forEach(track => track.stop());
@@ -7802,9 +7873,11 @@ async function followAudioDevice() {
     mic.enabled = !isMuted;                 // muted stays muted
     watchCallTrack(mic);
     const sender = pc?.getSenders().find(s => s.track === old);
-    /* While a screen's sound is mixed in, the sender carries the mix: the new
-       microphone goes into the mix in the old one's place. */
-    if (screenMix)   screenMix.setMic(mic);
+    /* While a screen's sound is shared, its dip listens to the new microphone.
+       Where the voice is mixed in with it, the sender carries the mix: the new
+       microphone goes into the mix in the old one's place, and nowhere else. */
+    if (screenMix) screenMix.setMic(mic);
+    if (screenMix?.carriesVoice) { /* in the mix already */ }
     else if (sender) await sender.replaceTrack(mic);
     else             await attachCallTrack(mic, localStream);
     localStream = new MediaStream([mic, ...localStream.getVideoTracks()]);
@@ -7842,7 +7915,7 @@ async function restartLikeCallStart() {
      capture starts, and it has to start. stop() fires no "ended". */
   old.getTracks().forEach(track => track.stop());
   try {
-    const fresh = await navigator.mediaDevices.getUserMedia({ audio: CALL_MIC, video: withVideo ? callVideo() : false });
+    const fresh = await navigator.mediaDevices.getUserMedia({ audio: true, video: withVideo ? callVideo() : false });
     /* Hung up, or another call begun, while it was opening: put it straight back. */
     if (!G.mayCaptureForCall(inCall) || callPc !== pc || !localStream) {
       fresh.getTracks().forEach(track => track.stop());
@@ -8014,6 +8087,7 @@ callMicNote.onclick = () => {
 };
 
 callTapToHear.onclick = () => {
+  playScreenSoundOut();
   if (voiceLeveller) voiceLeveller.ctx.resume().then(() => callTapToHear.classList.add("hidden")).catch(() => {});
   remoteVideo.play().then(() => { if (!voiceLeveller) callTapToHear.classList.add("hidden"); }).catch(() => {});
 };
@@ -8041,7 +8115,7 @@ async function restartEndedCallMedia() {
   callMediaRestarts++;
   try {
     const fresh = await navigator.mediaDevices.getUserMedia({
-      audio: kinds.includes("audio") ? CALL_MIC : false,
+      audio: kinds.includes("audio"),
       video: kinds.includes("video") ? callVideo() : false
     });
     /* Hung up while the phone was asking: put it all straight back. */
@@ -8054,6 +8128,12 @@ async function restartEndedCallMedia() {
       /* Muted stays muted, camera off stays off. */
       track.enabled = track.kind === "audio" ? !isMuted : !isCamOff;
       watchCallTrack(track);
+      /* While a screen's sound is shared, its dip listens to the new microphone
+         — and where the voice is mixed in with it, that is where it goes. */
+      if (track.kind === "audio" && screenMix) {
+        screenMix.setMic(track);
+        if (screenMix.carriesVoice) continue;
+      }
       const old = localStream.getTracks().find(o => o.kind === track.kind && o.readyState === "ended");
       const sender = old && callPc.getSenders().find(s => s.track === old);
       if (sender) await sender.replaceTrack(track);

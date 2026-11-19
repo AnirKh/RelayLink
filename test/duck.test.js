@@ -408,16 +408,42 @@ test("the voice goes out exactly as the microphone gave it: not raised, not limi
      hiss rose with it, and the limit bent the video's own loud moments —
      dirty. Nothing on the way out changes the sound now but the dip. */
   for (const m of [mixer({ worklet: false }), mixer()]) {
-    m.mix(m.track("mic"), m.track("screen sound"));
+    m.mix(m.track("mic"), m.track("screen sound"), true);
     m.load(); await m.settle();
     assert.ok(m.edges.has("mic → out"), "straight in");
     assert.deepEqual(m.log.extra, [], "no gain, shaper or compressor anywhere in the mix");
   }
 });
 
+test("in a channel of its own, the screen's sound goes out alone: the voice is only listened to", async () => {
+  const m = mixer();
+  const screenMix = m.mix(m.track("mic"), m.track("screen sound"), false);
+  assert.equal(screenMix.carriesVoice, false);
+  assert.deepEqual([...m.edges].sort(), ["screen sound → out"], "at full volume until the dip has loaded, and no voice in it");
+  m.load(); await m.settle();
+  assert.deepEqual([...m.edges].sort(), [
+    "duck → out",
+    "filter 1 → filter 2",
+    "filter 2 → duck:1",
+    "filter 3 → filter 4",
+    "filter 4 → duck:2",
+    "mic → filter 1",                       // listened to, and nothing more
+    "screen sound → duck",
+    "screen sound → filter 3"
+  ]);
+  assert.deepEqual(m.log.extra, []);
+  screenMix.setMic(m.track("headset"));
+  assert.ok(m.edges.has("headset → filter 1") && !m.edges.has("headset → out"), "a new microphone, listened to only");
+
+  const none = mixer({ worklet: false });
+  none.mix(null, none.track("screen sound"), false);
+  assert.deepEqual([...none.edges], ["screen sound → out"], "no microphone: the film goes out undipped");
+});
+
 test("the screen's sound goes through the dip, and the voice is listened to on its way in", async () => {
   const m = mixer();
-  const screenMix = m.mix(m.track("mic"), m.track("screen sound"));
+  const screenMix = m.mix(m.track("mic"), m.track("screen sound"), true);
+  assert.equal(screenMix.carriesVoice, true);
   assert.deepEqual([...m.edges].sort(), ["mic → out", "screen sound → out"], "at full volume until it has loaded");
   assert.deepEqual(m.log.loaded, ["duck.js?v=202611160000-abcdef12"], "this build's copy");
   m.load(); await m.settle();
@@ -444,20 +470,20 @@ test("the screen's sound goes through the dip, and the voice is listened to on i
 
 test("sharing stopped before the dip loaded: nothing is built", async () => {
   const m = mixer();
-  m.mix(m.track("mic"), m.track("screen sound")).close();
+  m.mix(m.track("mic"), m.track("screen sound"), true).close();
   m.load(); await m.settle();
   assert.deepEqual(m.log.made, []);
 });
 
 test("where the dip cannot load, or the browser has none, the sound goes in at full volume as before", async () => {
   const failed = mixer({ loadFails: true });
-  failed.mix(failed.track("mic"), failed.track("screen sound"));
+  failed.mix(failed.track("mic"), failed.track("screen sound"), true);
   failed.load(); await failed.settle();
   assert.deepEqual([...failed.edges].sort(), ["mic → out", "screen sound → out"]);
   assert.equal(failed.log.warned.length, 1);
 
   const none = mixer({ worklet: false });
-  const mix = none.mix(none.track("mic"), none.track("screen sound"));
+  const mix = none.mix(none.track("mic"), none.track("screen sound"), true);
   assert.deepEqual(none.log.loaded, []);
   mix.setMic(none.track("headset"));
   assert.deepEqual([...none.edges].sort(), ["headset → out", "screen sound → out"]);
