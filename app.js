@@ -27,7 +27,7 @@
 
    APP_BUILD is written by tools/sync-build.js and by nothing else.
 ══════════════════════════════════════════════ */
-const APP_BUILD = "202611192251-8142717f";
+const APP_BUILD = "202611192310-19009636";
 
 function refuseToRunInAStalePage() {
   let builtFor = null;
@@ -6533,11 +6533,53 @@ function withoutRotationExtension(desc) {
   return { type: desc?.type, sdp };
 }
 
+/* ── The film's sound in stereo ─────────────
+   Asked for: a shared film's sound fuller. A browser sends a call's sound in
+   one channel at about 32 kb/s — made for a voice — unless the side
+   receiving it asks, in the description it writes, for two (stereo=1) and
+   more. So every description this side writes asks for that on the screen
+   sound's own channel — the second sound channel (see "The screen's sound, a
+   channel of its own") — and says it may send so too (sprop-stereo): two
+   channels, up to 128 kb/s, for music and a film's effects. The voice's
+   channel is left as it was. A side on an older page does not ask, and is
+   sent the film as before; its asking reaches this side whatever its age. */
+const SCREEN_SOUND_OPUS = { stereo: 1, "sprop-stereo": 1, maxaveragebitrate: 128000 };
+
+function withStereoScreenSound(desc) {
+  const sdp = String(desc?.sdp || "");
+  let sounds = 0;
+  const sections = sdp.split(/(?=^m=)/m).map(section => {
+    if (!/^m=audio /.test(section) || ++sounds !== 2) return section;
+    const pt = (section.match(/^a=rtpmap:(\d+) opus\/48000\/2/im) || [])[1];
+    if (!pt) return section;
+    const merged = params => {
+      const have = new Map(params.split(";").map(p => p.trim()).filter(Boolean).map(p => {
+        const at = p.indexOf("=");
+        return at < 0 ? [p, ""] : [p.slice(0, at), p.slice(at + 1)];
+      }));
+      for (const [key, value] of Object.entries(SCREEN_SOUND_OPUS)) have.set(key, String(value));
+      return [...have].map(([key, value]) => (value === "" ? key : `${key}=${value}`)).join(";");
+    };
+    const fmtp = new RegExp(`^a=fmtp:${pt} ([^\\r\\n]*)$`, "m");
+    if (fmtp.test(section)) return section.replace(fmtp, (_, params) => `a=fmtp:${pt} ${merged(params)}`);
+    const eol = section.includes("\r\n") ? "\r\n" : "\n";
+    return section.replace(new RegExp(`^(a=rtpmap:${pt} opus/48000/2)$`, "im"), `$1${eol}a=fmtp:${pt} ${merged("")}`);
+  });
+  return { type: desc?.type, sdp: sections.join("") };
+}
+
+/** The description as this side writes it: upright, and the film's sound in
+    stereo. What a browser will not take is let go of — the stereo first, then
+    the turning — and the call goes ahead with the rest. */
 async function setCallLocalDescription(desc) {
   const upright = withoutRotationExtension(desc);
-  if (upright.sdp === desc.sdp) return callPc.setLocalDescription(desc);
-  try { await callPc.setLocalDescription(upright); }
-  catch (_) { await callPc.setLocalDescription(desc); }
+  const tries = [withStereoScreenSound(upright), upright].filter((d, i, all) =>
+    d.sdp !== desc.sdp && all.findIndex(o => o.sdp === d.sdp) === i);
+  for (const written of tries) {
+    try { return await callPc.setLocalDescription(written); }
+    catch (_) { /* the next, plainer one */ }
+  }
+  return callPc.setLocalDescription(desc);
 }
 
 /* ── The call's video format ────────────────
@@ -6557,14 +6599,38 @@ function h264First(codecs) {
   return [...h264, ...codecs.filter(c => !h264.includes(c))];
 }
 
+/* ── The shared screen's picture format ─────
+   Asked for: a better format for the shared screen. The cameras keep H.264,
+   for the iPhone's sake (above); the screen's own channel prefers AV1, then
+   VP9 — a sharper picture for the same data, or as sharp for about a third
+   less, at the cost of more work for the computer sharing, and for a phone
+   receiving it. Each is put first only where this browser can both send and
+   receive it: the answer's order decides both ways, so whatever is agreed,
+   each side can use. Where either cannot, H.264 as before.               */
+const SCREEN_CODECS = ["video/av1", "video/vp9", "video/h264"];
+
+function screenCodecsFirst(codecs, canSend = () => true) {
+  const rank = c => {
+    const at = SCREEN_CODECS.indexOf(String(c.mimeType).toLowerCase());
+    return at >= 0 && canSend(c) ? at : SCREEN_CODECS.length;
+  };
+  return codecs.map((c, i) => [c, i]).sort((a, b) => rank(a[0]) - rank(b[0]) || a[1] - b[1]).map(([c]) => c);
+}
+
 function preferCallVideoCodecs() {
   if (!callPc || typeof RTCRtpReceiver === "undefined" || typeof RTCRtpReceiver.getCapabilities !== "function") return;
   const codecs = RTCRtpReceiver.getCapabilities("video")?.codecs;
   if (!codecs?.length) return;
+  /* What this browser can send; not known, taken to be what it can receive. */
+  const sent = typeof RTCRtpSender !== "undefined" && typeof RTCRtpSender.getCapabilities === "function"
+    ? new Set((RTCRtpSender.getCapabilities("video")?.codecs || []).map(c => String(c.mimeType).toLowerCase()))
+    : null;
+  const canSend = c => !sent || !sent.size || sent.has(String(c.mimeType).toLowerCase());
+  const screen = screenVideoTransceiver(callPc);
   for (const transceiver of callPc.getTransceivers()) {
     if (transceiver.receiver?.track?.kind !== "video" || transceiver.stopped) continue;
     if (typeof transceiver.setCodecPreferences !== "function") continue;
-    try { transceiver.setCodecPreferences(h264First(codecs)); }
+    try { transceiver.setCodecPreferences(transceiver === screen ? screenCodecsFirst(codecs, canSend) : h264First(codecs)); }
     catch (_) { /* this browser keeps its own order */ }
   }
 }

@@ -28,6 +28,9 @@ const grab = (pattern, what) => {
   return m[0];
 };
 const SOURCE = [
+  grab(/^function screenChannel\([\s\S]*?^function screenVideoSender\([^\n]*\n/m, "the screen's channels"),
+  grab(/^const SCREEN_CODECS = [^\n]*;$/m,                      "SCREEN_CODECS"),
+  grab(/^function screenCodecsFirst\([^\n]*\{[\s\S]*?^\}/m,     "screenCodecsFirst"),
   grab(/^function h264First\([^)]*\)\s*\{[\s\S]*?^\}/m,        "h264First"),
   grab(/^function preferCallVideoCodecs\(\)\s*\{[\s\S]*?^\}/m, "preferCallVideoCodecs")
 ].join("\n");
@@ -41,16 +44,23 @@ const CHROME = [
   { mimeType: "video/AV1" }, { mimeType: "video/red" }, { mimeType: "video/ulpfec" }
 ];
 
-function run({ codecs = CHROME, hasApi = true, refuse = false, stopped = false } = {}) {
+function run({ codecs = CHROME, sends = CHROME, hasApi = true, refuse = false, stopped = false, screen = false } = {}) {
   const set = [];
   const transceiver = (kind, extra = {}) => ({
     receiver: { track: { kind } }, stopped: false,
     setCodecPreferences(list) { if (refuse) throw new Error("InvalidModificationError"); set.push([kind, list]); },
     ...extra
   });
-  const callPc = { getTransceivers: () => [transceiver("audio"), transceiver("video", { stopped })] };
+  /* screen: a video call's four channels — the voice, the camera, the
+     screen's sound and the screen's picture. */
+  const list = screen
+    ? [transceiver("audio"), transceiver("video", { name: "camera" }), transceiver("audio"), transceiver("video", { name: "screen" })]
+    : [transceiver("audio"), transceiver("video", { stopped })];
+  for (const t of list) { const set0 = t.setCodecPreferences; t.setCodecPreferences = l => { set0.call(t, l); set[set.length - 1].push(t.name); }; }
+  const callPc = { getTransceivers: () => list };
   const RTCRtpReceiver = hasApi ? { getCapabilities: kind => (kind === "video" ? { codecs } : null) } : undefined;
-  const api = new Function("callPc", "RTCRtpReceiver", `${SOURCE}\nreturn { h264First, preferCallVideoCodecs };`)(callPc, RTCRtpReceiver);
+  const RTCRtpSender = hasApi && sends ? { getCapabilities: kind => (kind === "video" ? { codecs: sends } : null) } : undefined;
+  const api = new Function("callPc", "RTCRtpReceiver", "RTCRtpSender", `${SOURCE}\nreturn { h264First, screenCodecsFirst, preferCallVideoCodecs };`)(callPc, RTCRtpReceiver, RTCRtpSender);
   return { ...api, set };
 }
 
@@ -105,4 +115,41 @@ test("both sides set it once their camera is in, before the offer and before the
     assert.ok(prefer > body.indexOf("attachCallMedia("), `${name}: after the camera is in its transceiver`);
     assert.ok(prefer < body.indexOf(next), `${name}: before ${next}, where the list is written`);
   }
+});
+
+/* ── The shared screen's picture ── */
+
+test("the screen's channel prefers AV1, then VP9, then H.264; the camera's stays H.264 first", () => {
+  const r = run({ screen: true });
+  r.preferCallVideoCodecs();
+  const by = Object.fromEntries(r.set.map(([, list, name]) => [name, list.map(c => c.mimeType)]));
+  assert.deepEqual(by.camera.slice(0, 2), ["video/H264", "video/H264"], "the iPhone's own, for the cameras");
+  assert.deepEqual(by.screen.slice(0, 4), ["video/AV1", "video/VP9", "video/H264", "video/H264"]);
+  assert.deepEqual(by.screen.slice(4), ["video/VP8", "video/rtx", "video/red", "video/ulpfec"], "the rest in the browser's order");
+});
+
+test("a format this browser cannot send is not put first — what is agreed, each side can use", () => {
+  const noAv1 = CHROME.filter(c => c.mimeType !== "video/AV1");
+  const r = run({ screen: true, sends: noAv1 });
+  r.preferCallVideoCodecs();
+  const screen = r.set.find(([, , name]) => name === "screen")[1].map(c => c.mimeType);
+  assert.deepEqual(screen.slice(0, 3), ["video/VP9", "video/H264", "video/H264"]);
+  assert.ok(screen.includes("video/AV1"), "still offered to receive, only not first");
+
+  const h264Only = run({ screen: true, sends: CHROME.filter(c => /H264|rtx|red|ulpfec/.test(c.mimeType)) });
+  h264Only.preferCallVideoCodecs();
+  assert.equal(h264Only.set.find(([, , name]) => name === "screen")[1][0].mimeType, "video/H264", "H.264, as before");
+});
+
+test("a browser that does not say what it can send is taken to send what it can receive", () => {
+  const r = run({ screen: true, sends: null });
+  r.preferCallVideoCodecs();
+  assert.equal(r.set.find(([, , name]) => name === "screen")[1][0].mimeType, "video/AV1");
+});
+
+test("the screen's order does not change the browser's own list", () => {
+  const { screenCodecsFirst } = run();
+  const before = CHROME.map(c => c.mimeType);
+  screenCodecsFirst(CHROME);
+  assert.deepEqual(CHROME.map(c => c.mimeType), before);
 });
