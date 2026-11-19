@@ -27,7 +27,7 @@
 
    APP_BUILD is written by tools/sync-build.js and by nothing else.
 ══════════════════════════════════════════════ */
-const APP_BUILD = "202611191410-1558dfbd";
+const APP_BUILD = "202611191431-84a3c438";
 
 function refuseToRunInAStalePage() {
   let builtFor = null;
@@ -7535,6 +7535,10 @@ const SCREEN_MAX = { width: 1920, height: 1080 };
    takes; the track and the sender are then held to the one it is. */
 const SCREEN_PROFILES = { still: { width: 1920, height: 1080, fps: 30, bitrate: 2_500_000, hint: "detail" }, moving: { width: 1280, height: 720, fps: 60, bitrate: 4_000_000, hint: "motion" } };
 const SCREEN_CAPTURE = { width: { max: SCREEN_MAX.width }, height: { max: SCREEN_MAX.height }, frameRate: { max: SCREEN_PROFILES.moving.fps } };
+/* A tab's sound, not played by the browser itself while shared: this page
+   plays it, dipped (see mixScreenSound). Other browsers, and other choices
+   in the picker, ignore it. */
+const SCREEN_SOUND = { suppressLocalAudioPlayback: true };
 
 function screenProfile(withSound) {
   return withSound ? SCREEN_PROFILES.moving : SCREEN_PROFILES.still;
@@ -7570,14 +7574,23 @@ function screenProfile(withSound) {
    And where the call has a channel for the screen's sound (see "The screen's
    sound, a channel of its own"), the voice is not in this at all: the
    microphone is only listened to, and what comes out is the film alone, for
-   that channel. Mixed in with the voice is for a call with an older page.  */
+   that channel. Mixed in with the voice is for a call with an older page.
+
+   And played here, dipped, when the browser has stopped playing it itself.
+   Reported: sharing a film from a browser tab, the sharer heard it at full
+   volume all along — a page cannot turn another tab down. So the picker is
+   asked to keep a shared tab's sound off this computer's speakers
+   (suppressLocalAudioPlayback), and where it has, the dip's second output
+   plays it here instead: down while either of them talks, so the sharer
+   hears the other person over it, and hears their own dip. A window or the
+   whole screen has no such choice, and plays there as it is.             */
 let screenMix = null;
 
 /* The voice's speech band, which is all the listening needs: below it is
    hum and desk knocks, above it hiss. */
 const DUCK_EAR = { high: 250, low: 3500 };
 
-function mixScreenSound(mic, sound, withVoice) {
+function mixScreenSound(mic, sound, { withVoice = false, playHere = false, them = null } = {}) {
   const Ctx = window.AudioContext || window.webkitAudioContext;
   const ctx = new Ctx();
   const out = ctx.createMediaStreamDestination();
@@ -7588,11 +7601,16 @@ function mixScreenSound(mic, sound, withVoice) {
   };
   let micNode = mic ? source(mic, withVoice) : null;   // sent only when mixed in; listened to either way
   const soundNode = source(sound, true);
+  /* Played here as it came, until the dip has loaded — or where it cannot. */
+  if (playHere) soundNode.connect(ctx.destination);
+  const themNode = playHere && them ? ctx.createMediaStreamSource(new MediaStream([them])) : null;
   let ear = null, closed = false;
   if (ctx.audioWorklet && typeof AudioWorkletNode === "function") {
     ctx.audioWorklet.addModule(`duck.js?v=${APP_BUILD}`).then(() => {
       if (closed) return;                   // sharing stopped while it loaded
-      const duck = new AudioWorkletNode(ctx, "duck", { numberOfInputs: 3, numberOfOutputs: 1, outputChannelCount: [2] });
+      const duck = new AudioWorkletNode(ctx, "duck", playHere
+        ? { numberOfInputs: 4, numberOfOutputs: 2, outputChannelCount: [2, 2], processorOptions: { here: true } }
+        : { numberOfInputs: 3, numberOfOutputs: 1, outputChannelCount: [2] });
       const band = input => {
         const high = ctx.createBiquadFilter();
         high.type = "highpass"; high.frequency.value = DUCK_EAR.high;
@@ -7604,10 +7622,12 @@ function mixScreenSound(mic, sound, withVoice) {
       };
       ear = band(1);                        // the voice, to be listened to
       if (micNode) micNode.connect(ear);
+      if (themNode) themNode.connect(band(3));   // the other person's voice, to turn it down here for them
       soundNode.disconnect();
       soundNode.connect(duck, 0, 0);        // the screen's sound, to be turned down
       soundNode.connect(band(2));           // and listened to, to know it in the microphone
-      duck.connect(out);
+      duck.connect(out, 0);
+      if (playHere) duck.connect(ctx.destination, 1);   // and played here, turned down for either of them
     }).catch(err => console.warn("The shared sound will not dip while talking:", err));
   }
   if (ctx.state === "suspended") ctx.resume().catch(() => {});
@@ -7616,6 +7636,7 @@ function mixScreenSound(mic, sound, withVoice) {
   return {
     track,
     carriesVoice: Boolean(withVoice),
+    playsHere: Boolean(playHere),
     setMic(next) {
       if (micNode) micNode.disconnect();
       micNode = next ? source(next, withVoice) : null;
@@ -7623,7 +7644,7 @@ function mixScreenSound(mic, sound, withVoice) {
     },
     close() {
       closed = true;
-      try { if (micNode) micNode.disconnect(); soundNode.disconnect(); } catch (_) { /* already apart */ }
+      try { if (micNode) micNode.disconnect(); if (themNode) themNode.disconnect(); soundNode.disconnect(); } catch (_) { /* already apart */ }
       sound.stop();
       track.stop();
       ctx.close().catch(() => {});
@@ -7677,8 +7698,9 @@ async function startScreenShare() {
     let display;
     /* Nothing awaited before this: the picker needs the tap that asked for it. */
     /* audio: the picker offers to share the sound too — a tab's, or on Windows
-       the whole screen's — and the person ticks it or not. */
-    try { display = await navigator.mediaDevices.getDisplayMedia({ video: SCREEN_CAPTURE, audio: true, systemAudio: "include" }); }
+       the whole screen's — and the person ticks it or not. A tab's is kept
+       off this computer's speakers, to be played from here, dipped. */
+    try { display = await navigator.mediaDevices.getDisplayMedia({ video: SCREEN_CAPTURE, audio: SCREEN_SOUND, systemAudio: "include" }); }
     catch (_) { return; }                   // the picker closed, or sharing refused: the call goes on as it was
     const screen = display.getVideoTracks()[0];
     const sound  = display.getAudioTracks()[0] || null;
@@ -7703,9 +7725,15 @@ async function startScreenShare() {
          voice, in the voice's sender. */
       const own = screenSoundSender(pc);
       const voice = own ? null : pc.getSenders().find(s => s.track === mic);
+      /* Only a tab's, and only where the browser has kept it off the speakers:
+         the whole screen's sound would take in what this page plays. */
+      const playHere = screen.getSettings?.().displaySurface === "browser" &&
+                       sound.getSettings?.().suppressLocalAudioPlayback === true;
       try {
         if (!own && (!mic || !voice)) throw new Error("no microphone in the call to mix with");
-        screenMix = mixScreenSound(mic, sound, !own);
+        screenMix = mixScreenSound(mic, sound, {
+          withVoice: !own, playHere, them: remoteCallStream?.getAudioTracks()[0] || null
+        });
         await (own || voice).replaceTrack(screenMix.track);
         showToast(t("shareSoundTip"), "info");
       } catch (err) {

@@ -9,9 +9,9 @@
   hard to hear on the other side — the two go out mixed in one track (see
   mixScreenSound() in app.js), at full volume each. Now the microphone is
   listened to on its way into the mix: when the sharer starts talking the
-  screen's sound fades down to 6% within a fraction of a second, stays down
-  through the pauses between words, and fades back up once they have been
-  quiet for a second. Radio calls it ducking.
+  screen's sound drops to 6% at once, stays down through the pauses between
+  words, and fades back up once they have been quiet for a second. Radio
+  calls it ducking.
 
   Tuned by ear, more than once. First a quarter, quick; then the voice was
   asked louder and the video lower, and the voice was raised too — which
@@ -19,13 +19,19 @@
   clipping bent the video's own loud moments: it came out dirty. So nothing
   is raised: the voice goes out exactly as the microphone gave it, and stands
   out because the video goes lower — 12%, and then, asked again, 6% (about
-  −24 dB). And it fades at an even pace in decibels, as a hand on a fader
-  would — eased in plain volume, most of a fade happened in its first moment,
-  which sounded like a jump.
+  −24 dB). It fades at an even pace in decibels, as a hand on a fader would.
+  Going down it was a fade of 0.15 s, which was asked to be almost at once:
+  now 0.03 s, the voice's first syllable all but missed. Coming back up stays
+  a gentle 0.8 s.
 
-  Only the sharer's own voice can do this. The other person's voice is not in
-  this mix, and what plays on the sharer's own computer — another tab, another
-  program — is beyond a web page's reach.
+  On the sharer's own computer, too. Reported: sharing a film from a browser
+  tab, the sharer heard it at full volume all along and never the dip. A
+  page cannot turn another tab down — but Chrome, asked, stops playing a
+  shared tab's sound itself (app.js asks), and then app.js plays it here
+  from this processor's second output: dipped while either of them talks,
+  so the sharer hears the other person over the film as well as their own
+  dip. Shared from a window or the whole screen there is no such choice, and
+  the film plays there as it is.
 
   Telling a voice from the room. A microphone near speakers hears the screen's
   sound too, and that must not count as talking. Two things keep it from
@@ -63,9 +69,9 @@ const DUCK = Object.freeze({
   aboveFloorDb: 10,     // talking is this far above the quietest it has lately been
   floorRiseDb:  10,     // per second: how fast a steady background raises that line
   envMs:        25,     // the level is smoothed over this, so one slice is not a word
-  onsetMs:      50,     // loud for this long before it counts as talking
+  onsetMs:      50,     // loud for this long before it counts as talking — a tap on the desk is not
   holdMs:       1000,   // and still talking until quiet for this long
-  downDbPerSec: 160,    // fading down: all the way in about 0.15 s
+  downDbPerSec: 800,    // fading down: all the way in about 0.03 s — at once, without a click
   upDbPerSec:   30,     // fading back up: all the way in about 0.8 s
 
   /* The screen's sound coming back through the microphone. */
@@ -187,32 +193,63 @@ function levelDb(channels) {
   return n ? 10 * Math.log10(sum / n) : -Infinity;
 }
 
+/** The level a gain (in dB) leaves a sound at; nothing stays nothing. */
+function lowered(db, gainDb) {
+  return Number.isFinite(db) ? db + gainDb : db;
+}
+
+/** `sound` into `out`, its volume eased from `from` to `to` across the
+    slice so a change is never a click; one channel copied to both sides. */
+function fade(out, sound, from, to) {
+  for (let ch = 0; ch < out.length; ch++) {
+    const was = sound[Math.min(ch, sound.length - 1)];
+    const into = out[ch];
+    if (!was) { into.fill(0); continue; }
+    for (let i = 0; i < into.length; i++) into[i] = was[i] * (from + (to - from) * (i + 1) / into.length);
+  }
+}
+
 /* ── On the audio thread ───────────────────────
    Input 0: the screen's sound. Input 1: the microphone, only its speech band
    — app.js filters it on the way here; this is for listening, not sending.
    Input 2: the screen's sound again, through the same band, so the two are
-   measured alike.
-   Output: the screen's sound at the level the rule says, eased across each
-   slice so a change is never a click. */
+   measured alike. Input 3, only when it plays here: the other person's
+   voice, through the same band.
+   Output 0: the screen's sound for the call, dipped while the sharer talks.
+   Output 1, only when it plays here (processorOptions.here): the same, for
+   this computer's speakers, dipped while either of them talks.
+
+   Played here, the film the microphone hears is the dipped one, and that is
+   what it is compared with. Compared with the film as it came, a dip for the
+   other person talking looked like the room gone quiet, was learned as
+   that, and the film's own voices coming back up after it were taken for
+   the sharer talking — seconds of dips nobody asked for.
+
+   The other person's voice is not compared with the film: it has been
+   through their own browser's echo canceller already, and the quiet between
+   their words may be silence itself, from which nothing is learned — the
+   comparison learned from their voice instead, and stopped hearing it. */
 if (typeof registerProcessor === "function" && typeof AudioWorkletProcessor === "function") {
   registerProcessor("duck", class extends AudioWorkletProcessor {
-    constructor() {
+    constructor(options) {
       super();
-      this.state = duckInit();
+      this.here = Boolean(options && options.processorOptions && options.processorOptions.here);
+      this.mine = duckInit();               // the sharer's own voice
+      this.theirs = duckInit();             // the other person's, for what plays here
     }
     process(inputs, outputs) {
       const sound = inputs[0] || [];
-      const out = outputs[0] || [];
-      const frames = out[0] ? out[0].length : 128;
-      const before = this.state.gain;
-      this.state = duckStep(this.state, levelDb(inputs[1]), frames / sampleRate * 1000, levelDb(inputs[2]));
-      const after = this.state.gain;
-      for (let ch = 0; ch < out.length; ch++) {
-        const from = sound[Math.min(ch, sound.length - 1)];
-        const to = out[ch];
-        if (!from) { to.fill(0); continue; }
-        for (let i = 0; i < to.length; i++) to[i] = from[i] * (before + (after - before) * (i + 1) / to.length);
-      }
+      const sent = outputs[0] || [];
+      const frames = sent[0] ? sent[0].length : 128;
+      const ms = frames / sampleRate * 1000;
+      const film = levelDb(inputs[2]);
+      const sentFrom = this.mine.gain;
+      const hereFrom = Math.min(this.mine.gain, this.theirs.gain);
+      const heardHere = this.here ? lowered(film, Math.min(this.mine.gainDb, this.theirs.gainDb)) : film;
+      this.mine = duckStep(this.mine, levelDb(inputs[1]), ms, heardHere);
+      if (this.here) this.theirs = duckStep(this.theirs, levelDb(inputs[3]), ms);
+      fade(sent, sound, sentFrom, this.mine.gain);
+      if (this.here && outputs[1]) fade(outputs[1], sound, hereFrom, Math.min(this.mine.gain, this.theirs.gain));
       return true;
     }
   });

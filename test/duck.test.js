@@ -82,8 +82,8 @@ test("talking turns the shared sound down quickly, and keeps it down between wor
   const seen = [];
   s = talk(s, 2000, {}, (x, t) => seen.push([t, x.gain]));
   const at = ms => seen.find(([t]) => t >= ms)[1];
-  assert.ok(at(100) < 0.75, `already dipping at 0.1 s: ${at(100)}`);
-  assert.ok(at(250) <= 0.3, `well down by 0.25 s: ${at(250)}`);
+  assert.ok(at(40) > 0.99, `not before it is sure it is talking: ${at(40)}`);
+  assert.ok(at(110) <= D.DUCK.low + 0.01, `all the way down by 0.11 s — almost at once: ${at(110)}`);
   for (const [t, g] of seen) if (t >= 250) assert.ok(g <= 0.3, `down through the gaps between words, at ${t.toFixed(0)} ms: ${g}`);
   assert.ok(Math.abs(s.gain - D.DUCK.low) < 0.01);
 });
@@ -123,7 +123,7 @@ test("it fades at an even pace in decibels — no jump at the start of a fade", 
   const step = SLICE / 1000 * D.DUCK.downDbPerSec;
   for (const d of falling.slice(0, -1)) assert.ok(Math.abs(d - step) < 1e-9, `down evenly: ${d} vs ${step}`);
   const fadeMs = (falling.length * SLICE);
-  assert.ok(fadeMs > 100 && fadeMs < 220, `all the way down in about 0.15 s: ${fadeMs.toFixed(0)} ms`);
+  assert.ok(fadeMs > 20 && fadeMs < 45, `all the way down in about 0.03 s — asked for almost at once, still a fade: ${fadeMs.toFixed(0)} ms`);
 });
 
 test("a click or a tap on the desk is not talking", () => {
@@ -278,7 +278,7 @@ test("the level of a slice, across its channels", () => {
    duck.js as the browser runs it: an AudioWorklet module
 ══════════════════════════════════════════ */
 
-function worklet() {
+function worklet(options) {
   const registered = {};
   class AudioWorkletProcessor {}
   vm.runInNewContext(fs.readFileSync(path.join(ROOT, "duck.js"), "utf8"), {
@@ -286,7 +286,7 @@ function worklet() {
     AudioWorkletProcessor, sampleRate: 48000, Math, Number, Infinity, Object
   });
   assert.ok(registered.duck, "registered as \"duck\" — the name app.js asks for");
-  return new registered.duck();
+  return new registered.duck(options);
 }
 
 const block = value => new Float32Array(128).fill(value);
@@ -336,6 +336,63 @@ test("the worklet listens to the film too, and does not dip for it coming back t
   assert.ok(Math.abs(out[0][127] - 0.5 * D.DUCK.low) < 0.01, `down for the voice: ${out[0][127]}`);
 });
 
+test("played here too: both dip while the sharer talks, and only the one here while the other person does", () => {
+  const p = worklet({ processorOptions: { here: true } });
+  const pair = () => [new Float32Array(128), new Float32Array(128)];
+  const voice = (i, hz = 220) => Float32Array.from({ length: 128 }, (_, k) => 0.1 * Math.sin(2 * Math.PI * hz * (i * 128 + k) / 48000));
+  const quiet = i => sine(0.0003, i * 128);
+  let sent, here, i = 0;
+  const run = (blocks, mine, theirs) => {
+    for (const end = i + blocks; i < end; i++) {
+      sent = pair(); here = pair();
+      assert.equal(p.process([[block(0.5), block(0.5)], [mine(i)], [], [theirs(i)]], [sent, here]), true);
+    }
+  };
+  run(75, quiet, quiet);                    // 0.2 s of quiet rooms, learned first
+  assert.ok(sent[0][127] === 0.5 && here[0][127] === 0.5, "both as they came while nobody talks");
+  run(150, quiet, voice);                   // the other person talks
+  assert.equal(sent[0][127], 0.5, "the call's copy is left alone: they hear the film as it is while they talk");
+  assert.ok(Math.abs(here[0][127] - 0.5 * D.DUCK.low) < 0.01, `down here, to hear them over it: ${here[0][127]}`);
+  run(750, quiet, quiet);                   // 2 s: back up
+  assert.ok(sent[0][127] === 0.5 && here[0][127] > 0.5 * 0.99, `back up here: ${here[0][127]}`);
+  run(150, voice, quiet);                   // the sharer talks
+  assert.ok(Math.abs(sent[0][127] - 0.5 * D.DUCK.low) < 0.01, `down for the call: ${sent[0][127]}`);
+  assert.ok(Math.abs(here[0][127] - 0.5 * D.DUCK.low) < 0.01, `and here — the sharer hears the dip: ${here[0][127]}`);
+  assert.deepEqual(sent[1], sent[0], "both channels alike");
+});
+
+test("played here, the film the microphone hears is the dipped one — so the other person talking teaches it nothing wrong", () => {
+  /* The microphone hears what plays here, 20 dB under, a slice late: a film
+     of syllables at many levels. The other person talks for 2 s, and the film
+     here is down all that while. Compared with the film as it came, the
+     quieter echo was learned as the room — and the film's own voices, back
+     up after it, were taken for the sharer talking: seconds of dips. */
+  const p = worklet({ processorOptions: { here: true } });
+  let seed = 3;
+  const rand = () => (seed = (seed * 1103515245 + 12345) % 2147483648) / 2147483648;
+  const levels = [];
+  while (levels.length < 4500) {
+    const on = Math.round(30 + rand() * 82), off = Math.round(19 + rand() * 75), amp = 0.05 + rand() * 0.35;
+    for (let k = 0; k < on; k++) levels.push(amp);
+    for (let k = 0; k < off; k++) levels.push(0.01);
+  }
+  const tone = (amp, hz, i) => Float32Array.from({ length: 128 }, (_, k) => amp * Math.sin(2 * Math.PI * hz * (i * 128 + k) / 48000));
+  let echo = new Float32Array(128), during = 0, after = 1;
+  for (let i = 0; i < 4500; i++) {           // 12 s
+    const film = tone(levels[i], 440, i);
+    const talking = i >= 1125 && i < 1875;   // they talk from 3 s to 5 s
+    const sent = [new Float32Array(128), new Float32Array(128)];
+    const here = [new Float32Array(128), new Float32Array(128)];
+    p.process([[film, film], [echo.map(v => v * 0.1)], [film], [talking ? tone(0.1, 220, i) : new Float32Array(128)]], [sent, here]);
+    echo = here[0];
+    const gain = Math.max(...here[0].map(Math.abs)) / levels[i];
+    if (talking && gain < 0.1) during++;
+    if (i < 1125 || i > 2625) after = Math.min(after, gain);   // before they talk, and from 2 s after
+  }
+  assert.ok(during > 700, `down here while they talk: ${during} of 750 slices`);
+  assert.ok(after > 0.99, `the film's own voices never dipped it: ${after}`);
+});
+
 test("the worklet copies a one-channel sound to both sides, and is silent with no sound", () => {
   const p = worklet();
   const out = [new Float32Array(128), new Float32Array(128)];
@@ -379,6 +436,7 @@ function mixer({ worklet: hasWorklet = true, loadFails = false } = {}) {
       this.state = "running";
       if (hasWorklet) this.audioWorklet = { addModule: url => { log.loaded.push(url); return loading; } };
     }
+    get destination() { return node("speakers"); }
     createMediaStreamDestination() { return { ...node("out"), stream: new MediaStream([track("mix")]) }; }
     createMediaStreamSource(stream) { return node(stream.tracks[0].name); }
     /* Anything that would change the sound on its way out: none is wanted. */
@@ -408,7 +466,7 @@ test("the voice goes out exactly as the microphone gave it: not raised, not limi
      hiss rose with it, and the limit bent the video's own loud moments —
      dirty. Nothing on the way out changes the sound now but the dip. */
   for (const m of [mixer({ worklet: false }), mixer()]) {
-    m.mix(m.track("mic"), m.track("screen sound"), true);
+    m.mix(m.track("mic"), m.track("screen sound"), { withVoice: true });
     m.load(); await m.settle();
     assert.ok(m.edges.has("mic → out"), "straight in");
     assert.deepEqual(m.log.extra, [], "no gain, shaper or compressor anywhere in the mix");
@@ -417,7 +475,7 @@ test("the voice goes out exactly as the microphone gave it: not raised, not limi
 
 test("in a channel of its own, the screen's sound goes out alone: the voice is only listened to", async () => {
   const m = mixer();
-  const screenMix = m.mix(m.track("mic"), m.track("screen sound"), false);
+  const screenMix = m.mix(m.track("mic"), m.track("screen sound"));
   assert.equal(screenMix.carriesVoice, false);
   assert.deepEqual([...m.edges].sort(), ["screen sound → out"], "at full volume until the dip has loaded, and no voice in it");
   m.load(); await m.settle();
@@ -436,13 +494,13 @@ test("in a channel of its own, the screen's sound goes out alone: the voice is o
   assert.ok(m.edges.has("headset → filter 1") && !m.edges.has("headset → out"), "a new microphone, listened to only");
 
   const none = mixer({ worklet: false });
-  none.mix(null, none.track("screen sound"), false);
+  none.mix(null, none.track("screen sound"));
   assert.deepEqual([...none.edges], ["screen sound → out"], "no microphone: the film goes out undipped");
 });
 
 test("the screen's sound goes through the dip, and the voice is listened to on its way in", async () => {
   const m = mixer();
-  const screenMix = m.mix(m.track("mic"), m.track("screen sound"), true);
+  const screenMix = m.mix(m.track("mic"), m.track("screen sound"), { withVoice: true });
   assert.equal(screenMix.carriesVoice, true);
   assert.deepEqual([...m.edges].sort(), ["mic → out", "screen sound → out"], "at full volume until it has loaded");
   assert.deepEqual(m.log.loaded, ["duck.js?v=202611160000-abcdef12"], "this build's copy");
@@ -470,23 +528,52 @@ test("the screen's sound goes through the dip, and the voice is listened to on i
 
 test("sharing stopped before the dip loaded: nothing is built", async () => {
   const m = mixer();
-  m.mix(m.track("mic"), m.track("screen sound"), true).close();
+  m.mix(m.track("mic"), m.track("screen sound"), { withVoice: true }).close();
   m.load(); await m.settle();
   assert.deepEqual(m.log.made, []);
 });
 
 test("where the dip cannot load, or the browser has none, the sound goes in at full volume as before", async () => {
   const failed = mixer({ loadFails: true });
-  failed.mix(failed.track("mic"), failed.track("screen sound"), true);
+  failed.mix(failed.track("mic"), failed.track("screen sound"), { withVoice: true });
   failed.load(); await failed.settle();
   assert.deepEqual([...failed.edges].sort(), ["mic → out", "screen sound → out"]);
   assert.equal(failed.log.warned.length, 1);
 
   const none = mixer({ worklet: false });
-  const mix = none.mix(none.track("mic"), none.track("screen sound"), true);
+  const mix = none.mix(none.track("mic"), none.track("screen sound"), { withVoice: true });
   assert.deepEqual(none.log.loaded, []);
   mix.setMic(none.track("headset"));
   assert.deepEqual([...none.edges].sort(), ["headset → out", "screen sound → out"]);
+});
+
+test("played here too, where the browser has kept a tab's sound off the speakers: dipped for either of them", async () => {
+  const m = mixer();
+  const screenMix = m.mix(m.track("mic"), m.track("screen sound"), { playHere: true, them: m.track("their voice") });
+  assert.equal(screenMix.playsHere, true);
+  assert.deepEqual([...m.edges].sort(), ["screen sound → out", "screen sound → speakers"],
+    "played here as it came until the dip has loaded — never silent");
+  m.load(); await m.settle();
+  assert.deepEqual(m.log.made[0][1], { numberOfInputs: 4, numberOfOutputs: 2, outputChannelCount: [2, 2], processorOptions: { here: true } });
+  assert.deepEqual([...m.edges].sort(), [
+    "duck → out",                           // for the call
+    "duck → speakers",                      // and here, from its second output
+    "filter 1 → filter 2",
+    "filter 2 → duck:1",                    // the sharer's voice, listened to
+    "filter 3 → filter 4",
+    "filter 4 → duck:3",                    // the other person's, listened to
+    "filter 5 → filter 6",
+    "filter 6 → duck:2",                    // the film, listened to
+    "mic → filter 1",
+    "screen sound → duck",
+    "screen sound → filter 5",
+    "their voice → filter 3"
+  ]);
+
+  const failed = mixer({ loadFails: true });
+  failed.mix(failed.track("mic"), failed.track("screen sound"), { playHere: true });
+  failed.load(); await failed.settle();
+  assert.ok(failed.edges.has("screen sound → speakers"), "where the dip cannot load, still played here, as it came");
 });
 
 /* ══════════════════════════════════════════
