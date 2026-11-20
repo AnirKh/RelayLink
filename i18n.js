@@ -34,6 +34,7 @@ const I18N = {
     appName:         "Өртөө",
     authorLabel:     "Зохиогчийн тухай",
     portalJoin:      "Порталд нэгдэх",
+    screenVolume:    "Киноны дууны хэмжээ",
     authorAbout:    "Хүмүүс хоорондоо хялбар, чөлөөтэй харилцах боломжийг бүрдүүлэхийн тулд энэхүү аппыг бүтээлээ. Надтай холбогдохыг хүсвэл өртөөгөөр холбогдоорой.",
     // Lobby
     tabRooms:        "Өрөөнүүд",
@@ -456,6 +457,7 @@ const I18N = {
     appName:         "RelayLink",
     authorLabel:     "About the author",
     portalJoin:      "Join the portal",
+    screenVolume:    "Movie volume",
     authorAbout:    "I built this app to make it easier for people to connect and communicate. If you'd like to get in touch with me, you can reach me through Örtöö.",
     tabRooms:        "Rooms",
     installApp:      "Install app",

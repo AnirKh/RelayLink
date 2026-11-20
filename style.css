@@ -1130,7 +1130,33 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
   border-radius: 10px; border: 2px solid rgba(255,255,255,0.25);
   background: #111;
   z-index: 10;
+  /* Draggable, as yours is — see "Their small picture, movable too" in app.js. */
+  touch-action: none;
+  cursor: grab;
+  user-select: none; -webkit-user-select: none;
+  -webkit-touch-callout: none;
 }
+.call-overlay.screen-big:not(.mini) #remoteVideo.dragging { cursor: grabbing; }
+/* The other side's film, louder or quieter here — see "The film's volume" in
+   app.js. Upright on the left edge, clear of both small pictures and of the
+   buttons; up is louder. It fades with the buttons while watching. */
+.screen-volume {
+  position: absolute; z-index: 11;
+  left: calc(12px + var(--safe-left));
+  top: 50%; transform: translateY(-50%);
+  display: flex; flex-direction: column; align-items: center; gap: 8px;
+  padding: 10px 6px; border-radius: 22px;
+  background: rgba(0,0,0,0.5); color: #fff; font-size: 18px;
+  transition: opacity 0.3s ease;
+}
+.screen-volume input[type="range"] {
+  writing-mode: vertical-lr; direction: rtl;   /* upright, louder at the top */
+  width: 28px; height: min(36vh, 180px);
+  margin: 0; padding: 0;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+.call-overlay.mini .screen-volume { display: none; }
 /* Lit while sharing, so it is plain that the screen is going out. */
 #shareBtn.sharing { background: var(--accent); color: var(--on-accent); }
 /* Under the status line, so it covers neither the picture's middle nor the
@@ -1178,10 +1204,12 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
 .call-status-label, .call-stats, .call-controls { transition: opacity 0.3s ease; }
 .call-overlay.chrome-hidden .call-status-label,
 .call-overlay.chrome-hidden .call-stats,
-.call-overlay.chrome-hidden .call-controls { opacity: 0; pointer-events: none; }
+.call-overlay.chrome-hidden .call-controls,
+.call-overlay.chrome-hidden .screen-volume { opacity: 0; pointer-events: none; }
 .call-overlay.chrome-hidden { cursor: none; }
 /* The tap that brings them back presses nothing. */
-.call-overlay.chrome-waking .call-controls { pointer-events: none; }
+.call-overlay.chrome-waking .call-controls,
+.call-overlay.chrome-waking .screen-volume { pointer-events: none; }
 /* The "away" note sits where the figures do; with figures showing, it goes
    under them rather than over them. */
 .call-stats:not(:empty) ~ .call-pause-note { top: calc(122px + var(--safe-top)); }

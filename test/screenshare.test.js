@@ -618,7 +618,10 @@ test("big: their screen while they say they share it, yours while you do — the
   const overlay = { classList: classes(["swapped"]) };
   const screenVideo = { srcObject: null, plays: 0, play() { this.plays++; return Promise.resolve(); } };
   class MediaStream { constructor(t) { this.t = t; } getVideoTracks() { return this.t; } }
-  const s = new Function("callOverlay", "screenVideo", "MediaStream", `
+  const remoteVideo = { style: { left: "", top: "", right: "", bottom: "" } };
+  const volume = [];
+  const showScreenVolume = on => volume.push(on);
+  const s = new Function("callOverlay", "screenVideo", "MediaStream", "remoteVideo", "showScreenVolume", `
     let peerSharing = false, peerScreenTrack = null, sharedScreen = null, callSwapped = true;
     function setCallSwapped(on) { callSwapped = on; callOverlay.classList.toggle("swapped", on); }
     ${body}
@@ -626,7 +629,7 @@ test("big: their screen while they say they share it, yours while you do — the
       showScreenBig,
       set: o => { ({ peerSharing = peerSharing, peerScreenTrack = peerScreenTrack, sharedScreen = sharedScreen } = o); },
       swapped: () => callSwapped
-    };`)(overlay, screenVideo, MediaStream);
+    };`)(overlay, screenVideo, MediaStream, remoteVideo, showScreenVolume);
   const theirs = { name: "their screen" }, mine = { name: "my screen" };
   const shown = () => screenVideo.srcObject && screenVideo.srcObject.getVideoTracks()[0];
 
@@ -640,6 +643,7 @@ test("big: their screen while they say they share it, yours while you do — the
   assert.equal(overlay.classList.contains("screen-big"), true);
   assert.equal(shown(), theirs);
   assert.equal(s.swapped(), false, "the pictures go back the usual way round");
+  assert.equal(volume.at(-1), true, "their film: its volume offered");
 
   s.set({ sharedScreen: mine });
   s.showScreenBig();
@@ -648,14 +652,23 @@ test("big: their screen while they say they share it, yours while you do — the
   s.set({ peerSharing: false });
   s.showScreenBig();
   assert.equal(shown(), mine, "then yours");
+  assert.equal(volume.at(-1), false, "yours is turned up or down where it plays, not here");
   const plays = screenVideo.plays;
   s.showScreenBig();
   assert.equal(screenVideo.plays, plays, "the same screen is not handed over again");
 
+  Object.assign(remoteVideo.style, { left: "300px", top: "200px", right: "auto", bottom: "auto" });   // dragged meanwhile
   s.set({ sharedScreen: null });
   s.showScreenBig();
   assert.equal(overlay.classList.contains("screen-big"), false);
   assert.equal(screenVideo.srcObject, null);
+  assert.equal(volume.at(-1), false, "and gone with the screen");
+  assert.deepEqual(remoteVideo.style, { left: "", top: "", right: "", bottom: "" },
+    "theirs fills the call again, from wherever it was dragged");
+
+  Object.assign(remoteVideo.style, { left: "40px", top: "50px", right: "auto", bottom: "auto" });   // small where yours was, swapped
+  s.showScreenBig();
+  assert.equal(remoteVideo.style.left, "40px", "a swap's place is the swap's own: left alone when no screen was big");
 });
 
 test("their screen's picture is kept out of their camera's, shown big only on their word, and all of it ends with the call", () => {

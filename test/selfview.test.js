@@ -230,16 +230,21 @@ function call({ voice = false, mini = false, left = "", top = "" } = {}) {
     classList: { add() {}, remove() {} }, getBoundingClientRect: () => ({ left: 600, top: 400 }),
     setPointerCapture() {}, addEventListener: (t, f) => { listeners[t] = f; }
   };
+  const theirListeners = {}, theirClasses = new Set();
   const remoteVideo = {
     style: { left: "", top: "", right: "", bottom: "", setProperty: (k, v) => { vars[k] = v; } },
-    videoWidth: 720, videoHeight: 1280, addEventListener: (t, f) => { if (t === "click") remoteClicks.push(f); }
+    videoWidth: 720, videoHeight: 1280, offsetWidth: 156, offsetHeight: 117,
+    classList: { add: c => theirClasses.add(c), remove: c => theirClasses.delete(c) },
+    getBoundingClientRect: () => ({ left: 630, top: 54 }), setPointerCapture() {},
+    addEventListener: (t, f) => { if (t === "click") remoteClicks.push(f); else theirListeners[t] = f; }
   };
   const callOverlay = { classList, clientWidth: 800, clientHeight: 600, getBoundingClientRect: () => ({ left: 0, top: 0 }) };
   const api = new Function("localVideo", "remoteVideo", "callOverlay", "callMini", "SELF_VIEW_MARGIN",
     `${positionSrc}\n${moveSrc}\n${keepSrc}\n${swapBlock}\nreturn { swapped: () => callSwapped, setCallSwapped };`
   )(localVideo, remoteVideo, callOverlay, mini, 8);
   const press = (type, x, y) => listeners[type]({ type, pointerId: 1, button: 0, clientX: x, clientY: y, preventDefault() {} });
-  return { ...api, press, classes, localVideo, remoteVideo, vars, tapRemote: () => remoteClicks.forEach(f => f()) };
+  const pressTheirs = (type, x, y) => theirListeners[type]({ type, pointerId: 2, button: 0, clientX: x, clientY: y, preventDefault() {} });
+  return { ...api, press, pressTheirs, classes, theirClasses, localVideo, remoteVideo, vars, tapRemote: () => remoteClicks.forEach(f => f()) };
 }
 
 test("a tap on your own small picture shows it big; theirs goes small where yours was", () => {
@@ -296,6 +301,45 @@ test("not in a voice call, nor in the small call", () => {
   const mini = call({ mini: true });
   mini.setCallSwapped(true);
   assert.equal(mini.swapped(), false);
+});
+
+/* ── Theirs, small beside a shared screen, movable too ── */
+
+test("beside a shared screen, theirs is dragged where it is put, and kept inside the call", () => {
+  /* Asked for: both small pictures moved by dragging, not only yours. */
+  const c = call();
+  c.classes.add("screen-big");
+  c.pressTheirs("pointerdown", 650, 70);    // 20, 16 into the picture
+  assert.ok(c.theirClasses.has("dragging"));
+  c.pressTheirs("pointermove", 220, 316);
+  assert.deepEqual([c.remoteVideo.style.left, c.remoteVideo.style.top, c.remoteVideo.style.right, c.remoteVideo.style.bottom],
+    ["200px", "300px", "auto", "auto"], "out of its corner, where it was put");
+  c.pressTheirs("pointermove", 5000, -400);
+  assert.deepEqual([c.remoteVideo.style.left, c.remoteVideo.style.top], [`${800 - 156 - 8}px`, "8px"], "never past an edge");
+  c.pressTheirs("pointerup", 5000, -400);
+  assert.ok(!c.theirClasses.has("dragging"));
+  c.pressTheirs("pointermove", 100, 100);
+  assert.equal(c.remoteVideo.style.top, "8px", "let go, it stays");
+  assert.equal(c.swapped(), false, "and nothing is swapped");
+});
+
+test("theirs is not dragged filling the call, nor in the small call", () => {
+  const full = call();
+  full.pressTheirs("pointerdown", 650, 70);
+  full.pressTheirs("pointermove", 220, 316);
+  assert.equal(full.remoteVideo.style.left, "", "filling the call: no screen is big");
+  const mini = call({ mini: true });
+  mini.classes.add("screen-big");
+  mini.pressTheirs("pointerdown", 650, 70);
+  mini.pressTheirs("pointermove", 220, 316);
+  assert.equal(mini.remoteVideo.style.left, "", "the small call drags as one piece");
+});
+
+test("theirs is draggable by finger in the stylesheet, and kept inside as the call changes size", () => {
+  const body = rule(".call-overlay.screen-big:not(.mini) #remoteVideo");
+  assert.match(body, /touch-action:\s*none/, "without it a finger drag scrolls the page instead");
+  assert.match(app, /new ResizeObserver\(keepTheirViewInside\)/);
+  assert.match(app, /theirViewSizes\.observe\(remoteVideo\)/);
 });
 
 test("swapped, the stylesheet puts yours over the whole call and theirs in the small spot", () => {

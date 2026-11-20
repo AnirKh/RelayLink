@@ -27,7 +27,7 @@
 
    APP_BUILD is written by tools/sync-build.js and by nothing else.
 ══════════════════════════════════════════════ */
-const APP_BUILD = "202611192310-19009636";
+const APP_BUILD = "202611201045-8ba81db9";
 
 function refuseToRunInAStalePage() {
   let builtFor = null;
@@ -217,6 +217,8 @@ const callOverlay      = document.getElementById("callOverlay");
 const callStatusLabel  = document.getElementById("callStatusLabel");
 const remoteVideo      = document.getElementById("remoteVideo");
 const screenVideo      = document.getElementById("screenVideo");
+const screenVolume     = document.getElementById("screenVolume");
+const screenVolumeRange = document.getElementById("screenVolumeRange");
 const localVideo       = document.getElementById("localVideo");
 const toggleMuteBtn    = document.getElementById("toggleMuteBtn");
 const toggleCamBtn     = document.getElementById("toggleCamBtn");
@@ -6786,6 +6788,10 @@ let sharedScreen = null;         // our own screen, while shared beside the came
 function showScreenBig() {
   const track = (peerSharing && peerScreenTrack) || sharedScreen;
   const big = Boolean(track);
+  /* No longer big: theirs fills the call again, from wherever it was dragged. */
+  if (!big && callOverlay.classList.contains("screen-big")) {
+    for (const side of ["left", "top", "right", "bottom"]) remoteVideo.style[side] = "";
+  }
   if (!big) screenVideo.srcObject = null;
   else if (screenVideo.srcObject?.getVideoTracks()[0] !== track) {
     screenVideo.srcObject = new MediaStream([track]);
@@ -6793,12 +6799,69 @@ function showScreenBig() {
   }
   if (big && callSwapped) setCallSwapped(false);
   callOverlay.classList.toggle("screen-big", big);
+  showScreenVolume(big && track === peerScreenTrack);    // their film only: yours is turned up or down where it plays
+}
+
+/* ── Their small picture, movable too ───────
+   Asked for: beside a shared screen, the other person's small picture moved
+   by dragging, as your own is. Only while it is small there — a screen big,
+   the call not made small — and kept inside the call as yours is. Where it
+   was put lasts while the screen is big; after, theirs fills the call again,
+   and the next share starts it in its corner. */
+let theirDrag = null;    // { id, dx, dy } while a finger or the mouse holds it
+
+function moveTheirView(x, y) {
+  const at = selfViewPosition({
+    x, y,
+    w: remoteVideo.offsetWidth, h: remoteVideo.offsetHeight,
+    areaW: callOverlay.clientWidth, areaH: callOverlay.clientHeight,
+    margin: SELF_VIEW_MARGIN
+  });
+  if (!at) return;
+  remoteVideo.style.left   = `${at.x}px`;
+  remoteVideo.style.top    = `${at.y}px`;
+  remoteVideo.style.right  = "auto";
+  remoteVideo.style.bottom = "auto";
+}
+
+remoteVideo.addEventListener("pointerdown", (e) => {
+  if (e.button !== 0 || callMini || !callOverlay.classList.contains("screen-big")) return;
+  const box = remoteVideo.getBoundingClientRect();
+  theirDrag = { id: e.pointerId, dx: e.clientX - box.left, dy: e.clientY - box.top };
+  remoteVideo.setPointerCapture(e.pointerId);
+  remoteVideo.classList.add("dragging");
+  e.preventDefault();
+});
+
+remoteVideo.addEventListener("pointermove", (e) => {
+  if (!theirDrag || e.pointerId !== theirDrag.id) return;
+  const area = callOverlay.getBoundingClientRect();
+  moveTheirView(e.clientX - area.left - theirDrag.dx, e.clientY - area.top - theirDrag.dy);
+});
+
+function endTheirDrag(e) {
+  if (!theirDrag || e.pointerId !== theirDrag.id) return;
+  theirDrag = null;
+  remoteVideo.classList.remove("dragging");
+}
+remoteVideo.addEventListener("pointerup", endTheirDrag);
+remoteVideo.addEventListener("pointercancel", endTheirDrag);
+remoteVideo.addEventListener("lostpointercapture", endTheirDrag);
+
+/* Moved, and the call or the picture changes size: held where it was put, as
+   far as the new size allows. Only while it is small beside a screen. */
+function keepTheirViewInside() {
+  if (!remoteVideo.style.left || callMini || !callOverlay.classList.contains("screen-big")) return;
+  moveTheirView(parseFloat(remoteVideo.style.left), parseFloat(remoteVideo.style.top));
 }
 
 if (window.ResizeObserver) {
   const selfViewSizes = new ResizeObserver(keepSelfViewInside);
   selfViewSizes.observe(callOverlay);
   selfViewSizes.observe(localVideo);
+  const theirViewSizes = new ResizeObserver(keepTheirViewInside);
+  theirViewSizes.observe(callOverlay);
+  theirViewSizes.observe(remoteVideo);
 }
 
 const makeSharedVerificationCode = DC.makeSharedVerificationCode;
@@ -6990,6 +7053,7 @@ let screenSoundOut = null;
 
 function playScreenSound(track) {
   if (!screenSoundOut) screenSoundOut = document.createElement("audio");
+  screenSoundOut.volume = screenVolumeLevel();   // as loud as it was last set here
   screenSoundOut.srcObject = new MediaStream([track]);
   track.onunmute = playScreenSoundOut;      // the other side began sharing its sound
   playScreenSoundOut();
@@ -7006,6 +7070,41 @@ function stopScreenSoundOut() {
   if (!screenSoundOut) return;
   screenSoundOut.srcObject = null;
 }
+
+/* ── The film's volume ──────────────────────
+   Asked for: the other side's shared film louder or quieter on this device.
+   On an Android phone the volume buttons set the call's volume while the
+   microphone is open — the browser's choice, which a page cannot change. The
+   film has a channel of its own (above), so a slider turns it up or down
+   here alone, the voice left as it is. Shown while they share, upright on
+   the left edge; it fades with the call's buttons while watching and comes
+   back with them. Kept on this device for the next time. Not offered where a
+   page cannot set a sound's volume at all — an iPhone, whose own buttons
+   do it.                                                                    */
+const SCREEN_VOLUME_KEY = "screenVolume";
+const SCREEN_VOLUME_SETTABLE = (() => {
+  try { const probe = document.createElement("audio"); probe.volume = 0.5; return probe.volume === 0.5; }
+  catch (_) { return false; }
+})();
+
+function screenVolumeLevel() {
+  const value = Number(screenVolumeRange.value);
+  return Number.isFinite(value) ? Math.min(1, Math.max(0, value / 100)) : 1;
+}
+
+function showScreenVolume(on) {
+  screenVolume.classList.toggle("hidden", !(on && SCREEN_VOLUME_SETTABLE));
+}
+
+try {
+  const kept = localStorage.getItem(SCREEN_VOLUME_KEY);
+  if (kept !== null && Number.isFinite(Number(kept))) screenVolumeRange.value = String(Math.min(100, Math.max(0, Number(kept))));
+} catch (_) { /* nothing kept: as it came */ }
+
+screenVolumeRange.addEventListener("input", () => {
+  if (screenSoundOut) screenSoundOut.volume = screenVolumeLevel();
+  try { localStorage.setItem(SCREEN_VOLUME_KEY, screenVolumeRange.value); } catch (_) { /* for this time only */ }
+});
 
 function stopLocalCallMedia() {
   if (localStream) {
@@ -7353,8 +7452,9 @@ function hideCallChrome() {
     connected: callPc?.connectionState === "connected",
     video: !callOverlay.classList.contains("voice-only"),
     /* :hover sticks after a tap on a phone; only a real pointer counts */
-    pointerOnControls: window.matchMedia?.("(hover: hover)").matches === true && callControls.matches(":hover"),
-    keyboardInControls: Boolean(callControls.querySelector(":focus-visible"))
+    pointerOnControls: window.matchMedia?.("(hover: hover)").matches === true &&
+                       (callControls.matches(":hover") || screenVolume.matches(":hover")),
+    keyboardInControls: Boolean(callControls.querySelector(":focus-visible") || screenVolume.querySelector(":focus-visible"))
   });
   /* Not yet — still connecting, say: look again later rather than never. */
   if (!mayHide) { callChromeTimer = setTimeout(hideCallChrome, CALL_CHROME_IDLE_MS); return; }
