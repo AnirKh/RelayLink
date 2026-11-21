@@ -27,7 +27,7 @@
 
    APP_BUILD is written by tools/sync-build.js and by nothing else.
 ══════════════════════════════════════════════ */
-const APP_BUILD = "202611210806-6dd8f7ed";
+const APP_BUILD = "202611210839-78274329";
 
 function refuseToRunInAStalePage() {
   let builtFor = null;
@@ -1565,7 +1565,7 @@ function sendPendingCreate() {
 }
 
 /* ── Get Өртөө bar ─────────────────────────
-   Windows and Mac apps do not exist yet: their icons only say so. Inside the
+   The Mac app does not exist yet: its icon only says so. Inside the
    Өртөө app (its WebView adds "OrtooApp" to the user agent) the whole bar is
    hidden — there is nothing left to install. The Browser icon is the install
    button below.                                                          */
