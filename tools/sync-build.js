@@ -63,11 +63,14 @@ const CLIENT_FILES = [
   "sw.js",
   /* The shared sound's dip while talking, an AudioWorklet. app.js loads it,
      at duck.js?v=<the build>, so like sw.js it is hashed but not stamped. */
-  "duck.js"
+  "duck.js",
+  /* The Windows app's window icon. app.js swaps it in, at
+     icons/app-icon.svg?v=<the build>, so it is hashed but not stamped. */
+  "icons/app-icon.svg"
 ];
 
 /** Client files that index.html does not load itself. */
-const NOT_IN_PAGE = ["sw.js", "duck.js"];
+const NOT_IN_PAGE = ["sw.js", "duck.js", "icons/app-icon.svg"];
 
 /* Pictures are hashed as the bytes they are. Read as text, two different
    pictures could hash the same: every byte that is not valid UTF-8 decodes to

@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="18 18 72 72">
+  <!-- The Өртөө app's icon (phone, Windows): white link mark on #18181b,
+       the same drawing as .app-mark in index.html. The page shows it as its
+       icon when it runs as the Windows app (html.in-desktop-app). -->
+  <rect x="18" y="18" width="72" height="72" rx="14" fill="#18181b"/>
+  <path d="M64.52,43.48L43.48,64.52" stroke="#fff" stroke-width="5.2"/>
+  <path fill="#fff" fill-rule="evenodd" d="M69.47,28.73a9.8,9.8 0,1 0,0.001 0Z M69.47,34.09a4.44,4.44 0,1 0,0.001 0Z M38.53,59.67a9.8,9.8 0,1 0,0.001 0Z M38.53,65.03a4.44,4.44 0,1 0,0.001 0Z"/>
+</svg>

@@ -305,7 +305,7 @@ app.get("/", (req, res) => {
 });
 
 app.get(["/app.js", "/protocol.js", "/i18n.js", "/framebust.js", "/connstats.js", "/guards.js", "/pake.js", "/vendor/noble.js", "/style.css",
-         "/manifest.webmanifest", "/icons/icon.svg", "/icons/apple-touch-icon.png", "/icons/author.jpg",
+         "/manifest.webmanifest", "/icons/icon.svg", "/icons/app-icon.svg", "/icons/apple-touch-icon.png", "/icons/author.jpg",
          "/icons/icon-192.png", "/icons/icon-512.png", "/icons/icon-maskable-512.png",
          "/icons/link-preview-relaylink.png", "/sw.js", "/duck.js",
          "/vendor/tabler/tabler-icons.min.css", "/vendor/tabler/fonts/tabler-icons.woff2"], (req, res) => {

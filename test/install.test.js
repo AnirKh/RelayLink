@@ -248,4 +248,6 @@ test("the Windows app window (?app=windows) and an installed page hide the Get Ó
   assert.match(app, /classList\.toggle\("in-desktop-app", inDesktopApp\(\)\)/);
   assert.match(app, /get\("app"\) === "windows"/);
   assert.match(app, /return remembered \|\| runningInstalled\(\);/);
+  assert.match(app, /icon\.href = "icons\/app-icon\.svg\?v=" \+ APP_BUILD/, "the window shows the app's icon");
+  assert.match(read("server.js"), /"\/icons\/app-icon\.svg"/, "and the server serves it");
 });
