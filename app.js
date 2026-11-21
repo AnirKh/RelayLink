@@ -27,7 +27,7 @@
 
    APP_BUILD is written by tools/sync-build.js and by nothing else.
 ══════════════════════════════════════════════ */
-const APP_BUILD = "202611210154-ae92db6a";
+const APP_BUILD = "202611210745-c278d5e8";
 
 function refuseToRunInAStalePage() {
   let builtFor = null;
@@ -6508,6 +6508,7 @@ async function updateCallStats() {
   const sound = DCS.callAudioStats(report, callAudioLast);
   callStatsLast = video;
   callAudioLast = sound;
+  retryLine(report);                        // a picture held down after a bad line, helped back up
   const lines = [];
   if (video.in || video.out) lines.push(`↓ ${describeCallVideo(video.in, t("callVideoNone"))}`, `↑ ${describeCallVideo(video.out, "—")}`);
   if (sound.in || sound.out) lines.push(`${t("callSound")} ↓ ${describeCallSound(sound.in)} · ↑ ${describeCallSound(sound.out)}`);
@@ -6521,6 +6522,7 @@ function watchCallStats(on) {
   callStatsLast = null;
   callAudioLast = null;
   callStats.textContent = "";
+  lineRetrying.since = lineRetrying.tests = lineRetrying.roomAtTest = 0;
   resetMicCheck();                          // a call starting, or over: nothing paused yet
   if (on) callStatsTimer = setInterval(updateCallStats, 2000);
 }
@@ -7942,6 +7944,88 @@ async function limitCameraSender(sender) {
     for (const encoding of params.encodings) Object.assign(encoding, CAMERA_BESIDE_SCREEN);
     await sender.setParameters(params);
   } catch (_) { /* a browser that will not take limits sends as it would have */ }
+}
+
+/* ── A picture held down after a bad line ───
+   Reported: a shared screen went small while the internet was bad, and stayed
+   small long after it was good again. The browser has to find out for itself
+   that the line is good again, slowly, and then puts the size back a step at
+   a time. Now, each time the call's figures are read (every 2 s), a picture
+   the browser says it is holding down for the line is helped back up: the
+   line is tested now and then, and once there is room the steps down are let
+   go of all at once. See G.lineRetry for when, and what it did on a test
+   line; DCS.heldVideo for what is read.
+
+   Only pictures this page has given a ceiling: a shared screen, and the
+   camera made small beside it. The ceiling is what is moved to test the
+   line, and what "room" is measured against.                              */
+const LINE_TEST_DIP = 0.95;                 // the ceiling, for a moment, before it is put back
+const lineRetrying = { since: 0, tests: 0, testAt: 0, roomAtTest: 0, resetAt: 0, busy: false };
+
+/** A sender's ceiling in b/s (its encodings' highest maxBitrate), or 0 for none. */
+function senderCeiling(sender) {
+  try { return Math.max(0, ...(sender.getParameters().encodings || []).map(e => e.maxBitrate || 0)); }
+  catch (_) { return 0; }
+}
+
+async function retryLine(report) {
+  const pc = callPc;
+  if (!pc || lineRetrying.busy) return;
+  const { held, roomKbps } = DCS.heldVideo(report);
+  const capped  = pc.getSenders().filter(s => s.track?.kind === "video" && senderCeiling(s) > 0);
+  const holding = capped.filter(s => held.includes(s.track.id));
+  const now = Date.now();
+  if (!holding.length) { lineRetrying.since = lineRetrying.tests = lineRetrying.roomAtTest = 0; return; }
+  if (!lineRetrying.since) lineRetrying.since = now;
+  const action = G.lineRetry({
+    held: true, roomKbps, needKbps: capped.reduce((sum, s) => sum + senderCeiling(s), 0) / 1000,
+    heldFor: now - lineRetrying.since, tests: lineRetrying.tests,
+    sinceTest: now - lineRetrying.testAt, roomAtTest: lineRetrying.roomAtTest, sinceReset: now - lineRetrying.resetAt
+  });
+  if (action === "none") return;
+  lineRetrying.busy = true;
+  try {
+    if (action === "test") {
+      lineRetrying.tests++;
+      lineRetrying.testAt = now;
+      lineRetrying.roomAtTest = roomKbps || 0;
+      await testLine(holding[0]);
+    } else {
+      lineRetrying.resetAt = now;
+      for (const sender of holding) await letGoOfSteps(sender);
+    }
+  } catch (_) { /* a browser that will not: it finds its own way back, as before */ }
+  finally { lineRetrying.busy = false; }
+}
+
+/** The ceiling lowered a touch and put straight back. Going up is what makes
+    the browser send a short burst to measure the line. Left alone if
+    something else moved it in between (sharing stopping, say). */
+async function testLine(sender) {
+  const params = sender.getParameters();
+  const was = params.encodings.map(e => e.maxBitrate);
+  const dipped = was.map(rate => (rate ? Math.round(rate * LINE_TEST_DIP) : rate));
+  params.encodings.forEach((e, i) => { if (was[i]) e.maxBitrate = dipped[i]; });
+  await sender.setParameters(params);
+  const back = sender.getParameters();
+  if (!back.encodings.every((e, i) => e.maxBitrate === dipped[i])) return;
+  back.encodings.forEach((e, i) => { if (was[i]) e.maxBitrate = was[i]; });
+  await sender.setParameters(back);
+}
+
+/** Every step down let go of at once. The browser starts again from the
+    picture's full size whenever its way of stepping down is changed, so it
+    is changed for a moment and changed back: to the browser's own choice,
+    where none had been set. */
+async function letGoOfSteps(sender) {
+  const params = sender.getParameters();
+  const usual = params.degradationPreference;
+  params.degradationPreference = usual === "balanced" ? "maintain-framerate" : "balanced";
+  await sender.setParameters(params);
+  const back = sender.getParameters();
+  if (usual) back.degradationPreference = usual;
+  else delete back.degradationPreference;
+  await sender.setParameters(back);
 }
 
 async function startScreenShare() {

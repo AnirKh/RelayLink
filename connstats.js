@@ -392,6 +392,37 @@
     };
   }
 
+  /**
+   * Which pictures this side sends that the browser is holding down for the
+   * line, and what it reckons the line carries now — for G.lineRetry.
+   *
+   * "Held" is the browser's own word for it: an outgoing video whose quality
+   * is limited by "bandwidth" (smaller, or fewer frames, than it was given).
+   * Each by the id of its track, found through its media source. The line is
+   * the chosen route's availableOutgoingBitrate, in kb/s; null where the
+   * browser gives none (Firefox, for one — and nothing is held there either:
+   * it does not say why a picture is small).
+   *
+   * @returns {{held: string[], roomKbps: number|null}}
+   */
+  function heldVideo(stats) {
+    const held = [];
+    const tracks = {};
+    let roomKbps = null;
+    if (stats && typeof stats.forEach === "function") {
+      stats.forEach(r => { if (r && r.type === "media-source" && r.trackIdentifier) tracks[r.id] = r.trackIdentifier; });
+      stats.forEach(r => {
+        if (!r || r.type !== "outbound-rtp" || (r.kind || r.mediaType) !== "video") return;
+        if (r.qualityLimitationReason === "bandwidth" && tracks[r.mediaSourceId]) held.push(tracks[r.mediaSourceId]);
+      });
+      const pair = selectedCandidatePair(stats);
+      if (pair && typeof pair.availableOutgoingBitrate === "number" && isFinite(pair.availableOutgoingBitrate)) {
+        roomKbps = Math.round(pair.availableOutgoingBitrate / 1000);
+      }
+    }
+    return { held, roomKbps };
+  }
+
   function fmtBytes(b) {
     if (typeof b !== "number" || !isFinite(b) || b < 0) return "0B";
     if (b < 1024)    return `${b}B`;
@@ -412,6 +443,6 @@
     selectedCandidatePair, describePath,
     usableAddress, pathAddresses, isPublicAddress,
     OS_NAMES, BROWSER_NAMES, describeDevice, deviceLabel,
-    qualityFromRtt, trafficTotals, callVideoStats, callAudioStats, fmtBytes, timeAgo
+    qualityFromRtt, trafficTotals, callVideoStats, callAudioStats, heldVideo, fmtBytes, timeAgo
   };
 });

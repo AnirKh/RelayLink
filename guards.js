@@ -1204,6 +1204,56 @@
     return "wait";
   }
 
+  /**
+   * What to do for a picture the browser is holding down for the line — sent
+   * smaller, or at fewer frames a second, than it should be.
+   *
+   * Reported: a shared screen went small while the internet was bad, and
+   * stayed small long after it was good again. Tried on a line made slow on
+   * purpose (500 kb/s for 25 s, then free): Chrome took 28 s to send 720p
+   * again. Its guess of what the line carries grows by about 8% a second, and
+   * it puts the size back one step every 5–6 s. Two things this side can do
+   * brought that to 2 s:
+   *
+   *   "test"   raise the picture's ceiling a touch: Chrome then sends a short
+   *            burst to measure the line, and its guess jumps to what the line
+   *            really carries — 0.6 to 4.8 Mb/s in 2 s on the test line. Soon
+   *            at first, then less and less often (10 s, 20 s, 40 s, then each
+   *            minute), so a line that is still bad is not pressed. And at
+   *            once when the guess has grown by a quarter since the last test:
+   *            on a bad line it stays near what the line carries, so a guess
+   *            climbing past that is the line coming back. Without this the
+   *            next test came by the clock: 18 s after the line was good.
+   *   "reset"  the guess has room for every picture's full rate again: let go
+   *            of the steps down all at once, so the picture is back to its
+   *            full size now, not a step every few seconds.
+   *   "none"   nothing held, or not yet.
+   *
+   * `needKbps` is what every picture with a ceiling adds up to; `roomKbps`
+   * the browser's guess for the line, NaN or null where it gives none;
+   * `roomAtTest` the guess when the line was last tested.
+   *
+   * @param {{held: boolean, roomKbps: number, needKbps: number, heldFor: number,
+   *          tests: number, sinceTest: number, roomAtTest: number,
+   *          sinceReset: number}} o  times in ms
+   */
+  const LINE_RETRY = Object.freeze({
+    firstTestMs: 5000, testMs: 10000, maxTestMs: 60000, rise: 1.25, riseGapMs: 4000, room: 0.8, resetMs: 8000
+  });
+  function lineRetry(o) {
+    if (!o || o.held !== true || !(o.heldFor >= 0)) return "none";
+    if (o.needKbps > 0 && o.roomKbps >= o.needKbps * LINE_RETRY.room) {
+      return o.sinceReset >= LINE_RETRY.resetMs ? "reset" : "none";
+    }
+    if (o.heldFor < LINE_RETRY.firstTestMs) return "none";
+    const tests = o.tests > 0 ? o.tests : 0;
+    if (tests === 0) return "test";
+    if (o.roomAtTest > 0 && o.roomKbps >= o.roomAtTest * LINE_RETRY.rise &&
+        o.sinceTest >= LINE_RETRY.riseGapMs) return "test";
+    const wait = Math.min(LINE_RETRY.maxTestMs, LINE_RETRY.testMs * 2 ** (tests - 1));
+    return o.sinceTest >= wait ? "test" : "none";
+  }
+
   /* ══════════════════════════════════════════
      Telling you something arrived
   ══════════════════════════════════════════ */
@@ -1847,7 +1897,7 @@
     LINK_ALIVE, serverLeaveEndsChat, linkLostForGood,
     tracksToRestart, mayFlipCamera, flipCameraOffered, mayMoveMic, micChangeAction, speakerOffered, VOICE_LEVELLER, mayLevelVoice,
     mayShareScreen, shareOffered, callChromeMayHide, callPauseNote, MIC_CHECK, micCheck, CALL_RECOVER, callRecovery,
-    CHAT_REPAIR, chatRepair, unattended, tabTitle,
+    LINE_RETRY, lineRetry, CHAT_REPAIR, chatRepair, unattended, tabTitle,
     waitingRoomLost, isOwnRoom, connectStalled, chatIsLive, backPress, leaveAsks, callWhenChatCloses, splitLinks,
     REACTIONS, reactionKey, reactionValid, nextReaction, reactionBadge,
     HOST_ROOM_MAX_AGE_MS, restorableHostRoom,
