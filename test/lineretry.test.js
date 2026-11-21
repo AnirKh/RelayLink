@@ -7,6 +7,10 @@
   and letting go of the steps down brought that to 2 s. G.lineRetry decides,
   DCS.heldVideo reads the call's figures, and retryLine() with its two moves is
   lifted out of app.js and run against stand-in senders and a stand-in clock.
+
+  Then asked for the camera in a call with nothing shared: Chrome alone had it
+  back at 720p 33 s after the line was good. It has no ceiling of this page's;
+  G.usualVideoRate stands in for one.
 */
 
 "use strict";
@@ -72,6 +76,16 @@ test("nonsense in: nothing done", () => {
   }
 });
 
+test("what a picture with no ceiling may send: the browser's own figures, by its area", () => {
+  assert.equal(G.usualVideoRate(1280, 720), 2_500_000);
+  assert.equal(G.usualVideoRate(1920, 1080), 2_500_000);
+  assert.equal(G.usualVideoRate(960, 540), 2_000_000);
+  assert.equal(G.usualVideoRate(640, 480), 1_700_000);
+  assert.equal(G.usualVideoRate(480, 640), 1_700_000, "a phone held upright: the same picture");
+  assert.equal(G.usualVideoRate(320, 240), 600_000);
+  for (const [w, h] of [[0, 720], [undefined, undefined], [NaN, 480], [-640, 480]]) assert.equal(G.usualVideoRate(w, h), 0);
+});
+
 /* ══════════════════════════════════════════
    What is read
 ══════════════════════════════════════════ */
@@ -116,23 +130,34 @@ const SOURCE = [
   grab(/^const LINE_TEST_DIP = [^\n]*$/m,                          "LINE_TEST_DIP"),
   grab(/^const lineRetrying = [^\n]*$/m,                           "lineRetrying"),
   grab(/^function senderCeiling\([\s\S]*?^\}/m,                     "senderCeiling"),
+  grab(/^function senderWants\([\s\S]*?^\}/m,                       "senderWants"),
   grab(/^async function retryLine\([\s\S]*?^\}/m,                   "retryLine"),
   grab(/^async function testLine\([\s\S]*?^\}/m,                    "testLine"),
   grab(/^async function letGoOfSteps\([\s\S]*?^\}/m,                "letGoOfSteps")
 ].join("\n");
 
 /** A sender as the browser keeps one: getParameters hands out a copy, and
-    setParameters takes it back. Every change is written down. */
-function sender(trackId, { kind = "video", ceiling, preference } = {}) {
+    setParameters takes it back. Every change is written down. As in Chrome,
+    only the copy from the latest getParameters may be set, once: found on
+    the test line, where the camera's test read the parameters twice and
+    Chrome refused every one. */
+function sender(trackId, { kind = "video", ceiling, preference, size = { width: 1280, height: 720 } } = {}) {
   let kept = { encodings: [ceiling ? { maxBitrate: ceiling } : {}] };
   if (preference) kept.degradationPreference = preference;
+  let issued = null, handedOut = 0;
   const s = {
-    track: trackId ? { id: trackId, kind } : null,
+    track: trackId ? { id: trackId, kind, getSettings: () => ({ ...size }) } : null,
     sets: [],
     meanwhile: null,                          // something else changing it, between this page's two steps
-    getParameters: () => JSON.parse(JSON.stringify(kept)),
+    getParameters: () => {
+      issued = `t${++handedOut}`;
+      return { ...JSON.parse(JSON.stringify(kept)), transactionId: issued };
+    },
     setParameters: async p => {
-      kept = JSON.parse(JSON.stringify(p));
+      if (!issued || p.transactionId !== issued) throw new Error("InvalidModificationError: not the latest parameters");
+      issued = null;
+      const { transactionId, ...rest } = p;
+      kept = JSON.parse(JSON.stringify(rest));
       s.sets.push({ maxBitrate: kept.encodings[0].maxBitrate, degradationPreference: kept.degradationPreference });
       if (s.meanwhile) { const f = s.meanwhile; s.meanwhile = null; f(kept); }
     },
@@ -217,12 +242,53 @@ test("not held any more: the count starts over, and the next bad spell waits its
   assert.equal(screen.sets.length, 4);
 });
 
-test("pictures without a ceiling are the browser's alone: a camera in a call with nothing shared", async () => {
+test("a camera in a call with nothing shared: the line tested with what its full size may send, then no ceiling again", async () => {
+  /* Asked for: the same for the camera. Its own ceiling falls as the browser
+     makes it smaller, so it is raised to the full size's for the test. */
   const camera = sender("cam");
+  const c = call([camera]);
+  await c.read(0, ["cam"], 600);
+  await c.read(6000, ["cam"], 600);
+  assert.deepEqual(camera.sets.map(s => s.maxBitrate), [2_500_000, undefined], "720p's 2.5 Mb/s for a moment");
+  assert.equal("maxBitrate" in camera.kept().encodings[0], false, "and the browser's own again after");
+  await c.read(8000, ["cam"], 2100);              // 2100 ≥ 80% of 2500
+  assert.deepEqual(camera.sets.slice(2).map(s => s.degradationPreference), ["balanced", undefined], "room: back to full size at once");
+});
+
+test("a phone's camera is measured by its own size", async () => {
+  const camera = sender("cam", { size: { width: 480, height: 640 } });
+  const c = call([camera]);
+  await c.read(0, ["cam"], 600);
+  await c.read(6000, ["cam"], 600);
+  assert.equal(camera.sets[0].maxBitrate, 1_700_000);
+  await c.read(8000, ["cam"], 1400);              // 1400 ≥ 80% of 1700
+  assert.equal(camera.sets.length, 4, "room enough for it");
+});
+
+test("the camera beside a shared screen counts its own ceiling, not its size", async () => {
+  const screen = sender("screen", { ceiling: 4_000_000 });
+  const camera = sender("cam", { ceiling: 500_000 });
+  const c = call([screen, camera]);
+  await c.read(0, ["screen"], 3700);              // 80% of 4.5 Mb/s, not of 6.5
+  assert.equal(screen.sets.length, 2);
+});
+
+test("a picture whose size is not known, with no ceiling: left to the browser", async () => {
+  const camera = sender("cam", { size: {} });
   const c = call([camera]);
   for (const at of [0, 6000, 20000]) await c.read(at, ["cam"], 600);
   await c.read(30000, ["cam"], 9000);
   assert.deepEqual(camera.sets, []);
+});
+
+test("a camera given a ceiling while its test was under way (sharing starting): left as it was set", async () => {
+  const camera = sender("cam");
+  camera.meanwhile = kept => { kept.encodings[0].maxBitrate = 500_000; };   // made small beside the screen
+  const c = call([camera]);
+  await c.read(0, ["cam"], 600);
+  await c.read(6000, ["cam"], 600);
+  assert.equal(camera.sets.length, 1);
+  assert.equal(camera.kept().encodings[0].maxBitrate, 500_000);
 });
 
 test("the ceiling moved by something else between the two steps (sharing stopping): not put back over it", async () => {

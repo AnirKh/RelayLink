@@ -1229,7 +1229,7 @@
    *            full size now, not a step every few seconds.
    *   "none"   nothing held, or not yet.
    *
-   * `needKbps` is what every picture with a ceiling adds up to; `roomKbps`
+   * `needKbps` is what every picture sent adds up to at full size; `roomKbps`
    * the browser's guess for the line, NaN or null where it gives none;
    * `roomAtTest` the guess when the line was last tested.
    *
@@ -1252,6 +1252,21 @@
         o.sinceTest >= LINE_RETRY.riseGapMs) return "test";
     const wait = Math.min(LINE_RETRY.maxTestMs, LINE_RETRY.testMs * 2 ** (tests - 1));
     return o.sinceTest >= wait ? "test" : "none";
+  }
+
+  /**
+   * What a browser lets a picture of this size send when nothing else is set,
+   * in b/s: Chrome's own figures, by the picture's area. Stands in for the
+   * ceiling of a camera this page gave none, in G.lineRetry's sums and to
+   * test the line with. 0 for no size.
+   */
+  function usualVideoRate(width, height) {
+    if (!(width > 0 && height > 0)) return 0;
+    const pixels = width * height;
+    if (pixels <= 320 * 240) return 600_000;
+    if (pixels <= 640 * 480) return 1_700_000;
+    if (pixels <= 960 * 540) return 2_000_000;
+    return 2_500_000;
   }
 
   /* ══════════════════════════════════════════
@@ -1897,7 +1912,7 @@
     LINK_ALIVE, serverLeaveEndsChat, linkLostForGood,
     tracksToRestart, mayFlipCamera, flipCameraOffered, mayMoveMic, micChangeAction, speakerOffered, VOICE_LEVELLER, mayLevelVoice,
     mayShareScreen, shareOffered, callChromeMayHide, callPauseNote, MIC_CHECK, micCheck, CALL_RECOVER, callRecovery,
-    LINE_RETRY, lineRetry, CHAT_REPAIR, chatRepair, unattended, tabTitle,
+    LINE_RETRY, lineRetry, usualVideoRate, CHAT_REPAIR, chatRepair, unattended, tabTitle,
     waitingRoomLost, isOwnRoom, connectStalled, chatIsLive, backPress, leaveAsks, callWhenChatCloses, splitLinks,
     REACTIONS, reactionKey, reactionValid, nextReaction, reactionBadge,
     HOST_ROOM_MAX_AGE_MS, restorableHostRoom,

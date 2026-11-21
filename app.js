@@ -27,7 +27,7 @@
 
    APP_BUILD is written by tools/sync-build.js and by nothing else.
 ══════════════════════════════════════════════ */
-const APP_BUILD = "202611210745-c278d5e8";
+const APP_BUILD = "202611210806-6dd8f7ed";
 
 function refuseToRunInAStalePage() {
   let builtFor = null;
@@ -7956,10 +7956,14 @@ async function limitCameraSender(sender) {
    go of all at once. See G.lineRetry for when, and what it did on a test
    line; DCS.heldVideo for what is read.
 
-   Only pictures this page has given a ceiling: a shared screen, and the
-   camera made small beside it. The ceiling is what is moved to test the
-   line, and what "room" is measured against.                              */
-const LINE_TEST_DIP = 0.95;                 // the ceiling, for a moment, before it is put back
+   Every picture the call sends: a shared screen and the camera made small
+   beside it, by the ceilings this page gave them; and asked for next, the
+   camera in a call with nothing shared, which has none — the browser's own
+   ceiling for a picture its size stands in (G.usualVideoRate). On the test
+   line, as for the screen: Chrome alone had the camera back at 720p 33 s
+   after the line was good, and 25 s into a call that began on a good one;
+   with this, 10 s and 8 s.                                                 */
+const LINE_TEST_DIP = 0.95;                 // a ceiling, for a moment, before it is put back
 const lineRetrying = { since: 0, tests: 0, testAt: 0, roomAtTest: 0, resetAt: 0, busy: false };
 
 /** A sender's ceiling in b/s (its encodings' highest maxBitrate), or 0 for none. */
@@ -7968,17 +7972,27 @@ function senderCeiling(sender) {
   catch (_) { return 0; }
 }
 
+/** What a picture should be able to send at its full size, in b/s: its
+    ceiling where this page gave it one, otherwise the browser's own for a
+    picture the size it is captured at. 0 when neither is known. */
+function senderWants(sender) {
+  const ceiling = senderCeiling(sender);
+  if (ceiling) return ceiling;
+  const { width, height } = sender.track?.getSettings?.() || {};
+  return G.usualVideoRate(width, height);
+}
+
 async function retryLine(report) {
   const pc = callPc;
   if (!pc || lineRetrying.busy) return;
   const { held, roomKbps } = DCS.heldVideo(report);
-  const capped  = pc.getSenders().filter(s => s.track?.kind === "video" && senderCeiling(s) > 0);
-  const holding = capped.filter(s => held.includes(s.track.id));
+  const sending = pc.getSenders().filter(s => s.track?.kind === "video" && senderWants(s) > 0);
+  const holding = sending.filter(s => held.includes(s.track.id));
   const now = Date.now();
   if (!holding.length) { lineRetrying.since = lineRetrying.tests = lineRetrying.roomAtTest = 0; return; }
   if (!lineRetrying.since) lineRetrying.since = now;
   const action = G.lineRetry({
-    held: true, roomKbps, needKbps: capped.reduce((sum, s) => sum + senderCeiling(s), 0) / 1000,
+    held: true, roomKbps, needKbps: sending.reduce((sum, s) => sum + senderWants(s), 0) / 1000,
     heldFor: now - lineRetrying.since, tests: lineRetrying.tests,
     sinceTest: now - lineRetrying.testAt, roomAtTest: lineRetrying.roomAtTest, sinceReset: now - lineRetrying.resetAt
   });
@@ -7998,18 +8012,24 @@ async function retryLine(report) {
   finally { lineRetrying.busy = false; }
 }
 
-/** The ceiling lowered a touch and put straight back. Going up is what makes
-    the browser send a short burst to measure the line. Left alone if
-    something else moved it in between (sharing stopping, say). */
+/** The ceiling moved and put straight back. Going up is what makes the
+    browser send a short burst to measure the line: a ceiling this page gave
+    is lowered a touch and raised again; with none, one is set at what the
+    picture's full size may send, and taken off again. That one matters: the
+    browser's own falls as it makes the picture smaller, and a camera made
+    small was then held at what its small size may send. Left alone if
+    something else moved it in between (sharing starting or stopping, say). */
 async function testLine(sender) {
+  const wants = senderWants(sender);        // first: it reads the parameters too, and only the last read may be set
   const params = sender.getParameters();
   const was = params.encodings.map(e => e.maxBitrate);
-  const dipped = was.map(rate => (rate ? Math.round(rate * LINE_TEST_DIP) : rate));
-  params.encodings.forEach((e, i) => { if (was[i]) e.maxBitrate = dipped[i]; });
+  const ceilinged = was.some(Boolean);
+  const moved = was.map(rate => (ceilinged ? (rate ? Math.round(rate * LINE_TEST_DIP) : rate) : wants));
+  params.encodings.forEach((e, i) => { if (moved[i]) e.maxBitrate = moved[i]; });
   await sender.setParameters(params);
   const back = sender.getParameters();
-  if (!back.encodings.every((e, i) => e.maxBitrate === dipped[i])) return;
-  back.encodings.forEach((e, i) => { if (was[i]) e.maxBitrate = was[i]; });
+  if (!back.encodings.every((e, i) => e.maxBitrate === moved[i])) return;
+  back.encodings.forEach((e, i) => { if (was[i]) e.maxBitrate = was[i]; else delete e.maxBitrate; });
   await sender.setParameters(back);
 }
 
