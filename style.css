@@ -396,7 +396,8 @@ html.in-ortoo-app .install-bar { display: none; }   /* already in the app */
 html.in-ortoo-app .author-btn img { display: none; }
 html.in-ortoo-app .author-btn .app-mark { display: block; }
 html.in-ortoo-app .author-photo,
-html.in-ortoo-app .author-links { display: none; }   /* name and words only, in the app */
+html.in-ortoo-app .author-name,
+html.in-ortoo-app .author-links { display: none; }   /* just the words, in the app */
 .author-btn:hover, .author[open] .author-btn, .author-btn:focus-visible { border-color: var(--accent); }
 .author-panel {
   position: absolute; top: calc(100% + 8px); left: 0;
