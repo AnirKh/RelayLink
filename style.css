@@ -386,11 +386,15 @@ html.in-desktop-app .install-bar { display: none; }  /* already in the app */
 /* Inside the Өртөө app: the app's icon instead of the author's picture. The
    fill colours are the app icon's own (#18181b ground, white mark). */
 .author-btn .app-mark { display: none; width: 100%; height: 100%; }
-html.in-ortoo-app .author-btn img { display: none; }
-html.in-ortoo-app .author-btn .app-mark { display: block; }
-/* In the app the icon is a plain logo: a tap opens nothing. */
-html.in-ortoo-app .author-btn { pointer-events: none; cursor: default; }
-html.in-ortoo-app .author-panel { display: none; }
+html.in-ortoo-app .author-btn img,
+html.in-desktop-app .author-btn img { display: none; }
+html.in-ortoo-app .author-btn .app-mark,
+html.in-desktop-app .author-btn .app-mark { display: block; }
+/* In the app (phone or Windows) the icon is a plain logo: a tap opens nothing. */
+html.in-ortoo-app .author-btn,
+html.in-desktop-app .author-btn { pointer-events: none; cursor: default; }
+html.in-ortoo-app .author-panel,
+html.in-desktop-app .author-panel { display: none; }
 .author-btn:hover, .author[open] .author-btn, .author-btn:focus-visible { border-color: var(--accent); }
 .author-panel {
   position: absolute; top: calc(100% + 8px); left: 0;

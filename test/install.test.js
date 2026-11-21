@@ -243,6 +243,7 @@ test("inside another app's browser there is no Install button — nothing can be
 
 test("the Windows app window (?app=windows) and an installed page hide the Get Өртөө bar", () => {
   assert.match(read("style.css"), /html\.in-desktop-app \.install-bar\s*\{\s*display:\s*none;/);
+  assert.match(read("style.css"), /html\.in-desktop-app \.author-btn \.app-mark\s*\{\s*display:\s*block;/, "the logo instead of the author's picture");
   const app = read("app.js");
   assert.match(app, /classList\.toggle\("in-desktop-app", inDesktopApp\(\)\)/);
   assert.match(app, /get\("app"\) === "windows"/);
