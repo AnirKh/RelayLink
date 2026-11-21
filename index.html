@@ -15,9 +15,9 @@
        Install button at the bottom left is in the lobby (installOffer in
        guards.js). iPhones read the apple-* lines, since Safari takes the icon
        and title from these rather than from the manifest. -->
-  <link rel="manifest" href="manifest.webmanifest?v=202611210042-920de29b">
-  <link rel="icon" type="image/svg+xml" href="icons/icon.svg?v=202611210042-920de29b">
-  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png?v=202611210042-920de29b">
+  <link rel="manifest" href="manifest.webmanifest?v=202611210100-19309209">
+  <link rel="icon" type="image/svg+xml" href="icons/icon.svg?v=202611210100-19309209">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png?v=202611210100-19309209">
   <meta name="theme-color" content="#15151a">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black">
@@ -62,7 +62,7 @@
     soon as it parses.
   -->
   <style id="antiClickjack">body{visibility:hidden}</style>
-  <script src="framebust.js?v=202611210042-920de29b"></script>
+  <script src="framebust.js?v=202611210100-19309209"></script>
 
   <!--
     The icons, from our own copy. They came from a CDN, which saw every visit —
@@ -72,8 +72,8 @@
     test/csp.test.js checks, so it cannot be edited by accident. See "Icon
     font" in the README.
   -->
-  <link rel="stylesheet" href="vendor/tabler/tabler-icons.min.css?v=202611210042-920de29b">
-  <link rel="stylesheet" href="style.css?v=202611210042-920de29b">
+  <link rel="stylesheet" href="vendor/tabler/tabler-icons.min.css?v=202611210100-19309209">
+  <link rel="stylesheet" href="style.css?v=202611210100-19309209">
 </head>
 <body>
 
@@ -90,10 +90,16 @@
          is the way to reach them. Opened and closed like the about panel. -->
     <details id="authorDropdown" class="author">
       <summary class="author-btn" data-i18n-aria="authorLabel" aria-label="Зохиогчийн тухай">
-        <img src="icons/author.jpg?v=202611210042-920de29b" alt="" width="36" height="36">
+        <img src="icons/author.jpg?v=202611210100-19309209" alt="" width="36" height="36">
+        <!-- In the Өртөө app the app's own icon stands here instead (html.in-ortoo-app). -->
+        <svg class="app-mark" viewBox="18 18 72 72" aria-hidden="true">
+          <rect x="18" y="18" width="72" height="72" fill="#18181b"/>
+          <path d="M64.52,43.48L43.48,64.52" stroke="#fff" stroke-width="5.2"/>
+          <path fill="#fff" fill-rule="evenodd" d="M69.47,28.73a9.8,9.8 0,1 0,0.001 0Z M69.47,34.09a4.44,4.44 0,1 0,0.001 0Z M38.53,59.67a9.8,9.8 0,1 0,0.001 0Z M38.53,65.03a4.44,4.44 0,1 0,0.001 0Z"/>
+        </svg>
       </summary>
       <div class="author-panel">
-        <img class="author-photo" src="icons/author.jpg?v=202611210042-920de29b" alt="" width="72" height="72">
+        <img class="author-photo" src="icons/author.jpg?v=202611210100-19309209" alt="" width="72" height="72">
         <div class="author-name">Anir Khurelbaatar</div>
         <p data-i18n="authorAbout">Хүмүүс хоорондоо хялбар, чөлөөтэй харилцах боломжийг бүрдүүлэхийн тулд энэхүү аппыг бүтээлээ. Надтай холбогдохыг хүсвэл өртөөгөөр холбогдоорой.</p>
         <div class="author-links">
@@ -677,14 +683,14 @@
   </div>
 
   <!-- Load order matters: app.js reads DCProtocol, LANG and I18N at parse time. -->
-  <script src="protocol.js?v=202611210042-920de29b"></script>
-  <script src="connstats.js?v=202611210042-920de29b"></script>
-  <script src="guards.js?v=202611210042-920de29b"></script>
-  <script src="i18n.js?v=202611210042-920de29b"></script>
+  <script src="protocol.js?v=202611210100-19309209"></script>
+  <script src="connstats.js?v=202611210100-19309209"></script>
+  <script src="guards.js?v=202611210100-19309209"></script>
+  <script src="i18n.js?v=202611210100-19309209"></script>
   <!-- vendor/noble.js sets window.DCNoble; pake.js (SPAKE2) reads it, and app.js
        reads window.DCPake. So both load before app.js, noble before pake. -->
-  <script src="vendor/noble.js?v=202611210042-920de29b"></script>
-  <script src="pake.js?v=202611210042-920de29b"></script>
-  <script src="app.js?v=202611210042-920de29b"></script>
+  <script src="vendor/noble.js?v=202611210100-19309209"></script>
+  <script src="pake.js?v=202611210100-19309209"></script>
+  <script src="app.js?v=202611210100-19309209"></script>
 </body>
 </html>
