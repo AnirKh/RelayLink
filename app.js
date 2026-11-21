@@ -27,7 +27,7 @@
 
    APP_BUILD is written by tools/sync-build.js and by nothing else.
 ══════════════════════════════════════════════ */
-const APP_BUILD = "202611210839-78274329";
+const APP_BUILD = "202611210919-450f7dcd";
 
 function refuseToRunInAStalePage() {
   let builtFor = null;
@@ -1567,9 +1567,23 @@ function sendPendingCreate() {
 /* ── Get Өртөө bar ─────────────────────────
    The Mac app does not exist yet: its icon only says so. Inside the
    Өртөө app (its WebView adds "OrtooApp" to the user agent) the whole bar is
-   hidden — there is nothing left to install. The Browser icon is the install
-   button below.                                                          */
+   hidden — there is nothing left to install. The same goes for the Windows
+   app (an Edge app window opened at ?app=windows, remembered for this window
+   in sessionStorage so a reload keeps it) and for the page installed from the
+   browser (display-mode standalone). The Browser icon is the install button
+   below.                                                                 */
 document.documentElement.classList.toggle("in-ortoo-app", /\bOrtooApp\b/.test(navigator.userAgent));
+document.documentElement.classList.toggle("in-desktop-app", inDesktopApp());
+function inDesktopApp() {
+  let remembered = false;
+  try {
+    if (new URLSearchParams(location.search).get("app") === "windows") sessionStorage.setItem("ortooDesktopApp", "1");
+    remembered = sessionStorage.getItem("ortooDesktopApp") === "1";
+  } catch { /* storage blocked: fall back to the URL alone */
+    remembered = new URLSearchParams(location.search).get("app") === "windows";
+  }
+  return remembered || runningInstalled();
+}
 document.querySelectorAll("#installBar [data-soon]").forEach(b => {
   b.onclick = () => showToast(t("comingSoon"), "info");
 });

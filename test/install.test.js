@@ -240,3 +240,11 @@ test("inside another app's browser there is no Install button — nothing can be
     "not the iPhone steps either: Instagram's browser has no Add to Home Screen");
   assert.equal(page({ userAgent: UA.iphone, maxTouchPoints: 5, inApp: { app: "Instagram", os: "ios" } }).shown(), false);
 });
+
+test("the Windows app window (?app=windows) and an installed page hide the Get Өртөө bar", () => {
+  assert.match(read("style.css"), /html\.in-desktop-app \.install-bar\s*\{\s*display:\s*none;/);
+  const app = read("app.js");
+  assert.match(app, /classList\.toggle\("in-desktop-app", inDesktopApp\(\)\)/);
+  assert.match(app, /get\("app"\) === "windows"/);
+  assert.match(app, /return remembered \|\| runningInstalled\(\);/);
+});
