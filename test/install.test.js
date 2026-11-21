@@ -230,7 +230,8 @@ test("the button and the steps are on the page, the button in the lobby", () => 
   const lobby = html.slice(html.indexOf('<div id="lobbyScreen"'), html.indexOf("<!-- JOIN PIN MODAL -->"));
   assert.match(lobby, /<button id="installBtn" class="install-btn hidden"/, "hidden until there is something to offer");
   assert.match(html, /<div id="installOverlay" class="overlay hidden">/);
-  assert.match(read("style.css"), /\.install-btn\s*\{[^}]*position:\s*fixed;[^}]*left:[^}]*bottom:/);
+  assert.match(lobby, /<nav id="installBar" class="install-bar"[\s\S]*?<button id="installBtn"/, "the button is the bar's Browser icon");
+  assert.match(read("style.css"), /\.install-bar\s*\{[^}]*position:\s*fixed;[^}]*left:[^}]*bottom:/);
 });
 
 test("inside another app's browser there is no Install button — nothing can be installed from there", () => {

@@ -27,7 +27,7 @@
 
    APP_BUILD is written by tools/sync-build.js and by nothing else.
 ══════════════════════════════════════════════ */
-const APP_BUILD = "202611201045-8ba81db9";
+const APP_BUILD = "202611210042-920de29b";
 
 function refuseToRunInAStalePage() {
   let builtFor = null;
@@ -1563,6 +1563,16 @@ function makeCreateKey() {
 function sendPendingCreate() {
   if (pendingCreate && ws && ws.readyState === WebSocket.OPEN) wsSend(pendingCreate);
 }
+
+/* ── Get Өртөө bar ─────────────────────────
+   Windows and Mac apps do not exist yet: their icons only say so. Inside the
+   Өртөө app (its WebView adds "OrtooApp" to the user agent) the whole bar is
+   hidden — there is nothing left to install. The Browser icon is the install
+   button below.                                                          */
+document.documentElement.classList.toggle("in-ortoo-app", /\bOrtooApp\b/.test(navigator.userAgent));
+document.querySelectorAll("#installBar [data-soon]").forEach(b => {
+  b.onclick = () => showToast(t("comingSoon"), "info");
+});
 
 /* ── Install as an app ──────────────────────
    The button at the bottom left. Chrome, Edge and Samsung Internet offer to

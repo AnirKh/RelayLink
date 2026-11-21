@@ -15,9 +15,9 @@
        Install button at the bottom left is in the lobby (installOffer in
        guards.js). iPhones read the apple-* lines, since Safari takes the icon
        and title from these rather than from the manifest. -->
-  <link rel="manifest" href="manifest.webmanifest?v=202611201045-8ba81db9">
-  <link rel="icon" type="image/svg+xml" href="icons/icon.svg?v=202611201045-8ba81db9">
-  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png?v=202611201045-8ba81db9">
+  <link rel="manifest" href="manifest.webmanifest?v=202611210042-920de29b">
+  <link rel="icon" type="image/svg+xml" href="icons/icon.svg?v=202611210042-920de29b">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png?v=202611210042-920de29b">
   <meta name="theme-color" content="#15151a">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black">
@@ -62,7 +62,7 @@
     soon as it parses.
   -->
   <style id="antiClickjack">body{visibility:hidden}</style>
-  <script src="framebust.js?v=202611201045-8ba81db9"></script>
+  <script src="framebust.js?v=202611210042-920de29b"></script>
 
   <!--
     The icons, from our own copy. They came from a CDN, which saw every visit —
@@ -72,8 +72,8 @@
     test/csp.test.js checks, so it cannot be edited by accident. See "Icon
     font" in the README.
   -->
-  <link rel="stylesheet" href="vendor/tabler/tabler-icons.min.css?v=202611201045-8ba81db9">
-  <link rel="stylesheet" href="style.css?v=202611201045-8ba81db9">
+  <link rel="stylesheet" href="vendor/tabler/tabler-icons.min.css?v=202611210042-920de29b">
+  <link rel="stylesheet" href="style.css?v=202611210042-920de29b">
 </head>
 <body>
 
@@ -90,10 +90,10 @@
          is the way to reach them. Opened and closed like the about panel. -->
     <details id="authorDropdown" class="author">
       <summary class="author-btn" data-i18n-aria="authorLabel" aria-label="Зохиогчийн тухай">
-        <img src="icons/author.jpg?v=202611201045-8ba81db9" alt="" width="36" height="36">
+        <img src="icons/author.jpg?v=202611210042-920de29b" alt="" width="36" height="36">
       </summary>
       <div class="author-panel">
-        <img class="author-photo" src="icons/author.jpg?v=202611201045-8ba81db9" alt="" width="72" height="72">
+        <img class="author-photo" src="icons/author.jpg?v=202611210042-920de29b" alt="" width="72" height="72">
         <div class="author-name">Anir Khurelbaatar</div>
         <p data-i18n="authorAbout">Хүмүүс хоорондоо хялбар, чөлөөтэй харилцах боломжийг бүрдүүлэхийн тулд энэхүү аппыг бүтээлээ. Надтай холбогдохыг хүсвэл өртөөгөөр холбогдоорой.</p>
         <div class="author-links">
@@ -244,12 +244,33 @@
       </div>
     </div>
 
-    <!-- Install as an app: bottom left, and only where it can do something.
-         See updateInstallButton() in app.js. -->
-    <button id="installBtn" class="install-btn hidden" type="button">
-      <i class="ti ti-download" aria-hidden="true"></i>
-      <span data-i18n="installApp">Апп суулгах</span>
-    </button>
+    <!-- Get Өртөө: a row of icons at the bottom. Browser (and iPhone, which
+         installs from Safari) appears only where the browser can install
+         the page — see updateInstallButton() in app.js. Android downloads the
+         app; Windows and Mac say "coming soon" until their apps exist. Hidden
+         inside the Өртөө app itself (html.in-ortoo-app). -->
+    <nav id="installBar" class="install-bar" data-i18n-aria="installBarLabel" aria-label="Өртөөг суулгах">
+      <button id="installBtn" class="install-btn hidden" type="button"
+              data-i18n-title="installBrowserTip" title="Хөтөч дээр апп болгон суулгах (iPhone ч мөн)">
+        <i class="ti ti-world-download" aria-hidden="true"></i>
+        <span data-i18n="installBrowser">Хөтөч</span>
+      </button>
+      <button class="install-btn soon" type="button" data-soon
+              data-i18n-title="installWindowsSoon" title="Windows апп — удахгүй">
+        <i class="ti ti-brand-windows" aria-hidden="true"></i>
+        <span>Windows</span>
+      </button>
+      <button class="install-btn soon" type="button" data-soon
+              data-i18n-title="installMacSoon" title="Mac апп — удахгүй">
+        <i class="ti ti-brand-apple" aria-hidden="true"></i>
+        <span>Mac</span>
+      </button>
+      <a class="install-btn" href="https://raspberrypi.vulture-manta.ts.net/portal/download/android"
+         rel="noopener" data-i18n-title="installAndroidTip" title="Android апп татах">
+        <i class="ti ti-brand-android" aria-hidden="true"></i>
+        <span>Android</span>
+      </a>
+    </nav>
   </div>
 
   <!-- Asked when the phone's Back button is pressed during a chat. Back means
@@ -656,14 +677,14 @@
   </div>
 
   <!-- Load order matters: app.js reads DCProtocol, LANG and I18N at parse time. -->
-  <script src="protocol.js?v=202611201045-8ba81db9"></script>
-  <script src="connstats.js?v=202611201045-8ba81db9"></script>
-  <script src="guards.js?v=202611201045-8ba81db9"></script>
-  <script src="i18n.js?v=202611201045-8ba81db9"></script>
+  <script src="protocol.js?v=202611210042-920de29b"></script>
+  <script src="connstats.js?v=202611210042-920de29b"></script>
+  <script src="guards.js?v=202611210042-920de29b"></script>
+  <script src="i18n.js?v=202611210042-920de29b"></script>
   <!-- vendor/noble.js sets window.DCNoble; pake.js (SPAKE2) reads it, and app.js
        reads window.DCPake. So both load before app.js, noble before pake. -->
-  <script src="vendor/noble.js?v=202611201045-8ba81db9"></script>
-  <script src="pake.js?v=202611201045-8ba81db9"></script>
-  <script src="app.js?v=202611201045-8ba81db9"></script>
+  <script src="vendor/noble.js?v=202611210042-920de29b"></script>
+  <script src="pake.js?v=202611210042-920de29b"></script>
+  <script src="app.js?v=202611210042-920de29b"></script>
 </body>
 </html>
