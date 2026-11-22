@@ -27,7 +27,7 @@
 
    APP_BUILD is written by tools/sync-build.js and by nothing else.
 ══════════════════════════════════════════════ */
-const APP_BUILD = "202611220249-18ced6f2";
+const APP_BUILD = "202611220839-5eaa8f8e";
 
 function refuseToRunInAStalePage() {
   let builtFor = null;
@@ -421,7 +421,8 @@ function desktopBridge() {
 function openedAsWindowsApp() {
   try {
     if (new URLSearchParams(location.search).get("app") === "windows") return true;
-    return sessionStorage.getItem("ortooDesktopApp") === "1";
+    const v = sessionStorage.getItem("ortooDesktopApp");
+    return v === "1" || v === "windows"; /* "mac": Mac app, no door there */
   } catch (_) { return false; }
 }
 if (!ortooApp && openedAsWindowsApp()) {
@@ -1620,10 +1621,11 @@ function sendPendingCreate() {
 }
 
 /* ── Get Өртөө bar ─────────────────────────
-   The Mac app does not exist yet: its icon only says so. Inside the
+   The Mac icon opens Portal's install page for the Mac app. Inside the
    Өртөө app (its WebView adds "OrtooApp" to the user agent) the whole bar is
    hidden — there is nothing left to install. The same goes for the Windows
    app (an Edge app window opened at ?app=windows, remembered for this window
+   — and the Mac app, a Chrome/Edge app window at ?app=mac
    in sessionStorage so a reload keeps it) and for the page installed from the
    browser (display-mode standalone). The Browser icon is the install button
    below.                                                                 */
@@ -1636,12 +1638,16 @@ if (document.documentElement.classList.contains("in-desktop-app")) {
   if (icon) icon.href = "icons/app-icon.svg?v=" + APP_BUILD;
 }
 function inDesktopApp() {
+  /* Windows and Mac app windows both hide the bar; only Windows has Portal's
+     knock door (openedAsWindowsApp) — the Mac app uses the browser's push. */
+  const kind = new URLSearchParams(location.search).get("app");
+  const fromURL = kind === "windows" || kind === "mac";
   let remembered = false;
   try {
-    if (new URLSearchParams(location.search).get("app") === "windows") sessionStorage.setItem("ortooDesktopApp", "1");
-    remembered = sessionStorage.getItem("ortooDesktopApp") === "1";
+    if (fromURL) sessionStorage.setItem("ortooDesktopApp", kind);
+    remembered = ["1", "windows", "mac"].includes(sessionStorage.getItem("ortooDesktopApp"));
   } catch { /* storage blocked: fall back to the URL alone */
-    remembered = new URLSearchParams(location.search).get("app") === "windows";
+    remembered = fromURL;
   }
   return remembered || runningInstalled();
 }

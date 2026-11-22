@@ -260,3 +260,11 @@ test("the Windows app asks Portal on its own PC for where to knock — only when
   assert.match(read("csp.js"), /DESKTOP_BRIDGE_ORIGINS = \["http:\/\/127\.0\.0\.1:47801"\]/);
   assert.match(read("index.html"), /connect-src[^"]*http:\/\/127\.0\.0\.1:47801/);
 });
+
+test("the Mac icon opens Portal's Mac install page; the Mac app window hides the bar but keeps the browser's push", () => {
+  assert.match(read("index.html"), /href="https:\/\/raspberrypi\.vulture-manta\.ts\.net\/portal\/mac"/);
+  assert.doesNotMatch(read("index.html"), /data-soon/, "nothing says 'coming soon' any more");
+  const app = read("app.js");
+  assert.match(app, /const fromURL = kind === "windows" \|\| kind === "mac";/);
+  assert.match(app, /return v === "1" \|\| v === "windows";/, "a Mac window never asks for the Windows door");
+});
