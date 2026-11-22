@@ -310,7 +310,7 @@ function page({ saved = [], storage = "works", connected = true, checked = true,
   els.knockBtn.classList.add("hidden");
   els.installOverlay.classList.add("hidden");
   if (!inChat) els.chatScreen.classList.add("hidden");
-  const env = { kind, connected, checked, onLeave: null, knockSupported: app ? false : knock.supported !== false, ortooApp: app, calls: [],
+  const env = { kind, connected, checked, onLeave: null, knockSupported: app && !knock.alsoBrowser ? false : knock.supported !== false, ortooApp: app, calls: [],
                 callRequestModal: element("div"),
                 knockKey: knock.serverKey === false || knock.keyLater ? null : SERVER_KNOCK_KEY,
                 web: "works", webCode: null, uploads: new Map() };
@@ -2512,4 +2512,14 @@ test("in the Өртөө app: forgetting someone asks the app for a new address",
   assert.equal(app.renewed, 1);
   assert.notEqual(app.addr.endpoint, before);
   assert.equal(p.els.knockBtn.dataset.state, "on", "on, with the new address");
+});
+
+test("in the Windows app (Edge: browser push there too): alerts on at an earlier visit stay on — the browser's own check does not turn them off", async () => {
+  const anu = await person("Anu", "a");
+  const app = fakeApp();
+  const p = page({ saved: [anu], app, knock: { keyLater: true, alsoBrowser: true, registered: true, subscribed: false, permission: "granted" } });
+  p.store.set("dc-app-knocks", "1");
+  await p.api.knockKeyArrived(SERVER_KNOCK_KEY);
+  await timers();
+  assert.equal(p.els.knockBtn.dataset.state, "on");
 });

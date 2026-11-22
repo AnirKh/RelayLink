@@ -27,7 +27,7 @@
 
    APP_BUILD is written by tools/sync-build.js and by nothing else.
 ══════════════════════════════════════════════ */
-const APP_BUILD = "202611220152-3d5c7106";
+const APP_BUILD = "202611220221-6d15d37e";
 
 function refuseToRunInAStalePage() {
   let builtFor = null;
@@ -2763,8 +2763,11 @@ function knockWorker() {
     server's key has changed since. */
 async function knockKeyArrived(key) {
   knockKey = key;
+  /* In the app (phone or Windows) alerts are the app's — never the
+     browser's, which in Edge would find no subscription of its own and turn
+     the bell off again each time the window opened. */
   if (ortooApp) appKnocksResume();
-  if (knockSupported) {
+  else if (knockSupported) {
     try {
       if (await navigator.serviceWorker.getRegistration()) {
         const reg = await knockWorker();
