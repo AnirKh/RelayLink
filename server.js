@@ -74,12 +74,15 @@ const {
 } = require("./csp");
 
 /* Knocks — Web Push to a saved person's device. See knock.js. */
-const { knockKeysFromEnv, isPushEndpoint, pushKeysValid, sendKnock } = require("./knock");
+const { knockKeysFromEnv, appPushFromEnv, isPushEndpoint, pushKeysValid, sendKnock } = require("./knock");
 const KNOCK_KEYS = knockKeysFromEnv(process.env);
 /* Tests only: a local server standing in for a push service. Never set on a
    real server — it lets knocks go to that one address besides the push
    services. */
 const KNOCK_TEST_ORIGIN = process.env.KNOCK_TEST_ORIGIN || null;
+/* The Өртөө app's push service: Portal, which carries knocks to the app (it
+   has no browser push service). See KNOCK_APP_PUSH in the README. */
+const KNOCK_APP_PUSH = appPushFromEnv(process.env);
 
 /* Messages waiting for a saved person who is not there — sealed by the two
    devices, kept and handed over here, never read. See mailbox.js. Kept in a
@@ -1275,7 +1278,7 @@ wss.on("connection", (ws, req) => {
         if (!KNOCK_KEYS || !room || room.kind !== "saved" || room.host !== ws || room.guest) break;
         const to = data.to && typeof data.to === "object" ? data.to : {};
         const refuse = () => ws.send(JSON.stringify({ type: "knock-result", sessionId, ok: false, gone: false }));
-        if (!isPushEndpoint(to.endpoint, KNOCK_TEST_ORIGIN) || !pushKeysValid(to.p256dh, to.auth)) { refuse(); break; }
+        if (!isPushEndpoint(to.endpoint, KNOCK_TEST_ORIGIN, KNOCK_APP_PUSH) || !pushKeysValid(to.p256dh, to.auth)) { refuse(); break; }
         const now = Date.now();
         if (now - (room.knockedAt || 0) < KNOCK_ROOM_GAP_MS ||
             !slidingAllow(knockHits, clientIp, KNOCK_MAX, KNOCK_WINDOW_MS)) { refuse(); break; }
@@ -1317,7 +1320,7 @@ wss.on("connection", (ws, req) => {
         /* A note alerts the owner where the owner said; a message, where its writer said. */
         const knock = note ? ownerAlert : (data.knock && typeof data.knock === "object" ? data.knock : null);
         const alert = () => {
-          if (!knock || !KNOCK_KEYS || !isPushEndpoint(knock.endpoint, KNOCK_TEST_ORIGIN) || !pushKeysValid(knock.p256dh, knock.auth)) return;
+          if (!knock || !KNOCK_KEYS || !isPushEndpoint(knock.endpoint, KNOCK_TEST_ORIGIN, KNOCK_APP_PUSH) || !pushKeysValid(knock.p256dh, knock.auth)) return;
           if (Date.now() - (mailKnockedAt.get(key) || 0) < MAIL_KNOCK_GAP_MS || !slidingAllow(knockHits, clientIp, KNOCK_MAX, KNOCK_WINDOW_MS)) return;
           mailKnockedAt.set(key, Date.now());
           sendKnock({ to: { endpoint: knock.endpoint, p256dh: knock.p256dh, auth: knock.auth }, room: box, keys: KNOCK_KEYS, kind: "mail" })
@@ -1379,7 +1382,7 @@ wss.on("connection", (ws, req) => {
       case "owner-alert": {
         if (!ws.isOwner) break;
         const to = data.knock && typeof data.knock === "object" ? data.knock : null;
-        if (to && (!isPushEndpoint(to.endpoint, KNOCK_TEST_ORIGIN) || !pushKeysValid(to.p256dh, to.auth))) break;
+        if (to && (!isPushEndpoint(to.endpoint, KNOCK_TEST_ORIGIN, KNOCK_APP_PUSH) || !pushKeysValid(to.p256dh, to.auth))) break;
         keepOwnerAlert(to ? { endpoint: to.endpoint, p256dh: to.p256dh, auth: to.auth } : null);
         break;
       }

@@ -372,6 +372,7 @@ const I18N = {
     knockTitle:      (n) => `${n} тантай ярих гэж байна`,
     knockSomeone:    "Хадгалсан хүн тань тантай ярих гэж байна",
     knockBody:       "Дарж холбогдоно уу.",
+    knockAppWaiting: "Portal холбогдмогц мэдэгдэл ирж эхэлнэ.",
     // Waiting messages — written while they are away
     personMail:      "Мессеж",
     mailUnreadCount: (n) => `${n} шинэ мессеж`,
@@ -788,6 +789,7 @@ const I18N = {
     knockTitle:      (n) => `${n} wants to talk`,
     knockSomeone:    "Someone you saved wants to talk",
     knockBody:       "Tap to connect.",
+    knockAppWaiting: "Alerts start as soon as Portal connects.",
     // Waiting messages — written while they are away
     personMail:      "Messages",
     mailUnreadCount: (n) => `${n} new message${n === 1 ? "" : "s"}`,

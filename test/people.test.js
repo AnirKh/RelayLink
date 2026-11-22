@@ -270,7 +270,7 @@ function fakeWeb(env, log) {
  * (neither read nor written).
  */
 function page({ saved = [], storage = "works", connected = true, checked = true, kind = "pin", wsOpen = true, inChat = false, lang = "mn",
-                 knock = {}, mail = null, hash = "", timers = null, owner = {} } = {}) {
+                 knock = {}, mail = null, hash = "", timers = null, owner = {}, app = null } = {}) {
   const log = { ws: [], sealed: [], toasts: [], sys: [], screen: [], left: 0, quality: [], reconnect: 0, closed: 0,
                 asked: 0, registered: [], subscribed: [], unsubscribed: 0, replaced: [], tabs: [], noticed: 0, web: [], viewed: [] };
   const store = new Map();
@@ -310,7 +310,7 @@ function page({ saved = [], storage = "works", connected = true, checked = true,
   els.knockBtn.classList.add("hidden");
   els.installOverlay.classList.add("hidden");
   if (!inChat) els.chatScreen.classList.add("hidden");
-  const env = { kind, connected, checked, onLeave: null, knockSupported: knock.supported !== false, calls: [],
+  const env = { kind, connected, checked, onLeave: null, knockSupported: app ? false : knock.supported !== false, ortooApp: app, calls: [],
                 callRequestModal: element("div"),
                 knockKey: knock.serverKey === false || knock.keyLater ? null : SERVER_KNOCK_KEY,
                 web: "works", webCode: null, uploads: new Map() };
@@ -332,6 +332,7 @@ function page({ saved = [], storage = "works", connected = true, checked = true,
     let roomKind = env.kind, guestKey = null, seatPending = false, dataChannel = null;
     let e2eReady = env.connected, e2eSecureMode = env.checked, e2eVerified = false;
     const knockSupported = env.knockSupported;
+    const ortooApp = env.ortooApp || null;   // window.OrtooApp inside the Өртөө app
     let knockKey = env.knockKey, knockSub = null, knockSent = false, knockShared = false, savedInChat = null, knockEarly = null;
     let mailStore = { v: 1, threads: {}, seen: {} }, mailOpenFor = null;
     ${BLOCK}
@@ -2442,4 +2443,73 @@ test("the wiring: the hello's word, the server's yes, waiting notes, answers to 
                     "ownerLockBox", "ownerCodeInput", "ownerForgetBtn", "ownerCopyBtn", "ownerSetupBtn", "ownerUseBtn", "ownerCloseBtn"]) {
     assert.ok(html.includes(`id="${id}"`), id);
   }
+});
+
+
+/* The Өртөө app (Android) stands in for a browser push service with
+   window.OrtooApp: Portal carries the knocks. */
+function fakeApp({ notify = true, portal = true } = {}) {
+  const keys = pushKeys();
+  const app = {
+    notify, portal, people: null, asked: 0, renewed: 0,
+    addr: { endpoint: "https://pi.example/portal/v1/push/" + "A".repeat(43), ...keys },
+    pushAddress() { return this.portal && this.addr ? JSON.stringify(this.addr) : ""; },
+    renewPush() { this.renewed++; this.addr = { ...this.addr, endpoint: "https://pi.example/portal/v1/push/" + "B".repeat(43) }; return true; },
+    portalOn() { return this.portal; },
+    turnPortalOn() { this.portal = true; },
+    notifyAllowed() { return this.notify; },
+    askNotify() { this.asked++; this.notify = true; },
+    setPeople(json) { this.people = JSON.parse(json); }
+  };
+  return app;
+}
+
+test("in the Өртөө app: alerts use the app's address (Portal's), names and words go to the app, no worker", async () => {
+  const anu = await person("Anu", "a");
+  const app = fakeApp({ notify: false, portal: false });
+  const p = page({ saved: [anu], app, kind: "saved", inChat: true });
+  assert.equal(p.els.knockBtn.dataset.state, "off", "the switch shows in the app");
+  p.api.set({ meeting: anu });
+  await p.api.knocksOn();
+  assert.equal(app.asked, 1, "Android's question asked");
+  assert.equal(app.portal, true, "Portal switched on: it carries the knocks");
+  assert.equal(p.els.knockBtn.dataset.state, "on");
+  assert.deepEqual(p.log.registered, [], "no worker, no browser push service");
+  assert.deepEqual(p.log.subscribed, []);
+  const sent = p.log.sealed.find(m => m.type === "knock-address");
+  assert.equal(sent.endpoint, app.addr.endpoint, "saved people get Portal's address");
+  assert.ok(G.knockAddressValid(sent));
+  assert.deepEqual(app.people.names, [[anu.room, "Anu"]]);
+  assert.equal(app.people.words.knockTitle, I18N.mn.knockTitle("{name}"));
+  assert.equal(app.people.words.mailBody, I18N.mn.mailNoticeBody);
+  assert.equal(p.store.get("dc-app-knocks"), "1", "remembered like a subscription");
+  await p.api.knocksOff();
+  assert.equal(p.els.knockBtn.dataset.state, "off");
+  assert.equal(p.store.get("dc-app-knocks"), undefined);
+});
+
+test("in the Өртөө app: on at an earlier visit, taken up again when the server's key comes", async () => {
+  const anu = await person("Anu", "a");
+  const app = fakeApp();
+  const p = page({ saved: [anu], app, knock: { keyLater: true } });
+  p.store.set("dc-app-knocks", "1");
+  await p.api.knockKeyArrived(SERVER_KNOCK_KEY);
+  assert.equal(p.els.knockBtn.dataset.state, "on");
+  const off = page({ saved: [anu], app: fakeApp(), knock: { keyLater: true } });
+  await off.api.knockKeyArrived(SERVER_KNOCK_KEY);
+  assert.equal(off.els.knockBtn.dataset.state, "off", "not turned on by itself");
+});
+
+test("in the Өртөө app: forgetting someone asks the app for a new address", async () => {
+  const anu = await person("Anu"), bat = await person("Bat");
+  const app = fakeApp();
+  const p = page({ saved: [anu, bat], app });
+  await p.api.knocksOn();
+  const before = app.addr.endpoint;
+  p.api.forgetPerson(anu);
+  for (let i = 0; i < 40 && app.renewed === 0; i++) await timers();
+  await new Promise(r => setTimeout(r, 700));
+  assert.equal(app.renewed, 1);
+  assert.notEqual(app.addr.endpoint, before);
+  assert.equal(p.els.knockBtn.dataset.state, "on", "on, with the new address");
 });

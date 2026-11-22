@@ -336,3 +336,15 @@ test("the worker answers no requests: every page and file still comes from the n
   assert.doesNotMatch(src, /addEventListener\("fetch"/);
   assert.doesNotMatch(src, /caches\./);
 });
+
+test("the Өртөө app's push service (Portal, KNOCK_APP_PUSH) is knocked on only at its own address", () => {
+  const app = "https://pi.example/portal/v1/push/";
+  const secret = "A".repeat(43);
+  assert.equal(K.isPushEndpoint(app + secret, null, app), true);
+  assert.equal(K.isPushEndpoint(app + secret), false, "not without KNOCK_APP_PUSH");
+  for (const bad of [app + "short", app + secret + "/x", app + secret + "?a=1", app + "../admin/" + secret, "https://pi.example/portal/v1/pushX" + secret])
+    assert.equal(K.isPushEndpoint(bad, null, app), false, bad);
+  assert.equal(K.appPushFromEnv({ KNOCK_APP_PUSH: app }), app);
+  for (const v of [undefined, "", "http://pi.example/portal/v1/push/", "https://pi.example/portal/v1/push", "https://u:p@pi.example/x/", "https://pi.example:8443/x/", "https://pi.example/x/?q=1"])
+    assert.equal(K.appPushFromEnv({ KNOCK_APP_PUSH: v }), null, String(v));
+});

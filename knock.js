@@ -50,11 +50,14 @@ const PUSH_HOST_SUFFIXES = [".notify.windows.com", ".push.apple.com"];
  * May a knock be sent to this address? https, a push service's own host, the
  * standard port, no credentials, and not absurdly long. `testOrigin` lets the
  * tests stand a local server in for a push service (KNOCK_TEST_ORIGIN) — it
- * is never set on a real server.
+ * is never set on a real server. `appPush` is the Өртөө app's push service
+ * (KNOCK_APP_PUSH): Portal, which carries knocks to the app, at an address
+ * like https://host/portal/v1/push/ followed by the device's secret.
  */
-function isPushEndpoint(endpoint, testOrigin = null) {
+function isPushEndpoint(endpoint, testOrigin = null, appPush = null) {
   if (typeof endpoint !== "string" || endpoint.length > 1024) return false;
   if (testOrigin && endpoint.startsWith(`${testOrigin}/`)) return true;
+  if (appPush && endpoint.startsWith(appPush)) return /^[A-Za-z0-9_-]{32,64}$/.test(endpoint.slice(appPush.length));
   let u;
   try { u = new URL(endpoint); } catch (_) { return false; }
   if (u.protocol !== "https:" || u.port || u.username || u.password) return false;
@@ -113,6 +116,17 @@ function vapidAuthorization(endpoint, { publicKey, privateKey, subject }, now = 
   const claims = b64u(JSON.stringify({ aud: new URL(endpoint).origin, exp: Math.floor(now / 1000) + 12 * 3600, sub: subject }));
   const signature = crypto.sign("sha256", Buffer.from(`${head}.${claims}`), { key, dsaEncoding: "ieee-p1363" });
   return `vapid t=${head}.${claims}.${b64u(signature)}, k=${publicKey}`;
+}
+
+/** KNOCK_APP_PUSH, if it is a plain https address ending in "/" — else null. */
+function appPushFromEnv(env) {
+  const v = env.KNOCK_APP_PUSH;
+  if (typeof v !== "string" || !v.endsWith("/") || v.length > 200) return null;
+  try {
+    const u = new URL(v);
+    if (u.protocol !== "https:" || u.port || u.username || u.password || u.search || u.hash) return null;
+  } catch (_) { return null; }
+  return v;
 }
 
 /** The server's VAPID keys, from its environment — or null, and no knocks:
@@ -183,6 +197,7 @@ function sendKnock({ to, room, keys, kind = "knock", now = Date.now(), timeoutMs
 }
 
 module.exports = {
+  appPushFromEnv,
   RECORD_SIZE, KNOCK_TTL_S, PUSH_HOSTS, PUSH_HOST_SUFFIXES,
   isPushEndpoint, pushKeysValid, encryptForPush, vapidAuthorization, knockKeysFromEnv, makeKnockKeys, sendKnock
 };

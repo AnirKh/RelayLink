@@ -27,7 +27,7 @@
 
    APP_BUILD is written by tools/sync-build.js and by nothing else.
 ══════════════════════════════════════════════ */
-const APP_BUILD = "202611210934-1d25595a";
+const APP_BUILD = "202611220033-c2443572";
 
 function refuseToRunInAStalePage() {
   let builtFor = null;
@@ -378,6 +378,13 @@ let knockSent   = false;
 let knockShared = false;
 let savedInChat = null;
 let knockEarly  = null;   // their address, come before our side finished saving them
+/* Inside the Өртөө app (Android) there is no browser push service: the app
+   gives the page window.OrtooApp, and Portal — running beside it — carries
+   the knocks. See "Knocks in the Өртөө app" below. */
+const ortooApp = (() => {
+  try { return window.OrtooApp && typeof window.OrtooApp.pushAddress === "function" ? window.OrtooApp : null; }
+  catch (_) { return null; }
+})();
 
 /* Waiting messages — see "WAITING MESSAGES" below; declared up here because
    each person's row shows how many are new.
@@ -2572,6 +2579,7 @@ function forgetPerson(p) {
    knock from them finds the old one gone, so the toast says so. */
 async function renewKnockAddress(forgotten) {
   if (!knockSub || knockStateNow() !== "on") return;
+  if (ortooApp) return appRenew(forgotten);
   const old = knockSub;
   knockSub = null;                         // one renewal at a time; a second forget is covered by it
   try {
@@ -2663,9 +2671,10 @@ drawPeople();
 
 function knockStateNow() {
   return G.knockState({
-    serverKey: Boolean(knockKey), supported: knockSupported,
-    appleTouch: G.isAppleTouchDevice(navigator.userAgent, navigator.maxTouchPoints), standalone: runningInstalled(),
-    permission: knockSupported ? Notification.permission : "default", subscribed: Boolean(knockSub)
+    serverKey: Boolean(knockKey), supported: knockSupported || Boolean(ortooApp),
+    appleTouch: !ortooApp && G.isAppleTouchDevice(navigator.userAgent, navigator.maxTouchPoints), standalone: runningInstalled(),
+    permission: ortooApp ? (appNotifyAllowed() ? "granted" : "default") : knockSupported ? Notification.permission : "default",
+    subscribed: Boolean(knockSub)
   });
 }
 
@@ -2706,6 +2715,7 @@ function knockWorker() {
     server's key has changed since. */
 async function knockKeyArrived(key) {
   knockKey = key;
+  if (ortooApp) appKnocksResume();
   if (knockSupported) {
     try {
       if (await navigator.serviceWorker.getRegistration()) {
@@ -2728,6 +2738,7 @@ async function knockKeyArrived(key) {
 }
 
 async function knocksOn() {
+  if (ortooApp) return appKnocksOn();
   /* Asked first, inside the tap: only then does a browser show its question. */
   const permission = await Notification.requestPermission();
   if (permission !== "granted") {
@@ -2749,6 +2760,7 @@ async function knocksOn() {
 }
 
 async function knocksOff() {
+  if (ortooApp) setAppKnocksWanted(false);
   const sub = knockSub;
   knockSub = null;
   try { if (sub) await sub.unsubscribe(); } catch (_) { /* gone already */ }
@@ -2848,6 +2860,7 @@ function knockAnswered(data) {
 /** The worker's copy, for naming who knocked: each person's room and name,
     and the page's language — nothing else. Only while alerts are on. */
 function mirrorForKnocks() {
+  if (ortooApp) { if (knockSub) appMirror(); return; }
   if (!knockSub || !window.indexedDB) return;
   const value = { lang: LANG, names: people.map(p => [p.room, p.name]) };
   try {
@@ -2863,6 +2876,118 @@ function mirrorForKnocks() {
     };
   } catch (_) { /* storage off: a knock still comes, without the name */ }
 }
+
+/* ── Knocks in the Өртөө app ─────────────────
+   The app (Android) has no browser push service, so the page asks the app
+   (window.OrtooApp) for where to knock instead. That address is Portal's:
+   Өртөө's server knocks there, signed with its knock key, and Portal — which
+   runs beside the app — hands the sealed knock to the app, which opens it and
+   shows "Anu wants to talk" with the name this phone gave them. Knocks need
+   Portal switched on; turning alerts on switches it on. The address may come
+   a little later (Portal connecting), so it is looked at again now and then.
+   Whether alerts are wanted is kept here (localStorage), like a browser keeps
+   its subscription.                                                        */
+const APP_KNOCKS_KEY = "dc-app-knocks";
+let appResumeTimer = null;
+
+function appKnocksWanted() {
+  try { return localStorage.getItem(APP_KNOCKS_KEY) === "1"; } catch (_) { return false; }
+}
+
+function setAppKnocksWanted(on) {
+  try { if (on) localStorage.setItem(APP_KNOCKS_KEY, "1"); else localStorage.removeItem(APP_KNOCKS_KEY); }
+  catch (_) { /* storage off: alerts last as long as this page */ }
+}
+
+function appNotifyAllowed() {
+  try { return ortooApp.notifyAllowed() === true; } catch (_) { return false; }
+}
+
+/** The app's address now, checked — or null (Portal off, or not connected yet). */
+function appAddress() {
+  try {
+    const a = JSON.parse(ortooApp.pushAddress() || "null");
+    return a && G.knockAddressValid(a) ? { endpoint: a.endpoint, p256dh: a.p256dh, auth: a.auth } : null;
+  } catch (_) { return null; }
+}
+
+/** Looks like a browser's subscription to the rest of this file. */
+function appSub(a) {
+  return { endpoint: a.endpoint, toJSON: () => ({ endpoint: a.endpoint, keys: { p256dh: a.p256dh, auth: a.auth } }),
+           unsubscribe: async () => true };
+}
+
+const pause = ms => new Promise(r => setTimeout(r, ms));
+
+/** Alerts wanted: take up the app's address. While there is none yet
+    (Portal connecting), looked at again every 15 s for a while; and again
+    whenever the app comes back on screen. */
+let appRetries = 0;
+function appKnocksResume(retry = false) {
+  clearTimeout(appResumeTimer);
+  if (!appKnocksWanted() || !knockKey) return;
+  if (!retry) appRetries = 0;
+  const a = appAddress();
+  const had = knockSub ? knockSub.endpoint : null;
+  knockSub = a ? appSub(a) : null;
+  if ((a ? a.endpoint : null) !== had) knocksChanged();
+  if (!a && appRetries++ < 20) appResumeTimer = setTimeout(() => appKnocksResume(true), 15_000);
+}
+if (ortooApp && typeof document.addEventListener === "function") {
+  document.addEventListener("visibilitychange", () => { if (!document.hidden) appKnocksResume(); });
+}
+
+async function appKnocksOn() {
+  if (!appNotifyAllowed()) {
+    ortooApp.askNotify();                                   // Android's own question
+    for (let i = 0; i < 60 && !appNotifyAllowed(); i++) await pause(500);
+    if (!appNotifyAllowed()) { drawKnockSwitch(); showToast(t("knockBlockedHint"), "warn"); return; }
+  }
+  if (!ortooApp.portalOn()) ortooApp.turnPortalOn();
+  setAppKnocksWanted(true);
+  let a = appAddress();
+  for (let i = 0; i < 40 && !a; i++) { await pause(500); a = appAddress(); }   // Portal connecting
+  if (!a) { showToast(t("knockAppWaiting"), "info"); appKnocksResume(); drawKnockSwitch(); return; }
+  knockSub = appSub(a);
+  showToast(t("knockOnDone"), "info");
+  knocksChanged();
+  appKnocksResume();
+}
+
+/** Someone forgotten: a new address from the app; the old one stops working. */
+async function appRenew(forgotten) {
+  const before = knockSub ? knockSub.endpoint : null;
+  knockSub = null;
+  try { ortooApp.renewPush(); } catch (_) { /* answered below */ }
+  let a = null;
+  for (let i = 0; i < 24; i++) {
+    await pause(500);
+    a = appAddress();
+    if (a && a.endpoint !== before) break;
+    a = null;
+  }
+  if (a) { knockSub = appSub(a); showToast(I18N[LANG].forgetRenewed(forgotten.name), "info"); }
+  else showToast(t("knockFailed"), "error");
+  knocksChanged();
+}
+
+/** The app's copy, for naming who knocked: rooms, names and the words. */
+function appMirror() {
+  const w = I18N[LANG];
+  try {
+    ortooApp.setPeople(JSON.stringify({
+      names: people.map(p => [p.room, p.name]),
+      words: { knockTitle: w.knockTitle("{name}"), knockSomeone: w.knockSomeone, knockBody: w.knockBody,
+               mailTitle: w.mailNoticeTitle("{name}"), mailSomeone: w.mailNoticeSomeone, mailBody: w.mailNoticeBody }
+    }));
+  } catch (_) { /* a knock still comes, without the name */ }
+}
+
+/** A knock tapped in the app with this page already open. */
+window.ortooAppOpened = (kind, room) => {
+  if (!ortooApp || typeof room !== "string" || !G.SAVED_ROOM.test(room)) return;
+  if (kind === "mail") answerMail(room); else answerKnock(room);
+};
 
 /* ── Someone waiting for us, shown on their name ──
    Asked for: when a saved person taps our name and waits, this lobby should
