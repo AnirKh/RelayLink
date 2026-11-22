@@ -27,7 +27,7 @@
 
    APP_BUILD is written by tools/sync-build.js and by nothing else.
 ══════════════════════════════════════════════ */
-const APP_BUILD = "202611220033-c2443572";
+const APP_BUILD = "202611220152-3d5c7106";
 
 function refuseToRunInAStalePage() {
   let builtFor = null;
@@ -381,10 +381,58 @@ let knockEarly  = null;   // their address, come before our side finished saving
 /* Inside the Өртөө app (Android) there is no browser push service: the app
    gives the page window.OrtooApp, and Portal — running beside it — carries
    the knocks. See "Knocks in the Өртөө app" below. */
-const ortooApp = (() => {
+let ortooApp = (() => {
   try { return window.OrtooApp && typeof window.OrtooApp.pushAddress === "function" ? window.OrtooApp : null; }
   catch (_) { return null; }
 })();
+/* The Windows app (an Edge window, ?app=windows) has the same need: there
+   Portal, installed with it, opens a door on this PC for this page alone
+   (DESKTOP_BRIDGE, see csp.js) and shows the knocks as Windows notifications.
+   It answers in the background, so the same calls as the phone's are made
+   from what it last said. Not there (Portal not installed, or the browser
+   was refused the local network): the browser's own push, as before. */
+const DESKTOP_BRIDGE = "http://127.0.0.1:47801";
+function desktopBridge() {
+  let addr = "", asked = 0;
+  const call = (method, path, body) => fetch(DESKTOP_BRIDGE + path, {
+    method, cache: "no-store", ...(body ? { headers: { "Content-Type": "application/json" }, body } : {})
+  });
+  const refresh = () => {
+    asked = Date.now();
+    return call("GET", "/v1/address").then(r => {
+      if (r.status === 200) return r.text().then(t => { addr = t; return true; });
+      addr = "";
+      return r.status === 204;
+    });
+  };
+  return {
+    refresh,
+    pushAddress() { if (Date.now() - asked > 2000) refresh().catch(() => { addr = ""; }); return addr; },
+    renewPush() {
+      call("POST", "/v1/renew").catch(() => {});
+      for (let i = 1; i <= 12; i++) setTimeout(() => refresh().catch(() => {}), i * 1000);
+      return true;
+    },
+    portalOn: () => true, turnPortalOn() {}, notifyAllowed: () => true, askNotify() {},
+    setPeople(json) { call("POST", "/v1/people", json).catch(() => {}); }
+  };
+}
+/** Opened from the Windows app's icon (?app=windows, kept for this window). */
+function openedAsWindowsApp() {
+  try {
+    if (new URLSearchParams(location.search).get("app") === "windows") return true;
+    return sessionStorage.getItem("ortooDesktopApp") === "1";
+  } catch (_) { return false; }
+}
+if (!ortooApp && openedAsWindowsApp()) {
+  const bridge = desktopBridge();
+  bridge.refresh().then(reached => {
+    if (!reached) return;
+    ortooApp = bridge;
+    appKnocksResume();
+    drawKnockSwitch();
+  }).catch(() => { /* no Portal here: the browser's push */ });
+}
 
 /* Waiting messages — see "WAITING MESSAGES" below; declared up here because
    each person's row shows how many are new.
@@ -2976,6 +3024,7 @@ function appMirror() {
   const w = I18N[LANG];
   try {
     ortooApp.setPeople(JSON.stringify({
+      lang: LANG,
       names: people.map(p => [p.room, p.name]),
       words: { knockTitle: w.knockTitle("{name}"), knockSomeone: w.knockSomeone, knockBody: w.knockBody,
                mailTitle: w.mailNoticeTitle("{name}"), mailSomeone: w.mailNoticeSomeone, mailBody: w.mailNoticeBody }

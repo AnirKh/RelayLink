@@ -251,3 +251,12 @@ test("the Windows app window (?app=windows) and an installed page hide the Get Ó
   assert.match(app, /icon\.href = "icons\/app-icon\.svg\?v=" \+ APP_BUILD/, "the window shows the app's icon");
   assert.match(read("server.js"), /"\/icons\/app-icon\.svg"/, "and the server serves it");
 });
+
+test("the Windows app asks Portal on its own PC for where to knock â€” only when opened as the Windows app, and the policy lets it", () => {
+  const app = read("app.js");
+  assert.match(app, /const DESKTOP_BRIDGE = "http:\/\/127\.0\.0\.1:47801";/);
+  assert.match(app, /if \(!ortooApp && openedAsWindowsApp\(\)\) \{/, "never from a plain browser tab or another system's installed page");
+  assert.match(app, /if \(!reached\) return;\s*ortooApp = bridge;/, "no Portal there: the browser's own push stays");
+  assert.match(read("csp.js"), /DESKTOP_BRIDGE_ORIGINS = \["http:\/\/127\.0\.0\.1:47801"\]/);
+  assert.match(read("index.html"), /connect-src[^"]*http:\/\/127\.0\.0\.1:47801/);
+});

@@ -46,6 +46,10 @@ const DEFAULT_ALLOWED_ORIGINS = [
    provider for the other side's address (WHERE_LOOKUP in app.js). */
 const LOOKUP_ORIGINS = ["https://ipinfo.io"];
 
+/* The Windows app's Portal, on the same PC: where to knock for it (see
+   DESKTOP_BRIDGE in app.js). Only ever asked from the app's own window. */
+const DESKTOP_BRIDGE_ORIGINS = ["http://127.0.0.1:47801"];
+
 function wsOriginFor(origin) {
   return origin.replace(/^https:/, "wss:").replace(/^http:/, "ws:");
 }
@@ -56,7 +60,7 @@ function wsOriginFor(origin) {
  * @param {{ asHeader: boolean }} opts  header form also carries frame-ancestors
  */
 function buildCsp(origins, { asHeader }) {
-  const connect = new Set(["'self'", ...origins, ...origins.map(wsOriginFor), ...LOOKUP_ORIGINS]);
+  const connect = new Set(["'self'", ...origins, ...origins.map(wsOriginFor), ...LOOKUP_ORIGINS, ...DESKTOP_BRIDGE_ORIGINS]);
   return [
     "default-src 'self'",
     "script-src 'self'",
