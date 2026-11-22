@@ -27,7 +27,7 @@
 
    APP_BUILD is written by tools/sync-build.js and by nothing else.
 ══════════════════════════════════════════════ */
-const APP_BUILD = "202611220839-5eaa8f8e";
+const APP_BUILD = "202611220849-60b755af";
 
 function refuseToRunInAStalePage() {
   let builtFor = null;
@@ -385,7 +385,8 @@ let ortooApp = (() => {
   try { return window.OrtooApp && typeof window.OrtooApp.pushAddress === "function" ? window.OrtooApp : null; }
   catch (_) { return null; }
 })();
-/* The Windows app (an Edge window, ?app=windows) has the same need: there
+/* The Windows app (an Edge window, ?app=windows) and the Mac app (a
+   Chrome/Edge window, ?app=mac) have the same need: there
    Portal, installed with it, opens a door on this PC for this page alone
    (DESKTOP_BRIDGE, see csp.js) and shows the knocks as Windows notifications.
    It answers in the background, so the same calls as the phone's are made
@@ -417,15 +418,15 @@ function desktopBridge() {
     setPeople(json) { call("POST", "/v1/people", json).catch(() => {}); }
   };
 }
-/** Opened from the Windows app's icon (?app=windows, kept for this window). */
-function openedAsWindowsApp() {
+/** Opened from the Windows or Mac app's icon (?app=windows / ?app=mac, kept
+    for this window). Portal installed with either app opens the door. */
+function openedAsDesktopApp() {
   try {
-    if (new URLSearchParams(location.search).get("app") === "windows") return true;
-    const v = sessionStorage.getItem("ortooDesktopApp");
-    return v === "1" || v === "windows"; /* "mac": Mac app, no door there */
+    if (["windows", "mac"].includes(new URLSearchParams(location.search).get("app"))) return true;
+    return ["1", "windows", "mac"].includes(sessionStorage.getItem("ortooDesktopApp"));
   } catch (_) { return false; }
 }
-if (!ortooApp && openedAsWindowsApp()) {
+if (!ortooApp && openedAsDesktopApp()) {
   const bridge = desktopBridge();
   bridge.refresh().then(reached => {
     if (!reached) return;
@@ -1638,8 +1639,8 @@ if (document.documentElement.classList.contains("in-desktop-app")) {
   if (icon) icon.href = "icons/app-icon.svg?v=" + APP_BUILD;
 }
 function inDesktopApp() {
-  /* Windows and Mac app windows both hide the bar; only Windows has Portal's
-     knock door (openedAsWindowsApp) — the Mac app uses the browser's push. */
+  /* Windows and Mac app windows both hide the bar (and both ask Portal's
+     knock door, see openedAsDesktopApp). */
   const kind = new URLSearchParams(location.search).get("app");
   const fromURL = kind === "windows" || kind === "mac";
   let remembered = false;

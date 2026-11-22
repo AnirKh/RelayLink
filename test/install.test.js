@@ -246,7 +246,7 @@ test("the Windows app window (?app=windows) and an installed page hide the Get Ó
   assert.match(read("style.css"), /html\.in-desktop-app \.author-btn \.app-mark\s*\{\s*display:\s*block;/, "the logo instead of the author's picture");
   const app = read("app.js");
   assert.match(app, /classList\.toggle\("in-desktop-app", inDesktopApp\(\)\)/);
-  assert.match(app, /get\("app"\) === "windows"/);
+  assert.match(app, /kind === "windows" \|\| kind === "mac"/);
   assert.match(app, /return remembered \|\| runningInstalled\(\);/);
   assert.match(app, /icon\.href = "icons\/app-icon\.svg\?v=" \+ APP_BUILD/, "the window shows the app's icon");
   assert.match(read("server.js"), /"\/icons\/app-icon\.svg"/, "and the server serves it");
@@ -255,16 +255,16 @@ test("the Windows app window (?app=windows) and an installed page hide the Get Ó
 test("the Windows app asks Portal on its own PC for where to knock â€” only when opened as the Windows app, and the policy lets it", () => {
   const app = read("app.js");
   assert.match(app, /const DESKTOP_BRIDGE = "http:\/\/127\.0\.0\.1:47801";/);
-  assert.match(app, /if \(!ortooApp && openedAsWindowsApp\(\)\) \{/, "never from a plain browser tab or another system's installed page");
+  assert.match(app, /if \(!ortooApp && openedAsDesktopApp\(\)\) \{/, "never from a plain browser tab or another system's installed page");
   assert.match(app, /if \(!reached\) return;\s*ortooApp = bridge;/, "no Portal there: the browser's own push stays");
   assert.match(read("csp.js"), /DESKTOP_BRIDGE_ORIGINS = \["http:\/\/127\.0\.0\.1:47801"\]/);
   assert.match(read("index.html"), /connect-src[^"]*http:\/\/127\.0\.0\.1:47801/);
 });
 
-test("the Mac icon opens Portal's Mac install page; the Mac app window hides the bar but keeps the browser's push", () => {
+test("the Mac icon opens Portal's Mac install page; the Mac app window hides the bar and asks Portal's door like Windows", () => {
   assert.match(read("index.html"), /href="https:\/\/raspberrypi\.vulture-manta\.ts\.net\/portal\/mac"/);
   assert.doesNotMatch(read("index.html"), /data-soon/, "nothing says 'coming soon' any more");
   const app = read("app.js");
   assert.match(app, /const fromURL = kind === "windows" \|\| kind === "mac";/);
-  assert.match(app, /return v === "1" \|\| v === "windows";/, "a Mac window never asks for the Windows door");
+  assert.match(app, /\["windows", "mac"\]\.includes\(new URLSearchParams\(location\.search\)\.get\("app"\)\)\) return true;/, "the Mac window gets its knocks through Portal too");
 });
