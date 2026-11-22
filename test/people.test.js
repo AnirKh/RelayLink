@@ -2199,19 +2199,22 @@ test("a day's name: Today, Yesterday, or its date — with the year only if not 
 });
 
 test("a note arriving with the Notes tab on screen: there at once, marked new — no toast, nothing left to count", async () => {
+  /* The notes are dated a minute ahead, not a second: on a slow test machine
+     sealing one took longer than that second, it then arrived "already seen",
+     its day stayed folded, and this failed now and then (Node 22 and 24). */
   const o = await anOwner();
   const p = page({ owner: { lock: o.lock, code: o.code } });
   await p.api.ownerReady();
   p.els.panelMail.classList.remove("hidden");
   p.api.inboxViewed();
-  await p.api.receiveMail({ type: "mail", box: o.box, side: "a", items: [await noteFor(o, { name: "Bat", text: "hello!" }, { at: Date.now() + 1000 })] });
+  await p.api.receiveMail({ type: "mail", box: o.box, side: "a", items: [await noteFor(o, { name: "Bat", text: "hello!" }, { at: Date.now() + 60_000 })] });
   assert.deepEqual(p.log.toasts, []);
   assert.ok(!shown(p.els.inboxCount));
   const note = p.els.inboxList.children[0].querySelector(".note-item");
   assert.equal(note.querySelector(".note-text").textContent, "hello!");
   assert.ok(note.classList.contains("new"));
   p.els.lobbyScreen.classList.add("hidden");                // in a chat now
-  await p.api.receiveMail({ type: "mail", box: o.box, side: "a", items: [await noteFor(o, { name: "Anu", text: "later" }, { at: Date.now() + 2000 })] });
+  await p.api.receiveMail({ type: "mail", box: o.box, side: "a", items: [await noteFor(o, { name: "Anu", text: "later" }, { at: Date.now() + 120_000 })] });
   assert.deepEqual(p.log.toasts, [I18N.mn.noteArrived("Anu")], "not on screen: said, and counted");
   assert.equal(p.els.inboxCount.textContent, "1");
 });
