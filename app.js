@@ -27,7 +27,7 @@
 
    APP_BUILD is written by tools/sync-build.js and by nothing else.
 ══════════════════════════════════════════════ */
-const APP_BUILD = "202611220221-6d15d37e";
+const APP_BUILD = "202611220249-18ced6f2";
 
 function refuseToRunInAStalePage() {
   let builtFor = null;
@@ -2823,6 +2823,7 @@ async function knocksOff() {
 function knocksChanged() {
   drawPeople();
   if (knockPeer()) sendKnockAddress();
+  shareKnockByMail();
   ownerAlertNow(true);
 }
 
@@ -2851,7 +2852,57 @@ function knockPeer() {
 /** Tells them where to knock for us — or that alerts are off. */
 function sendKnockAddress() {
   const address = knockAddress();
-  dcSendE2e({ type: "knock-address", ...(address || { off: true }) }).catch(() => {});
+  const peer = knockPeer();
+  dcSendE2e({ type: "knock-address", ...(address || { off: true }) })
+    .then(sent => { if (sent !== false && peer) markKnockShared(peer.room, knockValue()); })
+    .catch(() => {});
+}
+
+/* ── Where to knock, told by waiting message ──
+   Asked for: turning alerts on reached a saved person only at the next live
+   chat with them, so until then they could not knock. Now, whenever the
+   address changes (alerts on or off, a new one after someone was forgotten),
+   each saved person is also told by a waiting message — sealed like any
+   other, never shown, and without "a message waits" for them. Their device
+   takes it in the background the next time it fetches. What each person was
+   last told is kept here (KNOCK_SHARED_KEY), so it goes once per change. */
+const KNOCK_SHARED_KEY = "dc-knock-shared";
+const knockMailPending = new Map();       // mail id → { room, value }, until the server keeps it
+
+function knockSharedMap() {
+  try { const m = JSON.parse(localStorage.getItem(KNOCK_SHARED_KEY) || "{}"); return m && typeof m === "object" ? m : {}; }
+  catch (_) { return {}; }
+}
+
+function markKnockShared(room, value) {
+  const m = knockSharedMap();
+  m[room] = value;
+  try { localStorage.setItem(KNOCK_SHARED_KEY, JSON.stringify(m)); } catch (_) { /* told again next time */ }
+}
+
+/** What they should know: the address now, or "off". */
+function knockValue() {
+  const a = knockAddress();
+  return a ? a.endpoint : "off";
+}
+
+async function shareKnockByMail() {
+  if (!knockKey) return;
+  const address = knockAddress();
+  const value = address ? address.endpoint : "off";
+  const told = knockSharedMap();
+  for (const p of people) {
+    if (told[p.room] === value) continue;
+    if (told[p.room] === undefined && value === "off") continue;       // never told: nothing to take back
+    if ([...knockMailPending.values()].some(x => x.room === p.room && x.value === value)) continue;
+    try {
+      const id = DC.makeMailId(), at = Date.now();
+      const sealed = await DC.sealMailBody(await mailKeyFor(p), { box: p.room, from: p.side, to: G.otherSide(p.side), id, at },
+                                           { knock: address || { off: true } });
+      knockMailPending.set(id, { room: p.room, value });
+      wsSend({ type: "mail-drop", box: p.room, to: G.otherSide(p.side), id, at, iv: sealed.iv, ct: sealed.ct });
+    } catch (err) { console.warn("Could not tell them where to knock:", err); }
+  }
 }
 
 /** Once a channel, in a saved person's room: the address may have changed
@@ -3257,6 +3308,8 @@ function mailAtConnect() {
   /* Who waits for us is asked afresh with the mailboxes: a wait that ended
      while the link was down is not left showing. */
   if (waitingForUs.size) { waitingForUs.clear(); drawPeople(); }
+  knockMailPending.clear();               // not kept before the link went: told again below
+  shareKnockByMail();
   for (const p of people) {
     for (const item of (mailStore.threads[p.room] || { items: [] }).items) {
       if (item.mine && item.state === "sending" && item.iv && item.ct) {
@@ -3273,6 +3326,12 @@ function fetchMail() {
 
 /** The server kept ours — or would not, and why. */
 function mailAnswered(data, kept) {
+  const told = knockMailPending.get(data.id);
+  if (told) {
+    knockMailPending.delete(data.id);
+    if (kept) markKnockShared(told.room, told.value);
+    return;
+  }
   for (const [room, thread] of Object.entries(mailStore.threads)) {
     const item = thread.items.find(m => m.mine && m.id === data.id);
     if (!item || item.state !== "sending") continue;
@@ -3310,6 +3369,13 @@ async function takeMail(data) {
     const where = { box: p.room, from: G.otherSide(p.side), to: p.side, id: m.id };
     let body = null;
     for (const key of keys) if ((body = await DC.openMailBody(key, { ...where, at: m.at, iv: m.iv, ct: m.ct }))) break;
+    if (body && "knock" in body) {                       // where to knock for them now: taken, never shown
+      seen.add(m.id);
+      taken.push(m.id);
+      if (body.knock === null) setKnockAddress(p.room, null);
+      else if (G.knockAddressValid(body.knock)) setKnockAddress(p.room, body.knock);
+      continue;
+    }
     const file = body && body.file && G.mailFileValid(body.file) && Number.isSafeInteger(m.at) ? body.file : null;
     if (file) {
       const got = await fetchMailFile(p, keys, where, file);

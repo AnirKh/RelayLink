@@ -2526,3 +2526,70 @@ test("in the Windows app (Edge: browser push there too): alerts on at an earlier
   await timers();
   assert.equal(p.els.knockBtn.dataset.state, "on");
 });
+
+/** Waits (up to 5 s) for something the page does in the background. */
+async function until(cond) {
+  for (let i = 0; i < 500 && !cond(); i++) await new Promise(r => setTimeout(r, 10));
+}
+
+test("alerts turned on: every saved person is told where to knock by a hidden waiting message — sealed, no ring, once per change", async () => {
+  const anu = await person("Anu", "a"), bat = await person("Bat", "b");
+  const app = fakeApp();
+  const p = page({ saved: [anu, bat], app });
+  await p.api.knocksOn();
+  await until(() => p.log.ws.filter(m => m.type === "mail-drop").length >= 2);
+  const drops = p.log.ws.filter(m => m.type === "mail-drop");
+  assert.deepEqual(drops.map(d => d.box).sort(), [anu.room, bat.room].sort(), "one to each");
+  for (const d of drops) {
+    assert.equal(d.knock, undefined, "no 'a message waits' for this one");
+    const who = d.box === anu.room ? anu : bat;
+    const body = await DC.openMailBody(await DC.mailboxKey(who.secret),
+      { box: who.room, from: who.side, to: G.otherSide(who.side), id: d.id, at: d.at, iv: d.iv, ct: d.ct });
+    assert.deepEqual(body, { knock: { endpoint: app.addr.endpoint, p256dh: app.addr.p256dh, auth: app.addr.auth } });
+  }
+  assert.ok(!JSON.parse(p.store.get("dc-mail") || '{"threads":{}}').threads[anu.room], "not in the conversation");
+  for (const d of drops) p.api.mailAnswered({ id: d.id }, true);
+  p.log.ws.length = 0;
+  p.api.mailAtConnect();
+  await new Promise(r => setTimeout(r, 300));             // anything it would send, sealed by now
+  assert.deepEqual(p.log.ws.filter(m => m.type === "mail-drop"), [], "told already: not again");
+  await p.api.knocksOff();
+  await until(() => p.log.ws.filter(m => m.type === "mail-drop").length >= 2);
+  const off = p.log.ws.filter(m => m.type === "mail-drop");
+  assert.equal(off.length, 2, "turned off: told too, so they stop knocking");
+  const body = await DC.openMailBody(await DC.mailboxKey(anu.secret),
+    { box: anu.room, from: "a", to: "b", ...(({ id, at, iv, ct }) => ({ id, at, iv, ct }))(off.find(d => d.box === anu.room)) });
+  assert.deepEqual(body, { knock: null });
+});
+
+test("not kept before the link went: told again when it is back", async () => {
+  const anu = await person("Anu", "a");
+  const p = page({ saved: [anu], app: fakeApp() });
+  await p.api.knocksOn();
+  await until(() => p.log.ws.filter(m => m.type === "mail-drop").length >= 1);
+  assert.equal(p.log.ws.filter(m => m.type === "mail-drop").length, 1);
+  p.log.ws.length = 0;
+  p.api.mailAtConnect();
+  await until(() => p.log.ws.filter(m => m.type === "mail-drop").length >= 1);
+  assert.equal(p.log.ws.filter(m => m.type === "mail-drop").length, 1, "sent again");
+});
+
+test("where to knock, by waiting message: taken in the background — never shown, no toast — and off takes it away", async () => {
+  const anu = await person("Anu", "a");
+  const p = page({ saved: [anu] });
+  const key = await DC.mailboxKey(anu.secret);
+  const knock = { endpoint: "https://pi.example/portal/v1/push/" + "C".repeat(43), ...pushKeys() };
+  const seal = async body => {
+    const m = { box: anu.room, from: "b", to: "a", id: DC.makeMailId(), at: Date.now() - 1000 };
+    return { id: m.id, at: m.at, ...(await DC.sealMailBody(key, m, body)) };
+  };
+  await p.api.receiveMail({ type: "mail", box: anu.room, side: "a", items: [await seal({ knock })] });
+  assert.deepEqual(p.api.get().people[0].knock, knock);
+  assert.deepEqual(p.log.toasts, []);
+  assert.ok(!(JSON.parse(p.store.get("dc-mail")).threads[anu.room] || { items: [] }).items.length, "nothing in the conversation");
+  assert.equal(p.log.ws.at(-1).type, "mail-ack", "the server may let it go");
+  await p.api.receiveMail({ type: "mail", box: anu.room, side: "a", items: [await seal({ knock: { off: true } })] });
+  assert.equal(p.api.get().people[0].knock, undefined);
+  await p.api.receiveMail({ type: "mail", box: anu.room, side: "a", items: [await seal({ knock: { endpoint: "not a url", p256dh: "x", auth: "y" } })] });
+  assert.equal(p.api.get().people[0].knock, undefined, "a bad one changes nothing");
+});

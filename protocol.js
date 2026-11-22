@@ -352,7 +352,7 @@
            Number.isSafeInteger(file.size) && file.size >= 0;
   }
 
-  /** The body of a waiting message — `{ text }` or `{ file }` — or null: not
+  /** The body of a waiting message — `{ text }`, `{ file }` or `{ knock }` — or null: not
       sealed with this key, not for here, from there, with this id and time,
       or neither a text nor a file's description. */
   async function openMailBody(key, { box, from, to, id, at, iv, ct }) {
@@ -362,6 +362,13 @@
       const body = JSON.parse(new TextDecoder().decode(plain));
       if (body && typeof body.text === "string") return { text: body.text };
       if (body && fileMetaValid(body.file)) return { file: { name: body.file.name, type: body.file.type, size: body.file.size } };
+      /* Where to knock for them now — or that they turned alerts off: never
+         shown, it only updates what this device knows (see app.js). */
+      if (body && body.knock && typeof body.knock === "object") {
+        if (body.knock.off === true) return { knock: null };
+        const { endpoint, p256dh, auth } = body.knock;
+        if (typeof endpoint === "string" && typeof p256dh === "string" && typeof auth === "string") return { knock: { endpoint, p256dh, auth } };
+      }
       return null;
     } catch (_) { return null; }
   }
