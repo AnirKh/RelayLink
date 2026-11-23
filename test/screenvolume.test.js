@@ -4,6 +4,9 @@
   of app.js and run against stand-ins: a device that keeps the last setting
   or has none, one whose storage refuses, and an iPhone, where a page cannot
   set a sound's volume at all.
+
+  Music played from a tab in a voice call comes the same way, and its card
+  has a slider of its own: the two are one setting.
 */
 
 "use strict";
@@ -19,9 +22,9 @@ const html = fs.readFileSync(path.join(ROOT, "index.html"), "utf8");
 
 const BLOCK = (() => {
   const a = app.indexOf("const SCREEN_VOLUME_KEY = ");
-  const b = app.indexOf("\n});", app.indexOf('screenVolumeRange.addEventListener("input"', a));
+  const b = app.indexOf("\n  });\n}", app.indexOf('range.addEventListener("input"', a));
   assert.ok(a > 0 && b > a, "the film's volume not found in app.js");
-  return app.slice(a, b + 4);
+  return app.slice(a, b + 8);
 })();
 
 function device({ kept = null, storageRefuses = false, iPhone = false, sound = true } = {}) {
@@ -32,16 +35,18 @@ function device({ kept = null, storageRefuses = false, iPhone = false, sound = t
   };
   /* An iPhone takes no volume from a page: it reads back 1 whatever is set. */
   const document = { createElement: () => { let v = 1; return { get volume() { return v; }, set volume(x) { if (!iPhone) v = x; } }; } };
-  const listeners = {};
+  const listeners = {}, musicListeners = {};
   const screenVolumeRange = { value: "100", addEventListener: (t, f) => { listeners[t] = f; } };
+  const musicVolumeRange  = { value: "100", addEventListener: (t, f) => { musicListeners[t] = f; } };
   const hidden = new Set(["hidden"]);
   const screenVolume = { classList: { toggle: (c, on) => (on ? hidden.add(c) : hidden.delete(c)) } };
   const screenSoundOut = sound ? { volume: 1 } : null;
-  const api = new Function("document", "localStorage", "screenVolume", "screenVolumeRange", "screenSoundOut",
+  const api = new Function("document", "localStorage", "screenVolume", "screenVolumeRange", "musicVolumeRange", "screenSoundOut",
     `${BLOCK}\nreturn { screenVolumeLevel, showScreenVolume };`
-  )(document, localStorage, screenVolume, screenVolumeRange, screenSoundOut);
+  )(document, localStorage, screenVolume, screenVolumeRange, musicVolumeRange, screenSoundOut);
   const slide = value => { screenVolumeRange.value = String(value); listeners.input(); };
-  return { ...api, slide, stored, screenVolumeRange, screenSoundOut, shown: () => !hidden.has("hidden") };
+  const slideMusic = value => { musicVolumeRange.value = String(value); musicListeners.input(); };
+  return { ...api, slide, slideMusic, stored, screenVolumeRange, musicVolumeRange, screenSoundOut, shown: () => !hidden.has("hidden") };
 }
 
 test("sliding it turns the film up or down here, and is kept for next time", () => {
@@ -51,6 +56,18 @@ test("sliding it turns the film up or down here, and is kept for next time", () 
   assert.equal(d.screenSoundOut.volume, 0.35);
   assert.equal(d.stored.get("screenVolume"), "35");
   assert.equal(device({ kept: "35" }).screenVolumeLevel(), 0.35, "the next call starts where it was left");
+});
+
+test("the music card's slider and the film's are one setting: either turns it, both show it, it is kept", () => {
+  const d = device();
+  d.slideMusic(40);
+  assert.equal(d.screenSoundOut.volume, 0.4, "the music turned down here");
+  assert.equal(d.screenVolumeRange.value, "40", "and the film's slider says so");
+  assert.equal(d.stored.get("screenVolume"), "40");
+  d.slide(70);
+  assert.equal(d.musicVolumeRange.value, "70");
+  const next = device({ kept: "40" });
+  assert.deepEqual([next.screenVolumeRange.value, next.musicVolumeRange.value], ["40", "40"], "the next call starts both where it was left");
 });
 
 test("a kept setting that makes no sense is not used, and one past the ends is held to them", () => {

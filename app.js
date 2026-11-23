@@ -27,7 +27,7 @@
 
    APP_BUILD is written by tools/sync-build.js and by nothing else.
 ══════════════════════════════════════════════ */
-const APP_BUILD = "202611232249-4aba9b3f";
+const APP_BUILD = "202611232316-25a14d3a";
 
 function refuseToRunInAStalePage() {
   let builtFor = null;
@@ -219,6 +219,8 @@ const remoteVideo      = document.getElementById("remoteVideo");
 const screenVideo      = document.getElementById("screenVideo");
 const screenVolume     = document.getElementById("screenVolume");
 const screenVolumeRange = document.getElementById("screenVolumeRange");
+const musicCard        = document.getElementById("musicCard");
+const musicVolumeRange = document.getElementById("musicVolumeRange");
 const localVideo       = document.getElementById("localVideo");
 const toggleMuteBtn    = document.getElementById("toggleMuteBtn");
 const toggleCamBtn     = document.getElementById("toggleCamBtn");
@@ -6103,6 +6105,14 @@ function handleTextMessage(data, sealed = false) {
       peerSharing = data.on === true;
       showScreenBig();
       break;
+
+    case "call-music":
+      /* They began playing music from a tab in a voice call, or stopped (see
+         "Music in a voice call"). */
+      if (!inCall) break;
+      peerMusic = data.on === true;
+      showMusicCard();
+      break;
   }
 }
 
@@ -7377,7 +7387,8 @@ function stopScreenSoundOut() {
    the left edge; it fades with the call's buttons while watching and comes
    back with them. Kept on this device for the next time. Not offered where a
    page cannot set a sound's volume at all — an iPhone, whose own buttons
-   do it.                                                                    */
+   do it. Music shared in a voice call comes the same way, and its card has a
+   slider of its own for it: the two are one setting.                       */
 const SCREEN_VOLUME_KEY = "screenVolume";
 const SCREEN_VOLUME_SETTABLE = (() => {
   try { const probe = document.createElement("audio"); probe.volume = 0.5; return probe.volume === 0.5; }
@@ -7393,15 +7404,46 @@ function showScreenVolume(on) {
   screenVolume.classList.toggle("hidden", !(on && SCREEN_VOLUME_SETTABLE));
 }
 
+const SCREEN_VOLUME_RANGES = [screenVolumeRange, musicVolumeRange];   // the film's, and music's in a voice call
+
 try {
   const kept = localStorage.getItem(SCREEN_VOLUME_KEY);
-  if (kept !== null && Number.isFinite(Number(kept))) screenVolumeRange.value = String(Math.min(100, Math.max(0, Number(kept))));
+  if (kept !== null && Number.isFinite(Number(kept))) {
+    for (const range of SCREEN_VOLUME_RANGES) range.value = String(Math.min(100, Math.max(0, Number(kept))));
+  }
 } catch (_) { /* nothing kept: as it came */ }
 
-screenVolumeRange.addEventListener("input", () => {
-  if (screenSoundOut) screenSoundOut.volume = screenVolumeLevel();
-  try { localStorage.setItem(SCREEN_VOLUME_KEY, screenVolumeRange.value); } catch (_) { /* for this time only */ }
-});
+for (const range of SCREEN_VOLUME_RANGES) {
+  range.addEventListener("input", () => {
+    for (const other of SCREEN_VOLUME_RANGES) other.value = range.value;
+    if (screenSoundOut) screenSoundOut.volume = screenVolumeLevel();
+    try { localStorage.setItem(SCREEN_VOLUME_KEY, range.value); } catch (_) { /* for this time only */ }
+  });
+}
+
+/* ── Music in a voice call ──────────────────
+   Asked for: while talking in a voice call, music from a tab — found on
+   YouTube or Spotify — heard well on both sides. The tab's picture was shown
+   big at first; then asked: not needed, a card is enough. So in a voice call
+   a tab shared with its sound is music: its sound alone goes, in the screen
+   sound's own channel — in stereo, dipped while either person talks — and
+   its picture is not sent at all. A browser shares a tab's sound only with
+   its picture, so the picture is kept, made small and slow (MUSIC_PICTURE),
+   and goes nowhere. Each side shows a small card: theirs says music is
+   playing, with how loud it plays here (the film's volume, one setting);
+   ours says it is being shared. A page cannot read a song's name from
+   another tab, so the card does not say it. Shared without its sound, a tab
+   or a screen still shows big; a video call is as it was.               */
+const MUSIC_PICTURE = { width: { max: 320 }, height: { max: 180 }, frameRate: { max: 1 } };
+let peerMusic = false;           // the other side says it is sharing music
+let sharedMusic = null;          // our share's picture, kept but not sent, while we share music
+
+function showMusicCard() {
+  const mine = Boolean(sharedMusic);
+  musicCard.classList.toggle("hidden", !(inCall && (mine || peerMusic)));
+  musicCard.classList.toggle("mine", mine && !peerMusic);   // theirs first, if both
+  musicCard.classList.toggle("no-volume", !SCREEN_VOLUME_SETTABLE);
+}
 
 function stopLocalCallMedia() {
   if (localStream) {
@@ -7676,9 +7718,12 @@ function stopCallMedia(clearOverlay = true) {
   sharingScreen = false;                    // the screen's track went with the rest
   if (screenMix) { screenMix.close(); screenMix = null; }   // and its sound, which was never in localStream
   if (sharedScreen) { sharedScreen.onended = null; sharedScreen.stop(); sharedScreen = null; }   // nor a screen beside the camera
+  if (sharedMusic) { sharedMusic.onended = null; sharedMusic.stop(); sharedMusic = null; }      // nor music's picture
   peerSharing = false;
   peerScreenTrack = null;
+  peerMusic = false;
   showScreenBig();
+  showMusicCard();
   updateShareBtn();
   audioInputsSeen = null;                   // the next call notes its own
   watchCallStats(false);
@@ -8355,16 +8400,20 @@ async function startScreenShare() {
       return;
     }
     const profile = screenProfile(Boolean(sound));
+    /* A voice call, with its sound: music — its sound alone goes (see "Music
+       in a voice call"). */
+    const music = !camera && Boolean(sound);
     screen.contentHint = profile.hint;      // a page kept sharp; a video kept moving
     screen.onended = () => stopScreenShare();
     /* The track is asked again for the profile's size and rate — and where the
-       picker did not hold to Full HD, for that too. */
-    try { await screen.applyConstraints(screenConstraints(profile)); } catch (_) { /* the sender's limit still holds */ }
+       picker did not hold to Full HD, for that too. Music's, sent nowhere,
+       for as little as it can be. */
+    try { await screen.applyConstraints(music ? MUSIC_PICTURE : screenConstraints(profile)); } catch (_) { /* the sender's limit still holds */ }
     /* Beside the camera, in its own channel, where both sides have one;
        otherwise in the camera's place. A voice call has no camera: in its own
        channel, or — an older page on the other side, with none — not at all,
        its sound alone going, mixed in with the voice (below). */
-    const apart = screenVideoSender(pc);
+    const apart = music ? null : screenVideoSender(pc);
     const cameraSender = camera ? pc.getSenders().find(s => s.track === camera) : null;
     if (apart) {
       await apart.replaceTrack(screen);
@@ -8399,8 +8448,14 @@ async function startScreenShare() {
         screenMix = null;
       }
     }
+    /* Music whose sound could not go has nothing left to share. */
+    if (music && !screenMix) { screen.stop(); return; }
     sharingScreen = true;
-    if (apart || !camera) {
+    if (music) {
+      sharedMusic = screen;
+      showMusicCard();
+      dcSendCallSignal({ type: "call-music", on: true }).catch(() => {});
+    } else if (apart || !camera) {
       /* The camera goes on as it was, or there is none; the screen is shown
          big, here and there. */
       sharedScreen = screen;
@@ -8425,7 +8480,7 @@ async function startScreenShare() {
 }
 
 async function stopScreenShare() {
-  const screen = sharedScreen || localStream?.getVideoTracks()[0];
+  const screen = sharedScreen || sharedMusic || localStream?.getVideoTracks()[0];
   if (!sharingScreen || !screen) return;
   /* Another change is finishing — the share only just began, say. Once it has. */
   if (restartingCallMedia) { setTimeout(stopScreenShare, 300); return; }
@@ -8433,12 +8488,16 @@ async function stopScreenShare() {
   shareBtn.disabled = true;
   sharingScreen = false;
   screen.onended = null;
-  const apart = Boolean(sharedScreen);
+  const music = Boolean(sharedMusic);
+  const apart = Boolean(sharedScreen) || music;
   if (apart) {
-    /* Beside the camera: the call goes back to the two people, here and there. */
+    /* Beside the camera, or music: the call goes back to the two people,
+       here and there. */
     sharedScreen = null;
+    sharedMusic = null;
     showScreenBig();
-    if (dcReady()) dcSendCallSignal({ type: "call-screen", on: false }).catch(() => {});
+    showMusicCard();
+    if (dcReady()) dcSendCallSignal({ type: music ? "call-music" : "call-screen", on: false }).catch(() => {});
   } else {
     /* As it was before sharing: a camera turned off then is off again now. */
     isCamOff = camOffBeforeShare;

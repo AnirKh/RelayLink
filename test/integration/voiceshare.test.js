@@ -2,7 +2,8 @@
   Music from a tab in a voice call, between two real browsers.
 
   Asked for: while talking in a voice call, music played from a tab — found
-  on YouTube or Spotify — heard well on both sides, with the song showing.
+  on YouTube or Spotify — heard well on both sides. The tab was shown big at
+  first; then asked: not needed, a small card with a volume slider is enough.
   Two Chromium browsers open the page from a real server and one calls the
   other by voice. The browser's picker cannot be clicked in a test, so the
   caller's is stood in for: it hands back what a shared music tab would — a
@@ -11,11 +12,12 @@
   is checked:
 
   - the share button is there in a voice call, and no camera is opened;
-  - the other side sees the tab big, in the voice call, with who it is small
-    in the corner;
+  - the other side sees a small music card with a volume slider, not the
+    tab, and no picture arrives; the sharer sees a card saying it shares;
   - its sound arrives in a channel of its own, asked for in stereo, and the
     voice still in its own;
-  - stopping takes it away again.
+  - the slider turns the music down there;
+  - stopping takes the cards away again.
 
   Skipped where there is no Chromium or Chrome (see browser.js).
 */
@@ -105,50 +107,59 @@ test("music from a tab in a voice call, between two real browsers", { skip: BROW
   await caller.eval(`shareBtn.click(); true`);
   await caller.waitFor(`sharingScreen === true`, "the caller sharing");
   assert.equal(await caller.eval(`window.__pickerAsked`), 1, "the picker asked, once");
-  await callee.waitFor(`callOverlay.classList.contains("screen-big") && screenVideo.videoWidth > 0`, "the tab big at the callee");
-  /* A share starts small and is brought up to its full size (see "A picture
-     held down after a bad line" in app.js): the song's name sharp. */
-  const sharedAt = Date.now();
-  await callee.waitFor(`screenVideo.videoWidth >= 1280`, "the tab at its full size, 1280×720, at the callee", 30_000);
-  t.diagnostic(`full size ${((Date.now() - sharedAt) / 1000).toFixed(1)} s after it first showed`);
+  await callee.waitFor(`!musicCard.classList.contains("hidden")`, "the music card at the callee");
 
   const seen = await callee.eval(`({
     voice: callOverlay.classList.contains("voice-only"),
-    size: [screenVideo.videoWidth, screenVideo.videoHeight],
-    shown: getComputedStyle(screenVideo).display,
-    corner: getComputedStyle(document.querySelector(".voice-only-avatar")).transform,
-    top: parseFloat(getComputedStyle(document.querySelector(".voice-only-avatar")).top),
+    big: callOverlay.classList.contains("screen-big"),
+    text: musicCard.querySelector(".music-theirs").offsetParent !== null,
+    mine: musicCard.querySelector(".music-mine").offsetParent !== null,
+    slider: getComputedStyle(musicVolumeRange).display !== "none",
     camera: localStream.getVideoTracks().length,
     stereo: (callPc.localDescription.sdp.split("m=audio")[2] || "").includes("stereo=1")
   })`);
   assert.equal(seen.voice, true, "still a voice call");
-  assert.equal(seen.shown, "block");
-  assert.deepEqual(seen.size, [1280, 720], "the song's tab at its full size");
-  assert.equal(seen.corner, "none", "who it is, out of the middle of the screen");
-  assert.ok(seen.top > 40 && seen.top < 120, `in the top corner — top ${seen.top}px`);
-  assert.equal(seen.camera, 0, "and no camera opened to see it");
+  assert.equal(seen.big, false, "not the tab big: a card is enough");
+  assert.equal(seen.text, true, "saying music is playing");
+  assert.equal(seen.mine, false);
+  assert.equal(seen.slider, true, "with a volume slider");
+  assert.equal(seen.camera, 0, "and no camera opened");
   assert.equal(seen.stereo, true, "its sound asked for in stereo");
-  assert.equal(await caller.eval(`callOverlay.classList.contains("screen-big") && screenVideo.videoWidth > 0`), true,
-    "the sharer sees it big too");
+  const sharer = await caller.eval(`({
+    card: !musicCard.classList.contains("hidden"),
+    mine: musicCard.querySelector(".music-mine").offsetParent !== null,
+    slider: getComputedStyle(musicVolumeRange).display !== "none",
+    big: callOverlay.classList.contains("screen-big")
+  })`);
+  assert.deepEqual(sharer, { card: true, mine: true, slider: false, big: false }, "the sharer: a card saying so");
 
-  /* Its sound arrives in the screen's own channel, and the voice in its own. */
+  /* Its sound arrives in the screen's own channel, and the voice in its own;
+     no picture at all. */
   const music = energyOf("screenSoundTransceiver(callPc).receiver");
   const voice = energyOf("callPc.getTransceivers().filter(t => t.receiver.track.kind === 'audio')[0].receiver");
-  const before = { music: await callee.eval(music), voice: await callee.eval(voice) };
+  const picture = `(async () => {
+    let bytes = 0;
+    (await screenVideoTransceiver(callPc).receiver.getStats()).forEach(r => { if (r.type === "inbound-rtp") bytes = r.bytesReceived || 0; });
+    return bytes;
+  })()`;
+  const before = { music: await callee.eval(music), voice: await callee.eval(voice), picture: await callee.eval(picture) };
   await new Promise(r => setTimeout(r, 3000));
-  const after = { music: await callee.eval(music), voice: await callee.eval(voice) };
+  const after = { music: await callee.eval(music), voice: await callee.eval(voice), picture: await callee.eval(picture) };
   assert.ok(after.music.bytes > before.music.bytes, "the music's sound arriving");
   assert.ok(after.music.e > before.music.e, "and not silence");
   assert.ok(after.voice.bytes > before.voice.bytes, "the voice still arriving in its own");
+  assert.equal(after.picture, 0, "no picture of the tab arriving at all");
   assert.equal(await callee.eval(`Boolean(screenSoundOut && screenSoundOut.srcObject && !screenSoundOut.paused)`), true,
     "played on its own, apart from the voice");
 
+  /* The card's slider turns it down there. */
+  await callee.eval(`musicVolumeRange.value = "30"; musicVolumeRange.dispatchEvent(new Event("input")); true`);
+  assert.equal(await callee.eval(`screenSoundOut.volume`), 0.3, "the music at 30% here");
+
   /* Stopped: the voice call as it was. */
   await caller.eval(`shareBtn.click(); true`);
-  await callee.waitFor(`!callOverlay.classList.contains("screen-big")`, "the tab gone at the callee", 20_000);
-  assert.equal(await callee.eval(`getComputedStyle(document.querySelector(".voice-only-avatar")).transform !== "none"`), true,
-    "who it is back in the middle");
-  assert.equal(await caller.eval(`sharingScreen || callOverlay.classList.contains("screen-big")`), false);
+  await callee.waitFor(`musicCard.classList.contains("hidden")`, "the music card gone at the callee", 20_000);
+  assert.equal(await caller.eval(`sharingScreen || !musicCard.classList.contains("hidden")`), false);
 
   await caller.eval(`endCallBtn.click(); true`);
   await callee.waitFor(`!inCall && callOverlay.classList.contains("hidden")`, "the call ended at the callee", 20_000);

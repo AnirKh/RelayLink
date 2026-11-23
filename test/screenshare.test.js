@@ -71,6 +71,7 @@ const SOURCE = [
   grab(/^const SCREEN_PROFILES = [^\n]*;$/m,                          "SCREEN_PROFILES"),
   grab(/^const SCREEN_CAPTURE = [^\n]*;$/m,                           "SCREEN_CAPTURE"),
   grab(/^const SCREEN_SOUND = [^\n]*;$/m,                             "SCREEN_SOUND"),
+  grab(/^const MUSIC_PICTURE = [^\n]*;$/m,                            "MUSIC_PICTURE"),
   grab(/^function screenProfile\([^)]*\)\s*\{[\s\S]*?^\}/m,           "screenProfile"),
   grab(/^function mixScreenSound\([^)]*\)\s*\{[\s\S]*?^\}/m,          "mixScreenSound"),
   grab(/^function screenChannel\([\s\S]*?^function screenVideoSender\([^\n]*\n/m, "the screen's channels"),
@@ -167,6 +168,7 @@ function call({ inCall = true, video = true, camOff = false, busy = false, suppo
     tablerIcon: name => name,
     remoteCallStream: new MediaStream([track("audio", "their voice"), track("video", "their camera")]),
     showScreenBig: () => log.order.push("screen big"),
+    showMusicCard: () => log.order.push("music card"),
     dcReady: () => true,
     dcSendCallSignal: async m => { log.signals.push(m); },
     setTimeout: (f) => { log.order.push("retry later"); },
@@ -196,11 +198,11 @@ function call({ inCall = true, video = true, camOff = false, busy = false, suppo
   const names = Object.keys(env).filter(n => n !== "state");
   const api = new Function(...names, "state", `
     let { inCall, isCamOff, restartingCallMedia, cameraFacing, callPc, localStream, localVideo } = state;
-    let sharingScreen = false, camOffBeforeShare = false, screenMix = null, sharedScreen = null;
+    let sharingScreen = false, camOffBeforeShare = false, screenMix = null, sharedScreen = null, sharedMusic = null;
     ${SOURCE}
     return {
       startScreenShare, stopScreenShare, updateShareBtn,
-      now: () => ({ inCall, isCamOff, restartingCallMedia, localStream, localVideo, sharingScreen, screenMix, sharedScreen }),
+      now: () => ({ inCall, isCamOff, restartingCallMedia, localStream, localVideo, sharingScreen, screenMix, sharedScreen, sharedMusic }),
       hangUp: () => { inCall = false; localStream = null; }
     };
   `)(...names.map(n => env[n]), env.state);
@@ -338,28 +340,50 @@ test("a voice call: the tab in the screen's own channel, shown big here and ther
   assert.equal(c.now().sharingScreen, true);
 });
 
-test("music in a voice call: its sound in its own channel, in stereo's channel, the voice untouched, sent for motion", async () => {
+test("music in a voice call: its sound alone goes, in its own channel — the tab's picture kept small and sent nowhere", async () => {
+  /* Asked for, after the tab was first shown big: not needed, a card is enough. */
   const c = call({ video: false, channel: "agreed", withSound: true, surface: "browser", kept: true });
   await c.startScreenShare();
-  assert.equal(c.senders[2].track.name, "mix", "the screen's sound channel");
+  assert.equal(c.senders[2].track.name, "mix", "the screen sound's own channel: stereo, dipped");
   assert.equal(c.senders[0].track, c.mic, "the voice as the microphone gave it");
   assert.ok(c.log.mixed.includes("here: screen sound"), "played here, dipped, as in a video call");
-  assert.equal(c.senders[3].encoding().maxBitrate, 4000000, "a tab with its sound: the moving profile");
-  assert.equal(c.senders[3].track.contentHint, "motion");
+  assert.equal(c.senders[3].track, null, "no picture sent");
+  assert.equal(c.senders[3].encoding().maxBitrate, undefined, "nor its channel given a rate");
+  assert.deepEqual(c.log.applied, [["screen", { width: { max: 320 }, height: { max: 180 }, frameRate: { max: 1 } }]],
+    "the picture the browser shares a tab's sound with, as small and slow as it goes");
+  assert.equal(c.now().sharedMusic.name, "screen");
+  assert.equal(c.now().sharedScreen, null);
+  assert.ok(c.log.order.includes("music card"), "a card");
+  assert.ok(!c.log.order.includes("screen big"), "not the tab big");
+  assert.deepEqual(c.log.signals, [{ type: "call-music", on: true }], "and the other side told, to show theirs");
+  assert.equal(c.now().sharingScreen, true);
 });
 
-test("stopping in a voice call: the screen's channels empty again, and nothing opened", async () => {
-  const c = call({ video: false, channel: "agreed", withSound: true });
+test("stopping in a voice call: the channels empty again, the card or the big screen gone there, and nothing opened", async () => {
+  for (const [withSound, said] of [[true, "call-music"], [false, "call-screen"]]) {
+    const c = call({ video: false, channel: "agreed", withSound });
+    await c.startScreenShare();
+    await c.stopScreenShare();
+    assert.equal(c.senders[3].track, null);
+    assert.equal(c.senders[2].track, null);
+    assert.equal(c.senders[0].track, c.mic);
+    assert.deepEqual(c.log.asked, [], "no camera: there was none before");
+    assert.deepEqual(c.now().localStream.getTracks(), [c.mic]);
+    assert.ok(c.log.order.includes("stop screen"));
+    assert.deepEqual(c.log.signals, [{ type: said, on: true }, { type: said, on: false }], `with sound: ${withSound}`);
+    assert.equal(c.now().sharingScreen, false);
+    assert.equal(c.now().sharedMusic, null);
+    assert.equal(c.now().sharedScreen, null);
+  }
+});
+
+test("music whose sound will not go: nothing left to share, so nothing is", async () => {
+  const c = call({ video: false, channel: "agreed", withSound: true, mixFails: true });
   await c.startScreenShare();
-  await c.stopScreenShare();
-  assert.equal(c.senders[3].track, null);
-  assert.equal(c.senders[2].track, null);
-  assert.equal(c.senders[0].track, c.mic);
-  assert.deepEqual(c.log.asked, [], "no camera: there was none before");
-  assert.deepEqual(c.now().localStream.getTracks(), [c.mic]);
-  assert.ok(c.log.order.includes("stop screen"));
-  assert.deepEqual(c.log.signals, [{ type: "call-screen", on: true }, { type: "call-screen", on: false }]);
   assert.equal(c.now().sharingScreen, false);
+  assert.ok(c.log.order.includes("stop screen"));
+  assert.deepEqual(c.log.signals, []);
+  assert.equal(c.now().restartingCallMedia, false);
 });
 
 test("a voice call with an older page on the other side: the sound alone, mixed in with the voice; no picture sent", async () => {
@@ -368,7 +392,7 @@ test("a voice call with an older page on the other side: the sound alone, mixed 
     await c.startScreenShare();
     assert.equal(c.senders[0].track.name, "mix", `in the voice's sender (${channel})`);
     assert.deepEqual(c.log.attached, [], "no picture added to a call that has no place for it");
-    assert.deepEqual(c.log.signals, [], "nothing for them to show big");
+    assert.deepEqual(c.log.signals, [{ type: "call-music", on: true }], "music said, which an older page passes over");
     assert.ok(!c.senders.some(s => s.track && s.track.name === "screen"));
     await c.stopScreenShare();
     assert.equal(c.senders[0].track, c.mic, "the voice alone again");
@@ -737,7 +761,10 @@ test("their screen's picture is kept out of their camera's, shown big only on th
   const stop = grab(/^function stopCallMedia\([^)]*\)\s*\{[\s\S]*?^\}/m, "stopCallMedia");
   assert.match(stop, /if \(sharedScreen\) \{ sharedScreen\.onended = null; sharedScreen\.stop\(\); sharedScreen = null; \}/,
     "a screen beside the camera was never in localStream, so is stopped here");
-  assert.match(stop, /peerSharing = false;\s*peerScreenTrack = null;\s*showScreenBig\(\);/);
+  assert.match(stop, /peerSharing = false;\s*peerScreenTrack = null;\s*peerMusic = false;\s*showScreenBig\(\);\s*showMusicCard\(\);/);
+  assert.match(stop, /if \(sharedMusic\) \{ sharedMusic\.onended = null; sharedMusic\.stop\(\); sharedMusic = null; \}/,
+    "music's picture, never sent, is stopped here");
+  assert.match(app, /case "call-music":[\s\S]*?if \(!inCall\) break;\s*peerMusic = data\.on === true;\s*showMusicCard\(\);/);
   const swap = grab(/^function setCallSwapped\([^)]*\)\s*\{[\s\S]*?^\}/m, "setCallSwapped");
   assert.match(swap, /callOverlay\.classList\.contains\("screen-big"\)/, "no swapping while a screen is big");
 });

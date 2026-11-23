@@ -1356,6 +1356,25 @@ html.in-desktop-app .author-panel { display: none; }
 .call-overlay.mini.screen-big #localVideo { display: none; }
 /* A voice call made small stays its strip: the screen goes on, unseen. */
 .call-overlay.mini.voice-only.screen-big #screenVideo { display: none; }
+/* Music from a tab in a voice call — see "Music in a voice call" in app.js.
+   Under who it is, in the middle: theirs with how loud it plays here, ours
+   saying it is being shared. */
+.music-card {
+  position: absolute; z-index: 6;
+  top: calc(50% + 64px); left: 50%; transform: translateX(-50%);
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 16px; border-radius: 22px;
+  background: rgba(255,255,255,0.08); color: #fff; font-size: 14px;
+  white-space: nowrap;
+}
+.music-card i { font-size: 18px; color: var(--accent); }
+.music-card input[type="range"] { width: min(36vw, 140px); margin: 0; accent-color: var(--accent); cursor: pointer; }
+.music-card .music-mine,
+.music-card.mine .music-theirs,
+.music-card.mine input,
+.music-card.no-volume input { display: none; }
+.music-card.mine .music-mine { display: inline; }
+.call-overlay.mini .music-card { display: none; }
 .call-overlay.mini .call-mini-bar {
   display: flex; gap: 8px; z-index: 11;
   position: absolute; left: 0; right: 0; bottom: 6px; justify-content: center;
