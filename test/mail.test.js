@@ -339,10 +339,14 @@ test("a file is kept only with the message that describes it — sent first, tak
   box.ack(BOX, "b", [id(1)]);
   assert.equal(box.fileFor(BOX, "b", id(1)), null);
   assert.equal(box.stats().fileBytes, 0);
-  return new Promise(r => setTimeout(r, 30)).then(() => {
+  /* Removed from disk in the background. Waited for — up to two seconds —
+     rather than a fixed 30 ms, which failed on a busy Pi with the real-call
+     test's two browsers running beside it. */
+  return (async () => {
+    for (let end = Date.now() + 2000; fs.existsSync(where) && Date.now() < end;) await new Promise(r => setTimeout(r, 20));
     assert.ok(!fs.existsSync(where), "gone from disk with its message");
     done();
-  });
+  })();
 });
 
 test("files: 50 MB each, 400 MB a mailbox, 2 GB in all — and none where there is nowhere to keep them", () => {
