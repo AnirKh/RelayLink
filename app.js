@@ -27,7 +27,7 @@
 
    APP_BUILD is written by tools/sync-build.js and by nothing else.
 ══════════════════════════════════════════════ */
-const APP_BUILD = "202611231255-0be5553d";
+const APP_BUILD = "202611231308-7d9d67ba";
 
 function refuseToRunInAStalePage() {
   let builtFor = null;
@@ -4341,6 +4341,19 @@ function createPeerConnection() {
   pc.ontrack = null;
 }
 
+/* "Connected" only once it is true for the person looking: the call's link
+   up and, in a video call, the other person's picture showing. It used to be
+   said as soon as the call was agreed — over a black screen, seconds before
+   anything arrived, so a call still starting looked broken. Until then the
+   label keeps "Connecting…". Called again when their picture's first frame
+   arrives (the resize listener below).                                    */
+function showCallConnected() {
+  if (!inCall || callPc?.connectionState !== "connected") return;
+  if (!callOverlay.classList.contains("voice-only") && !remoteVideo.videoWidth) return;
+  callStatusLabel.textContent = t("callConnected");
+}
+remoteVideo.addEventListener("resize", showCallConnected);
+
 function createCallPeerConnection() {
   closeCallPeerConnection();
   /* Collects what the other side sends. Not given to the picture yet: it is
@@ -4359,9 +4372,7 @@ function createCallPeerConnection() {
     if (!callPc) return;
     updateCallPauseNote();
     const state = callPc.connectionState;
-    if (state === "connected") {
-      callStatusLabel.textContent = t("callConnected");
-    }
+    if (state === "connected") showCallConnected();
     /* Down — disconnected, or failed outright — is worked on, not ended: see
        watchCallLink. Closed is the call being put down. */
     watchCallLink();
@@ -4393,7 +4404,6 @@ function createCallPeerConnection() {
     // Play and update status only when the call is actually active
     if (inCall) {
       playRemoteCallMedia();
-      callStatusLabel.textContent = t("callConnected");
     } else {
       // Store for later — play() is called again when inCall becomes true
       remoteVideo._pendingPlay = true;
@@ -6678,7 +6688,6 @@ function handleCallRequest(data) {
     if (remoteVideo.srcObject && remoteVideo._pendingPlay) {
       remoteVideo._pendingPlay = false;
       playRemoteCallMedia();
-      callStatusLabel.textContent = t("callConnected");
     }
   };
 }
@@ -7459,7 +7468,6 @@ async function handleCallAnswer(data) {
     return;
   }
   await drainCallIceQueue();
-  callStatusLabel.textContent = t("callConnected");
   appendSys(t("sysCallSecure"));
   if (remoteVideo._pendingPlay) {
     remoteVideo._pendingPlay = false;
@@ -7638,7 +7646,6 @@ async function handleIncomingCallOffer(data) {
       type: "call-answer",
       answer: callPc.localDescription
     });
-    callStatusLabel.textContent = t("callConnected");
     appendSys(t("sysCallSecure"));
     // If ontrack already fired and stored a stream, play it now
     if (remoteVideo._pendingPlay) {
