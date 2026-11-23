@@ -922,16 +922,16 @@
    *
    * The browser asks which screen, window or tab, every time — that picker is
    * the consent, and nothing is shared without it. This only decides whether
-   * the call is one to share into: an agreed call (mayCaptureForCall) that
-   * already sends video, since the screen takes the camera's place in the same
-   * sender. A voice call has no video to replace. Not while another change to
-   * the call's devices is under way, and not where the browser cannot share
-   * (no iPhone or iPad browser can).
+   * the call is one to share into: an agreed call (mayCaptureForCall). A voice
+   * call too, since it has the screen's channels as well — asked for: music
+   * from a tab, with the song showing; sharing there opens no camera. Not
+   * while another change to the call's devices is under way, and not where
+   * the browser cannot share (no phone's browser can).
    *
-   * @param {{inCall: boolean, hasVideo: boolean, busy: boolean, supported: boolean}} o
+   * @param {{inCall: boolean, busy: boolean, supported: boolean}} o
    */
   function mayShareScreen(o) {
-    return Boolean(o) && mayCaptureForCall(o.inCall) && o.hasVideo === true && !o.busy && o.supported === true;
+    return Boolean(o) && mayCaptureForCall(o.inCall) && !o.busy && o.supported === true;
   }
 
   /**
@@ -943,7 +943,8 @@
    * behind them to see and nobody is using them: a video call, connected, with
    * no pointer resting on them and no keyboard moving through them. Before the
    * call connects they say what is happening; in a voice call there is
-   * nothing behind them.
+   * nothing behind them — unless a screen is shared big in it, which counts
+   * as video (the caller says so).
    *
    * @param {{inCall: boolean, connected: boolean, video: boolean,
    *          pointerOnControls: boolean, keyboardInControls: boolean}} o
@@ -954,12 +955,13 @@
   }
 
   /**
-   * Should the share button show? In a video call, where the browser can share.
+   * Should the share button show? In a call, voice or video, where the
+   * browser can share.
    *
-   * @param {{inCall: boolean, hasVideo: boolean, supported: boolean}} o
+   * @param {{inCall: boolean, supported: boolean}} o
    */
   function shareOffered(o) {
-    return Boolean(o) && o.inCall === true && o.hasVideo === true && o.supported === true;
+    return Boolean(o) && o.inCall === true && o.supported === true;
   }
 
   /**

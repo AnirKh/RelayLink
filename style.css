@@ -1150,6 +1150,22 @@ html.in-desktop-app .author-panel { display: none; }
   -webkit-touch-callout: none;
 }
 .call-overlay.screen-big:not(.mini) #remoteVideo.dragging { cursor: grabbing; }
+/* A screen shared in a voice call — asked for: music from a tab, the song
+   showing. Their picture stays 1px for the sound, as in any voice call; who
+   it is goes small in the top corner, where their picture would be. */
+.call-overlay.voice-only.screen-big:not(.mini) #remoteVideo {
+  width: 1px; height: 1px; min-width: 0; border: 0;
+}
+.call-overlay.voice-only.screen-big:not(.mini) .voice-only-avatar {
+  top: calc(54px + var(--safe-top)); right: calc(14px + var(--safe-right)); left: auto;
+  transform: none;
+  flex-direction: row; gap: 8px;
+  padding: 6px 14px 6px 6px; border-radius: 26px;
+  background: rgba(0,0,0,0.55);
+  z-index: 10;
+}
+.call-overlay.voice-only.screen-big:not(.mini) .avatar-circle { width: 36px; height: 36px; font-size: 18px; border-width: 2px; }
+.call-overlay.voice-only.screen-big:not(.mini) .avatar-name { font-size: 13px; max-width: 140px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* The other side's film, louder or quieter here — see "The film's volume" in
    app.js. Upright on the left edge, clear of both small pictures and of the
    buttons; up is louder. It fades with the buttons while watching. */
@@ -1338,6 +1354,8 @@ html.in-desktop-app .author-panel { display: none; }
   pointer-events: none;
 }
 .call-overlay.mini.screen-big #localVideo { display: none; }
+/* A voice call made small stays its strip: the screen goes on, unseen. */
+.call-overlay.mini.voice-only.screen-big #screenVideo { display: none; }
 .call-overlay.mini .call-mini-bar {
   display: flex; gap: 8px; z-index: 11;
   position: absolute; left: 0; right: 0; bottom: 6px; justify-content: center;

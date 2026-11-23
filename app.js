@@ -27,7 +27,7 @@
 
    APP_BUILD is written by tools/sync-build.js and by nothing else.
 ══════════════════════════════════════════════ */
-const APP_BUILD = "202611231308-7d9d67ba";
+const APP_BUILD = "202611232249-4aba9b3f";
 
 function refuseToRunInAStalePage() {
   let builtFor = null;
@@ -7291,11 +7291,15 @@ function ensureOutgoingCallTransceivers(withVideo) {
   const hasAudio = callPc.getTransceivers().some(t => t.receiver?.track?.kind === "audio" && !t.stopped);
   const hasVideo = callPc.getTransceivers().some(t => t.receiver?.track?.kind === "video" && !t.stopped);
   if (!hasAudio) callPc.addTransceiver("audio", { direction: "sendrecv" });
-  if (withVideo && !hasVideo) callPc.addTransceiver("video", { direction: "sendrecv" });
+  /* The camera's channel. In a voice call it is kept in its place unused —
+     nothing sent on it, nothing asked for — so the screen's below are the
+     second of their kind in every call, which is how both sides find them. */
+  if (!hasVideo) callPc.addTransceiver("video", { direction: withVideo ? "sendrecv" : "inactive" });
   /* And, after the voice and the picture, channels for a shared screen: its
-     sound, and its picture. */
-  if (withVideo && !screenSoundTransceiver(callPc)) callPc.addTransceiver("audio", { direction: "sendrecv" });
-  if (withVideo && !screenVideoTransceiver(callPc)) callPc.addTransceiver("video", { direction: "sendrecv" });
+     sound, and its picture. In a voice call too — asked for: music played
+     from a tab, both sides hearing it well and seeing the song. */
+  if (!screenSoundTransceiver(callPc)) callPc.addTransceiver("audio", { direction: "sendrecv" });
+  if (!screenVideoTransceiver(callPc)) callPc.addTransceiver("video", { direction: "sendrecv" });
 }
 
 /* ── The screen's sound, a channel of its own ──
@@ -7307,9 +7311,9 @@ function ensureOutgoingCallTransceivers(withVideo) {
    in this one, turned down while the sharer talks (see mixScreenSound). The
    other side plays it apart from the voice, as it came.
 
-   It is made with the call — the caller offers it, the answerer takes it both
-   ways — so starting to share is only a track put into it, with nothing to
-   agree again. It is the second sound channel on both sides, in the order
+   It is made with the call, voice or video — the caller offers it, the
+   answerer takes it both ways — so starting to share is only a track put
+   into it, with nothing to agree again. It is the second sound channel on both sides, in the order
    the caller made them. A side on an older page has none to offer, or answers
    without sending on it; then the film is mixed in with the voice, as before.
 
@@ -7741,7 +7745,8 @@ function hideCallChrome() {
   const mayHide = G.callChromeMayHide({
     inCall,
     connected: callPc?.connectionState === "connected",
-    video: !callOverlay.classList.contains("voice-only"),
+    /* a voice call has nothing behind them, unless a screen is shared big in it */
+    video: !callOverlay.classList.contains("voice-only") || callOverlay.classList.contains("screen-big"),
     /* :hover sticks after a tap on a phone; only a real pointer counts */
     pointerOnControls: window.matchMedia?.("(hover: hover)").matches === true &&
                        (callControls.matches(":hover") || screenVolume.matches(":hover")),
@@ -8330,7 +8335,7 @@ async function letGoOfSteps(sender) {
 async function startScreenShare() {
   const camera = localStream?.getVideoTracks()[0];
   if (sharingScreen) return;
-  if (!G.mayShareScreen({ inCall, hasVideo: Boolean(camera), busy: restartingCallMedia, supported: SHARE_SUPPORTED })) return;
+  if (!G.mayShareScreen({ inCall, busy: restartingCallMedia, supported: SHARE_SUPPORTED })) return;
   restartingCallMedia = true;               // one change to the call's devices at a time
   shareBtn.disabled = true;
   const pc = callPc;
@@ -8356,14 +8361,16 @@ async function startScreenShare() {
        picker did not hold to Full HD, for that too. */
     try { await screen.applyConstraints(screenConstraints(profile)); } catch (_) { /* the sender's limit still holds */ }
     /* Beside the camera, in its own channel, where both sides have one;
-       otherwise in the camera's place. */
+       otherwise in the camera's place. A voice call has no camera: in its own
+       channel, or — an older page on the other side, with none — not at all,
+       its sound alone going, mixed in with the voice (below). */
     const apart = screenVideoSender(pc);
-    const cameraSender = pc.getSenders().find(s => s.track === camera);
+    const cameraSender = camera ? pc.getSenders().find(s => s.track === camera) : null;
     if (apart) {
       await apart.replaceTrack(screen);
       await limitScreenSender(apart, screen, profile);
       await limitCameraSender(cameraSender);
-    } else {
+    } else if (camera) {
       if (cameraSender) await cameraSender.replaceTrack(screen);
       else              await attachCallTrack(screen, localStream);
       await limitScreenSender(pc.getSenders().find(s => s.track === screen), screen, profile);
@@ -8393,11 +8400,12 @@ async function startScreenShare() {
       }
     }
     sharingScreen = true;
-    if (apart) {
-      /* The camera goes on as it was; the screen is shown big, here and there. */
+    if (apart || !camera) {
+      /* The camera goes on as it was, or there is none; the screen is shown
+         big, here and there. */
       sharedScreen = screen;
       showScreenBig();
-      dcSendCallSignal({ type: "call-screen", on: true }).catch(() => {});
+      if (apart) dcSendCallSignal({ type: "call-screen", on: true }).catch(() => {});
     } else {
       camera.stop();                        // only once the screen is in its place
       camOffBeforeShare = isCamOff;
@@ -8495,9 +8503,7 @@ async function stopScreenShare() {
 }
 
 function updateShareBtn() {
-  shareBtn.classList.toggle("hidden", !G.shareOffered({
-    inCall, hasVideo: Boolean(localStream?.getVideoTracks().length), supported: SHARE_SUPPORTED
-  }));
+  shareBtn.classList.toggle("hidden", !G.shareOffered({ inCall, supported: SHARE_SUPPORTED }));
   shareBtn.classList.toggle("sharing", sharingScreen);
   shareBtn.replaceChildren(tablerIcon(sharingScreen ? "screen-share-off" : "screen-share"));
   shareBtn.setAttribute("aria-label", t(sharingScreen ? "stopSharing" : "shareScreen"));

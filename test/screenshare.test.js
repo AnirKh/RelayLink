@@ -1,5 +1,7 @@
 /*
-  Sharing the screen in a video call.
+  Sharing the screen in a call — a video call, and asked for later, a voice
+  call too: music played from a tab, heard well on both sides, the song
+  showing.
 
   The screen takes the camera's place in the same sender; the browser's own
   picker is the consent; stopping — by the button or the browser's "Stop
@@ -26,26 +28,25 @@ const app = fs.readFileSync(path.join(__dirname, "..", "app.js"), "utf8").replac
    The decisions
 ══════════════════════════════════════════ */
 
-test("sharing starts only in a video call, where the browser can, one change at a time", () => {
+test("sharing starts in a call — voice or video — where the browser can, one change at a time", () => {
   for (const inCall of [true, false, "true"]) {
-    for (const hasVideo of [true, false]) {
-      for (const busy of [true, false]) {
-        for (const supported of [true, false, undefined]) {
-          assert.equal(G.mayShareScreen({ inCall, hasVideo, busy, supported }),
-            inCall === true && hasVideo && !busy && supported === true,
-            JSON.stringify({ inCall, hasVideo, busy, supported }));
-        }
+    for (const busy of [true, false]) {
+      for (const supported of [true, false, undefined]) {
+        assert.equal(G.mayShareScreen({ inCall, busy, supported }),
+          inCall === true && !busy && supported === true,
+          JSON.stringify({ inCall, busy, supported }));
       }
     }
   }
+  assert.equal(G.mayShareScreen({ inCall: true, busy: false, supported: true, hasVideo: false }), true, "a voice call");
   assert.equal(G.mayShareScreen(undefined), false);
 });
 
-test("the button is offered in a video call where the browser can share, and nowhere else", () => {
-  const ok = { inCall: true, hasVideo: true, supported: true };
+test("the button is offered in a call where the browser can share, voice calls too, and nowhere else", () => {
+  const ok = { inCall: true, supported: true };
   assert.equal(G.shareOffered(ok), true);
-  assert.equal(G.shareOffered({ ...ok, supported: false }), false, "an iPhone: no browser there can share");
-  assert.equal(G.shareOffered({ ...ok, hasVideo: false }), false, "a voice call: no video to put the screen in");
+  assert.equal(G.shareOffered({ ...ok, hasVideo: false }), true, "a voice call: music from a tab, say");
+  assert.equal(G.shareOffered({ ...ok, supported: false }), false, "a phone: no browser there can share");
   assert.equal(G.shareOffered({ ...ok, inCall: false }), false);
   assert.equal(G.shareOffered(undefined), false);
 });
@@ -114,7 +115,9 @@ function call({ inCall = true, video = true, camOff = false, busy = false, suppo
      and its picture; "one-way" — the other side, an older page, answered
      without sending on them; "sound-only" — a page one version back, which
      agreed the sound's channel but not the picture's. */
-  const slots = [[mic, "audio"], [cam, "video"]].filter(([t]) => t);
+  /* A voice call keeps the camera's channel in its place, unused, where the
+     call has the screen's channels — so theirs are second of their kind. */
+  const slots = [[mic, "audio"], [cam, "video"]].filter(([t, kind]) => t || (channel && kind === "video"));
   if (channel) slots.push([null, "audio"], [null, "video"]);
   const agreed = i => channel === "agreed" || (channel === "sound-only" && i === 2);
   const senders = slots.map(([t, kind]) => {
@@ -184,7 +187,7 @@ function call({ inCall = true, video = true, camOff = false, busy = false, suppo
         ? { getSenders: () => senders,
             getTransceivers: () => senders.map((sender, i) => ({
               sender, stopped: false, receiver: { track: { kind: sender.kind } },
-              currentDirection: i < 2 || agreed(i) ? "sendrecv" : "sendonly" })) }
+              currentDirection: i === 1 && !cam ? "inactive" : i < 2 || agreed(i) ? "sendrecv" : "sendonly" })) }
         : { getSenders: () => senders },
       localStream: new MediaStream([mic, cam].filter(Boolean)),
       localVideo: { srcObject: null, classList: classes(), style: { removeProperty() {} }, play() { return Promise.resolve(); } }
@@ -314,6 +317,62 @@ test("a window or the whole screen, or a tab the browser still plays itself: not
     await c.startScreenShare();
     assert.ok(!c.log.mixed.includes("here: screen sound"), `${surface}, kept off: ${kept}`);
     assert.equal(c.now().screenMix.playsHere, false);
+  }
+});
+
+/* ── In a voice call ── */
+
+test("a voice call: the tab in the screen's own channel, shown big here and there — and no camera opened", async () => {
+  /* Asked for: music from a tab in a voice call, the song showing. */
+  const c = call({ video: false, channel: "agreed" });
+  await c.startScreenShare();
+  assert.equal(c.log.picker.length, 1, "the picker: the consent, as in a video call");
+  assert.equal(c.senders[3].track.name, "screen", "in the channel kept for it: no new call");
+  assert.equal(c.senders[1].track, null, "the camera's channel left unused");
+  assert.equal(c.senders[0].track, c.mic);
+  assert.deepEqual(c.log.asked, [], "no camera asked for");
+  assert.deepEqual(c.log.attached, []);
+  assert.equal(c.now().sharedScreen.name, "screen");
+  assert.ok(c.log.order.includes("screen big"));
+  assert.deepEqual(c.log.signals, [{ type: "call-screen", on: true }]);
+  assert.equal(c.now().sharingScreen, true);
+});
+
+test("music in a voice call: its sound in its own channel, in stereo's channel, the voice untouched, sent for motion", async () => {
+  const c = call({ video: false, channel: "agreed", withSound: true, surface: "browser", kept: true });
+  await c.startScreenShare();
+  assert.equal(c.senders[2].track.name, "mix", "the screen's sound channel");
+  assert.equal(c.senders[0].track, c.mic, "the voice as the microphone gave it");
+  assert.ok(c.log.mixed.includes("here: screen sound"), "played here, dipped, as in a video call");
+  assert.equal(c.senders[3].encoding().maxBitrate, 4000000, "a tab with its sound: the moving profile");
+  assert.equal(c.senders[3].track.contentHint, "motion");
+});
+
+test("stopping in a voice call: the screen's channels empty again, and nothing opened", async () => {
+  const c = call({ video: false, channel: "agreed", withSound: true });
+  await c.startScreenShare();
+  await c.stopScreenShare();
+  assert.equal(c.senders[3].track, null);
+  assert.equal(c.senders[2].track, null);
+  assert.equal(c.senders[0].track, c.mic);
+  assert.deepEqual(c.log.asked, [], "no camera: there was none before");
+  assert.deepEqual(c.now().localStream.getTracks(), [c.mic]);
+  assert.ok(c.log.order.includes("stop screen"));
+  assert.deepEqual(c.log.signals, [{ type: "call-screen", on: true }, { type: "call-screen", on: false }]);
+  assert.equal(c.now().sharingScreen, false);
+});
+
+test("a voice call with an older page on the other side: the sound alone, mixed in with the voice; no picture sent", async () => {
+  for (const channel of [null, "one-way"]) {
+    const c = call({ video: false, channel, withSound: true });
+    await c.startScreenShare();
+    assert.equal(c.senders[0].track.name, "mix", `in the voice's sender (${channel})`);
+    assert.deepEqual(c.log.attached, [], "no picture added to a call that has no place for it");
+    assert.deepEqual(c.log.signals, [], "nothing for them to show big");
+    assert.ok(!c.senders.some(s => s.track && s.track.name === "screen"));
+    await c.stopScreenShare();
+    assert.equal(c.senders[0].track, c.mic, "the voice alone again");
+    assert.deepEqual(c.log.asked, []);
   }
 });
 
@@ -507,8 +566,8 @@ test("hung up while the picker was up: the screen is put straight back", async (
   assert.equal(c.log.replaced.length, 0);
 });
 
-test("a voice call, a browser that cannot share, an ended call, or a change under way: no picker", async () => {
-  for (const setup of [{ video: false }, { supported: false }, { inCall: false }, { busy: true }]) {
+test("a browser that cannot share, an ended call, or a change under way: no picker", async () => {
+  for (const setup of [{ supported: false }, { inCall: false }, { busy: true }]) {
     const c = call(setup);
     await c.startScreenShare();
     assert.equal(c.log.picker.length, 0, JSON.stringify(setup));
@@ -691,4 +750,42 @@ test("the screen big fills the call, and the other person goes small over it", (
   const html = fs.readFileSync(path.join(__dirname, "..", "index.html"), "utf8");
   assert.match(html, /<video id="screenVideo" [^>]*autoplay playsinline muted><\/video>\s*<video id="remoteVideo"/,
     "under the two pictures, and silent: its sound has a channel of its own");
+});
+
+/* ── Every call has the screen's channels ── */
+
+test("a voice call is made with the screen's channels too, the camera's kept in its place unused", () => {
+  const body = [
+    grab(/^function ensureOutgoingCallTransceivers\([^)]*\)\s*\{[\s\S]*?^\}/m, "ensureOutgoingCallTransceivers"),
+    grab(/^function screenChannel\([\s\S]*?^function screenVideoTransceiver\([^\n]*\n/m, "the screen's channels")
+  ].join("\n");
+  const make = withVideo => {
+    const made = [];
+    const callPc = {
+      getTransceivers: () => made,
+      addTransceiver: (kind, init) => { made.push({ kind, direction: init.direction, stopped: false, receiver: { track: { kind } } }); }
+    };
+    const api = new Function("callPc", `${body}\nreturn { ensureOutgoingCallTransceivers, screenSoundTransceiver, screenVideoTransceiver };`)(callPc);
+    api.ensureOutgoingCallTransceivers(withVideo);
+    api.ensureOutgoingCallTransceivers(withVideo);     // made once, however often asked
+    return { made, callPc, ...api };
+  };
+  const voice = make(false);
+  assert.deepEqual(voice.made.map(t => `${t.kind} ${t.direction}`),
+    ["audio sendrecv", "video inactive", "audio sendrecv", "video sendrecv"],
+    "the voice, the camera's place with nothing on it, then the screen's sound and picture");
+  assert.equal(voice.screenSoundTransceiver(voice.callPc), voice.made[2], "second of its kind, as the other side counts");
+  assert.equal(voice.screenVideoTransceiver(voice.callPc), voice.made[3]);
+  const video = make(true);
+  assert.deepEqual(video.made.map(t => `${t.kind} ${t.direction}`),
+    ["audio sendrecv", "video sendrecv", "audio sendrecv", "video sendrecv"], "a video call as it was");
+});
+
+test("a screen big in a voice call: who it is small in the corner, the call's sound kept 1px, and small it stays a strip", () => {
+  const css = fs.readFileSync(path.join(__dirname, "..", "style.css"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
+  assert.match(css, /\.call-overlay\.voice-only\.screen-big:not\(\.mini\) #remoteVideo\s*\{[^}]*width:\s*1px;\s*height:\s*1px/,
+    "their picture element still only plays their voice");
+  assert.match(css, /\.call-overlay\.voice-only\.screen-big:not\(\.mini\) \.voice-only-avatar\s*\{[^}]*top:\s*calc\(54px[^}]*transform:\s*none/,
+    "out of the middle of the screen, to the top corner");
+  assert.match(css, /\.call-overlay\.mini\.voice-only\.screen-big #screenVideo\s*\{\s*display:\s*none;\s*\}/);
 });

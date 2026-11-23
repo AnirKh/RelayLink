@@ -173,6 +173,16 @@ test("faded is see-through and untouchable; the self-view and the away note are 
   for (const part of [".call-controls", ".screen-volume"]) assert.ok(waking[1].includes(part), `${part} takes the tap that wakes it`);
 });
 
+test("a voice call with a screen shared big in it: the buttons fade as in a video call", () => {
+  assert.match(grab(/^function hideCallChrome\(\)\s*\{[\s\S]*?^\}/m, "hideCallChrome"),
+    /video: !callOverlay\.classList\.contains\("voice-only"\) \|\| callOverlay\.classList\.contains\("screen-big"\)/);
+  const s = stage({ voice: true });
+  s.overlay.add("screen-big");
+  s.showCallChrome();
+  s.run(4000);
+  assert.equal(s.overlay.contains("chrome-hidden"), true);
+});
+
 test("the film's volume fades with the buttons: a pointer resting on it, or the keyboard in it, keeps them", () => {
   /* Asked for: while watching, the slider goes. */
   const fadesAfterIdle = o => { const s = stage(o); s.showCallChrome(); s.run(4000); return s.overlay.contains("chrome-hidden"); };
