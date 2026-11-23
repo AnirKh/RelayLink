@@ -27,7 +27,7 @@
 
    APP_BUILD is written by tools/sync-build.js and by nothing else.
 ══════════════════════════════════════════════ */
-const APP_BUILD = "202611220849-60b755af";
+const APP_BUILD = "202611231255-0be5553d";
 
 function refuseToRunInAStalePage() {
   let builtFor = null;
@@ -4384,7 +4384,9 @@ function createCallPeerConnection() {
     track.onunmute = () => {
       /* Frames have started to arrive. A picture that is still blank by now is
          the Safari case below in some other order of events: hand it over again. */
-      if (track.kind === "video" && !remoteVideo.videoWidth) showRemoteTracks();
+      /* Safari only: elsewhere (the app on Android above all) a fresh stream
+         restarts the player — a black flash and flicker as the call starts. */
+      if (track.kind === "video" && !remoteVideo.videoWidth && ["iphone", "ipad", "macos"].includes(MY_DEVICE.os)) showRemoteTracks();
       playRemoteCallMedia();
     };
 

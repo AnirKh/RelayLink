@@ -145,8 +145,8 @@ test("a track announced twice is not added twice", () => {
   assert.deepEqual(kinds(c.video.srcObject), ["video"]);
 });
 
-test("a picture still blank when frames start arriving is handed over again", () => {
-  const c = call();
+test("Safari: a picture still blank when frames start arriving is handed over again", () => {
+  const c = call({ os: "iphone" });
   const video = c.track("video");
   c.arrive(c.track("audio"));
   c.arrive(video);
@@ -155,6 +155,17 @@ test("a picture still blank when frames start arriving is handed over again", ()
   video.onunmute();
   assert.equal(c.video.attached.length, before + 1, "should be re-attached");
   assert.deepEqual(kinds(c.video.srcObject), ["audio", "video"]);
+});
+
+test("Android: frames arriving never restart the picture — that was the black flash and flicker", () => {
+  const c = call({ os: "android" });
+  const video = c.track("video");
+  c.arrive(c.track("audio"));
+  c.arrive(video);
+  const before = c.video.attached.length;
+  c.video.videoWidth = 0;
+  video.onunmute();
+  assert.equal(c.video.attached.length, before);
 });
 
 test("a picture already showing is left alone", () => {

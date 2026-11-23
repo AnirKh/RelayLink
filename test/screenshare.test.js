@@ -689,6 +689,6 @@ test("the screen big fills the call, and the other person goes small over it", (
   assert.match(css, /\.call-overlay\.screen-big #screenVideo\s*\{[^}]*inset:\s*0[^}]*object-fit:\s*contain/);
   assert.match(css, /\.call-overlay\.screen-big:not\(\.mini\) #remoteVideo\s*\{[^}]*z-index:\s*10/);
   const html = fs.readFileSync(path.join(__dirname, "..", "index.html"), "utf8");
-  assert.match(html, /<video id="screenVideo" autoplay playsinline muted><\/video>\s*<video id="remoteVideo"/,
+  assert.match(html, /<video id="screenVideo" [^>]*autoplay playsinline muted><\/video>\s*<video id="remoteVideo"/,
     "under the two pictures, and silent: its sound has a channel of its own");
 });

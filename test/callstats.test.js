@@ -147,3 +147,18 @@ test("the call's figures carry a line for the sound, in a voice call too, and fe
   const describe = fn("describeCallSound");
   assert.match(describe, /side\.level > 0 && side\.level < 0\.01 \? "<1%"/, "a quiet room is not shown as the zero of a paused microphone");
 });
+
+test("two pictures coming in: the one arriving is described, not the idle screen channel", () => {
+  const DCS = require("../connstats.js");
+  const r = DCS.callVideoStats(new Map([
+    ["c1", { id: "c1", type: "codec", mimeType: "video/VP8" }],
+    ["cam", { id: "cam", type: "inbound-rtp", kind: "video", codecId: "c1", frameWidth: 640, frameHeight: 480, bytesReceived: 400000, timestamp: 1000 }],
+    ["scr", { id: "scr", type: "inbound-rtp", kind: "video", bytesReceived: 0, timestamp: 1000 }]
+  ]));
+  assert.equal(r.in.width, 640);
+  const a = DCS.callAudioStats(new Map([
+    ["v", { id: "v", type: "inbound-rtp", kind: "audio", bytesReceived: 9000, audioLevel: 0.2, timestamp: 1000 }],
+    ["s", { id: "s", type: "inbound-rtp", kind: "audio", bytesReceived: 0, timestamp: 1000 }]
+  ]));
+  assert.equal(a.in.bytes, 9000);
+});

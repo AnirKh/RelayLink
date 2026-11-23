@@ -311,7 +311,9 @@
       stats.forEach(r => { if (r && r.type === "codec") codecs[r.id] = r.mimeType; });
       stats.forEach(r => {
         if (!r || (r.kind || r.mediaType) !== "video") return;
-        if (r.type === "inbound-rtp")  inbound = r;
+        /* Two pictures come in — the camera and the screen's own channel, idle
+           unless shared. The one to describe is the one actually arriving. */
+        if (r.type === "inbound-rtp"  && (!inbound || (r.bytesReceived || 0) > (inbound.bytesReceived || 0))) inbound = r;
         /* More than one only while a sender is being swapped; the one carrying
            the picture is the one with the most behind it. */
         if (r.type === "outbound-rtp" && (!outbound || (r.bytesSent || 0) > (outbound.bytesSent || 0))) outbound = r;
@@ -360,7 +362,7 @@
     if (stats && typeof stats.forEach === "function") {
       stats.forEach(r => {
         if (!r || (r.kind || r.mediaType) !== "audio") return;
-        if (r.type === "inbound-rtp") inbound = r;
+        if (r.type === "inbound-rtp" && (!inbound || (r.bytesReceived || 0) > (inbound.bytesReceived || 0))) inbound = r;
         if (r.type === "outbound-rtp" && (!outbound || (r.bytesSent || 0) > (outbound.bytesSent || 0))) outbound = r;
         if (r.type === "media-source") source = r;
         if (r.timestamp > at) at = r.timestamp;
