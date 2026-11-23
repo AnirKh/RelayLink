@@ -68,6 +68,10 @@ async function openBrowser(binary, setup) {
     "--use-fake-device-for-media-stream",      // a moving test picture and a tone
     "--autoplay-policy=no-user-gesture-required",
     "--disable-features=WebRtcHideLocalIpsWithMdns",   // plain local addresses: no mDNS on a test machine
+    /* GitHub's Ubuntu runners forbid the user namespaces Chrome's sandbox is
+       built on, and Chrome dies at once without a word. The test browser only
+       ever opens this test's own local page. */
+    ...(process.env.CI ? ["--no-sandbox"] : []),
     "--remote-debugging-port=0", `--user-data-dir=${profile}`, "about:blank"
   ], { stdio: ["ignore", "ignore", "pipe"] });
 
@@ -79,7 +83,7 @@ async function openBrowser(binary, setup) {
       const m = said.match(/DevTools listening on (ws:\/\/\S+)/);
       if (m) { clearTimeout(fail); resolve(m[1]); }
     });
-    proc.on("exit", code => { clearTimeout(fail); reject(new Error(`browser ended (code ${code}). It printed:\n${said}`)); });
+    proc.on("exit", (code, signal) => { clearTimeout(fail); reject(new Error(`browser ${binary} ended (${signal || `code ${code}`}). It printed:\n${said}`)); });
   });
 
   const port = new URL(endpoint).port;
