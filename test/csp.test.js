@@ -138,17 +138,21 @@ const vendor = name => path.join(__dirname, "..", "vendor", "tabler", name);
 test("our copy of the icon stylesheet is Tabler icons 3.31.0 exactly as released", () => {
   /* The hash the page used to demand of the CDN's copy, sha384 of the
      release's own file. The same bytes here mean the same icons, and a copy
-     edited by accident — or re-saved with other line endings — fails. */
-  const hash = crypto.createHash("sha384").update(fs.readFileSync(vendor("tabler-icons.min.css"))).digest("base64");
+     edited by accident — or re-saved with other line endings — fails. Kept
+     whole in full/, which the page's cut-down copy is made from (see
+     tools/build-icons.js and test/icons.test.js). */
+  const hash = crypto.createHash("sha384").update(fs.readFileSync(vendor("full/tabler-icons.min.css"))).digest("base64");
   assert.equal(`sha384-${hash}`, "sha384-XAeMOW3g/ahgKWjRcH7Xp+LVEQ/hkKrV0zkAUTnFwlaWK1aXfd9vVufdwqr/836i");
 });
 
 test("the font the stylesheet asks for is here, and is a WOFF2 font", () => {
   const css = fs.readFileSync(vendor("tabler-icons.min.css"), "utf8");
-  assert.match(css, /url\("\.\/fonts\/tabler-icons\.woff2\?v3\.31\.0"\) format\("woff2"\)/, "it asks for WOFF2 first");
+  assert.match(css, /url\("\.\/fonts\/tabler-icons\.woff2\?h=[0-9a-f]{12}"\) format\("woff2"\)/, "WOFF2, asked for by its own hash");
   const font = fs.readFileSync(vendor("fonts/tabler-icons.woff2"));
   assert.equal(font.subarray(0, 4).toString("latin1"), "wOF2", "a WOFF2 file, not a page or an error saved under its name");
-  assert.ok(font.length > 500_000, "the whole font, not a cut-down one");
+  const whole = fs.readFileSync(vendor("full/tabler-icons.woff2"));
+  assert.equal(whole.subarray(0, 4).toString("latin1"), "wOF2");
+  assert.ok(whole.length > 500_000, "the whole font kept to cut from, not a cut-down one");
   assert.match(fs.readFileSync(vendor("LICENSE"), "utf8"), /^MIT License/, "with its licence");
 });
 

@@ -15,6 +15,7 @@
     "check-csp": "node tools/sync-csp.js --check",
     "sync-build": "node tools/sync-build.js",
     "check-build": "node tools/sync-build.js --check",
+    "build-icons": "node tools/build-icons.js",
     "build-vendor": "npx --yes esbuild@0.24.0 vendor/noble-entry.js --bundle --format=iife --minify --legal-comments=none --outfile=vendor/noble.js"
   },
   "dependencies": {
@@ -23,6 +24,7 @@
   },
   "devDependencies": {
     "@noble/curves": "1.6.0",
-    "@noble/hashes": "1.5.0"
+    "@noble/hashes": "1.5.0",
+    "subset-font": "2.9.0"
   }
 }

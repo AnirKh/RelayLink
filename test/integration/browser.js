@@ -120,7 +120,10 @@ async function openBrowser(binary, setup) {
         proc.once("exit", () => { clearTimeout(hard); resolve(); });
         proc.kill();
       });
-      fs.rmSync(profile, { recursive: true, force: true });
+      /* On Windows the browser can hold its files a moment after it ends: one
+         run in three failed here with EPERM, after the call itself passed. A
+         left-over temporary folder is not a failed call. */
+      try { fs.rmSync(profile, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 }); } catch (_) { /* left in temp */ }
     }
   };
   return page;

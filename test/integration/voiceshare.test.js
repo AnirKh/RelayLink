@@ -237,6 +237,9 @@ test("music from a tab in a video call, between two real browsers: the sound alo
   /* Stopped with the same button: the card gone, the cameras as they were. */
   await caller.eval(`musicBtn.click(); true`);
   await callee.waitFor(`musicCard.classList.contains("hidden")`, "the music card gone at the callee", 20_000);
+  /* The other side is told first, and the sharer's buttons are put back once
+     its own stopping is done: one run in four looked a moment too soon. */
+  await caller.waitFor(`!sharingScreen && !shareBtn.classList.contains("hidden")`, "the share button back at the caller", 10_000);
   assert.deepEqual(await caller.eval(`({ sharing: sharingScreen, camera: localStream.getVideoTracks()[0]?.readyState, share: !shareBtn.classList.contains("hidden") })`),
                    { sharing: false, camera: "live", share: true });
   await caller.eval(`endCallBtn.click(); true`);

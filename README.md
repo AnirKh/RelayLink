@@ -819,6 +819,19 @@ Pages that predate all this cannot update themselves. The server recognises them
 
 The server reads the id out of `app.js` rather than holding a second copy, and `npm run check-build` fails if the stamp no longer describes the files.
 
+## The app's own files: compressed, and kept
+
+Asked whether the app is built for speed. Messages, calls and files already go straight between the two devices, which nothing can beat; opening the page was the slow part. From this server (the Pi), every file went out exactly as on disk — `app.js` alone is 454 KB — and every visit asked again about each of them. GitHub Pages compresses for itself and keeps files ten minutes, and lets a site set neither.
+
+Now `server.js` (`sendStatic`, "THE APP'S OWN FILES"):
+
+- **Compressed.** Brotli where the browser takes it — `app.js` to about 103 KB — and gzip otherwise (about 128 KB). Brotli is asked of first whatever order the browser lists them in (`takesEncoding`): Chrome says `gzip, deflate, br`. Each is worked out once per version of each file and kept in memory; brotli at its best takes a moment on a Pi, so it is made in the background and gzip goes meanwhile. Only the scripts, the styles and the page: nothing holding a secret is ever compressed (a compressed answer that mixes a secret with words a stranger chose can give it away — BREACH). Fonts and pictures are compressed already.
+- **Kept.** Every file the page loads is asked for with its build (`?v=<build>`, above), and a new build is a new address — so a file asked for with this server's current build is kept by the browser for a year (`immutable`) and never asked about again. Only once `app.js` on disk has been still for ten seconds: an update writes its files one by one, and a file kept for a year must not be one caught halfway. Everything else — the page itself, the knock worker, an older build's address, the icon font — is asked about every time and answered "not modified" (304) when unchanged.
+
+Measured in Chrome from this server: the first visit carried 1,078 KB instead of 1,863 KB — the icon font, 801 KB, was most of what was left, and is cut down below; a second visit carried 10 KB — the page alone, every other file straight from the browser's own cache. Tested in `test/integration/static.test.js`.
+
+**The icon font, cut down.** The page loaded Tabler's whole icon font — about 5,900 icons, 801 KB, and a 242 KB stylesheet naming each — to draw some sixty. The whole release is kept unchanged in `vendor/tabler/full/` (its hash still checked in `test/csp.test.js`), and `npm run build-icons` (`tools/build-icons.js`, with the development package `subset-font`) cuts from it a font holding only the icons the page's own files name, and a stylesheet for just those: 84 icons, 17 KB and 4 KB. "Name" is taken wide on purpose — every `ti-<name>` and every quoted word in `index.html` and the scripts it loads that is an icon's name — because icons are passed along by name (`tablerIcon("bell")`, `["phone", "voiceCall"]`, `{ icon: "shield-check" }`), and an extra word costs a few hundred bytes where a missed icon is an empty square. Write icon names out whole: one put together from pieces at run time would not be seen. **After adding an icon, run `npm run build-icons`** — `test/icons.test.js` fails, naming the icon, until it has been. The stylesheet asks for the font by the font's own hash, and the test checks the two were made together. Checked in Chrome: all 84 drawn from the cut-down font, none blank; a first visit from this server now carries 258 KB, where it carried 1,863 KB.
+
 ## Phone keyboards
 
 On a phone the message box used to sit **underneath the keyboard** while you typed into it. Two causes, and both had to go:

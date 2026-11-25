@@ -65,6 +65,7 @@ const crypto     = require("crypto");
 const path       = require("path");
 const fs         = require("fs");
 const { pipeline, Transform } = require("stream");
+const zlib       = require("zlib");
 const WebSocket  = require("ws");
 
 /* Policy lives in csp.js so the header here and the meta tag in index.html
@@ -303,16 +304,120 @@ app.use((req, res, next) => {
   next();
 });
 
-app.get("/", (req, res) => {
-  res.sendFile(path.join(__dirname, "index.html"));
-});
+/* ══════════════════════════════════════════════
+   THE APP'S OWN FILES: COMPRESSED, AND KEPT
+   ─────────────────────────────────────────────
+   Asked about speed. The page's own files went out exactly as they are on
+   disk — app.js alone is 454 KB — and every visit asked again about each of
+   them. GitHub Pages compresses for itself; this server did not. Now:
+
+   - Compressed. Brotli where the browser takes it (app.js to about 103 KB),
+     gzip otherwise (about 128 KB). Worked out once for each version of each
+     file and kept in memory; brotli at its best takes a moment on a Pi, so it
+     is done in the background and gzip goes meanwhile. Only these files —
+     scripts, styles, the page — none of which holds a secret: a compressed
+     answer that mixes a secret with words a stranger chose can give the
+     secret away (BREACH), so nothing else here is compressed. Fonts and
+     pictures are compressed already.
+   - Kept. Every file the page loads is asked for with the build it belongs to,
+     `?v=<build>` (tools/sync-build.js), and a new build is a new address. So a
+     file asked for with this server's own build is kept by the browser for a
+     year and never asked about again. Only once that build has been still for
+     a few seconds: an update writes its files one by one, and a file kept for
+     a year must not be one caught halfway. Everything else — the page itself,
+     the knock worker, an older build's address — is asked about each time
+     (no-cache), and answered "not modified" when it is not.              */
+const STATIC_SQUEEZE = /\.(?:js|css|html|svg|webmanifest)$/;
+const STATIC_SETTLE_MS = /^\d+$/.test(process.env.STATIC_SETTLE_MS || "") ? Number(process.env.STATIC_SETTLE_MS) : 10_000;   // a test's checkout may be seconds old
+const STATIC_KEEP = "public, max-age=31536000, immutable";
+const staticKept = new Map();          // file → { mtimeMs, size, modified, hash, raw, gzip, br }
+
+function staticEntry(file) {
+  const stat = fs.statSync(file);
+  const kept = staticKept.get(file);
+  if (kept && kept.mtimeMs === stat.mtimeMs && kept.size === stat.size) return kept;
+  const raw = fs.readFileSync(file);
+  const entry = {
+    mtimeMs: stat.mtimeMs, size: stat.size, modified: stat.mtime.toUTCString(),
+    hash: crypto.createHash("sha256").update(raw).digest("base64url").slice(0, 22),
+    raw, gzip: null, br: null
+  };
+  if (STATIC_SQUEEZE.test(file)) {
+    entry.gzip = zlib.gzipSync(raw, { level: 9 });
+    zlib.brotliCompress(raw, { params: {
+      [zlib.constants.BROTLI_PARAM_QUALITY]: zlib.constants.BROTLI_MAX_QUALITY,
+      [zlib.constants.BROTLI_PARAM_SIZE_HINT]: raw.length
+    } }, (err, out) => { if (!err) entry.br = out; });
+  }
+  staticKept.set(file, entry);
+  return entry;
+}
+
+/** The build the files on disk are now — read from app.js, where
+    tools/sync-build.js writes it — once it has been still a while; else null. */
+let staticBuild = { mtimeMs: 0, build: null };
+function settledBuild(now = Date.now()) {
+  try {
+    const file = path.join(__dirname, "app.js");
+    const stat = fs.statSync(file);
+    if (now - stat.mtimeMs < STATIC_SETTLE_MS) return null;
+    if (staticBuild.mtimeMs !== stat.mtimeMs) {
+      const src = fs.readFileSync(file, "utf8");
+      staticBuild = { mtimeMs: stat.mtimeMs, build: (src.match(/^const APP_BUILD = "(\d{12}-[0-9a-f]{8})";/m) || [])[1] || null };
+    }
+    return staticBuild.build;
+  } catch (_) {
+    return null;
+  }
+}
+
+/** Does the browser take this encoding? Its own q=0 says no; otherwise named,
+    or "*". Asked of brotli first and gzip next, whatever order the browser
+    lists them in: Chrome says "gzip, deflate, br", and brotli is smaller. */
+function takesEncoding(header, coding) {
+  let any = null;
+  for (const part of String(header || "").toLowerCase().split(",")) {
+    const [name, ...params] = part.split(";").map(p => p.trim());
+    const q = params.find(p => p.startsWith("q="));
+    const wanted = !q || Number(q.slice(2)) > 0;
+    if (name === coding) return wanted;
+    if (name === "*") any = wanted;
+  }
+  return any === true;
+}
+
+function sendStatic(req, res, file) {
+  let entry;
+  try { entry = staticEntry(path.join(__dirname, file)); }
+  catch (_) { return res.sendStatus(404); }
+  const build = settledBuild();
+  res.type(path.extname(file));
+  res.setHeader("Cache-Control", build && req.query.v === build ? STATIC_KEEP : "no-cache");
+  res.setHeader("Last-Modified", entry.modified);
+  let body = entry.raw;
+  let coding = "identity";
+  if (entry.gzip) {
+    res.vary("Accept-Encoding");
+    const asked = req.headers["accept-encoding"];
+    if (entry.br && takesEncoding(asked, "br")) { coding = "br"; body = entry.br; }
+    else if (takesEncoding(asked, "gzip"))       { coding = "gzip"; body = entry.gzip; }
+  }
+  if (coding !== "identity") res.setHeader("Content-Encoding", coding);
+  res.setHeader("ETag", `"${entry.hash}${coding === "identity" ? "" : `-${coding}`}"`);
+  if (req.fresh) return res.status(304).end();
+  res.setHeader("Content-Length", String(body.length));
+  res.status(200);
+  return req.method === "HEAD" ? res.end() : res.end(body);
+}
+
+app.get("/", (req, res) => sendStatic(req, res, "index.html"));
 
 app.get(["/app.js", "/protocol.js", "/i18n.js", "/framebust.js", "/connstats.js", "/guards.js", "/pake.js", "/vendor/noble.js", "/style.css",
          "/manifest.webmanifest", "/icons/icon.svg", "/icons/app-icon.svg", "/icons/apple-touch-icon.png", "/icons/author.jpg",
          "/icons/icon-192.png", "/icons/icon-512.png", "/icons/icon-maskable-512.png",
          "/icons/link-preview-relaylink.png", "/sw.js", "/duck.js",
          "/vendor/tabler/tabler-icons.min.css", "/vendor/tabler/fonts/tabler-icons.woff2"], (req, res) => {
-  res.sendFile(path.join(__dirname, req.path.slice(1)));
+  sendStatic(req, res, req.path.slice(1));
 });
 
 /* ── Ping endpoint — used by client to wake server ── */
