@@ -164,3 +164,81 @@ test("music from a tab in a voice call, between two real browsers", { skip: BROW
   await caller.eval(`endCallBtn.click(); true`);
   await callee.waitFor(`!inCall && callOverlay.classList.contains("hidden")`, "the call ended at the callee", 20_000);
 });
+
+/* Asked for after: music in a video call too. The music button shares the tab
+   as music there — its sound alone — while each side's camera goes on. */
+test("music from a tab in a video call, between two real browsers: the sound alone, the cameras going on", { skip: BROWSER ? false : "no Chromium or Chrome here", timeout: 240_000 }, async t => {
+  const port = PORT + 30;
+  const origin = `http://127.0.0.1:${port}`;
+  const server = startServer({ PORT: String(port), ALLOWED_ORIGINS: origin });
+  let caller = null, callee = null;
+  t.after(async () => {
+    await Promise.all([caller?.close(), callee?.close()]);
+    await stopServer(server);
+  });
+  await waitForServer(server, async () => (await fetch(`${origin}/api/ping`)).ok);
+
+  [caller, callee] = await Promise.all([openBrowser(BROWSER, SETUP), openBrowser(BROWSER, SETUP)]);
+  await Promise.all([caller.goto(`${origin}/`), callee.goto(`${origin}/`)]);
+  const lobbyReady = `typeof ws !== "undefined" && ws && ws.readyState === 1 && document.body.style.visibility !== "hidden"`;
+  await Promise.all([caller.waitFor(lobbyReady, "the caller's lobby"), callee.waitFor(lobbyReady, "the callee's lobby")]);
+  const room = `musicvideo${Date.now() % 100000}`;
+  await caller.eval(`showLobbyTab("create"); sessionIdInput.value = ${JSON.stringify(room)}; createOpenBtn.click(); true`);
+  await callee.waitFor(`[...document.querySelectorAll(".session-item")].some(i => i.textContent.includes(${JSON.stringify(room)}))`, "the room in the callee's list");
+  await callee.eval(`[...document.querySelectorAll(".session-item")].find(i => i.textContent.includes(${JSON.stringify(room)})).querySelector(".join-btn").click(); true`);
+  const chatUp = `e2eReady === true && isChatLinkUp()`;
+  await Promise.all([caller.waitFor(chatUp, "the caller's encrypted chat"), callee.waitFor(chatUp, "the callee's encrypted chat")]);
+
+  /* A video call. */
+  await caller.eval(`videoCallBtn.click(); true`);
+  await callee.waitFor(`!callRequestModal.classList.contains("hidden")`, "the call ringing at the callee");
+  await callee.eval(`callAcceptBtn.click(); true`);
+  const up = `inCall && callPc?.connectionState === "connected" && !callOverlay.classList.contains("voice-only") && remoteVideo.videoWidth > 0`;
+  await Promise.all([caller.waitFor(up, "the caller's video call, their picture showing"), callee.waitFor(up, "the callee's video call, their picture showing")]);
+  await caller.waitFor(`screenVideoSender(callPc) && screenSoundSender(callPc)`, "the screen's channels agreed");
+  const offered = await caller.eval(`({ share: !shareBtn.classList.contains("hidden"), music: !musicBtn.classList.contains("hidden") })`);
+  assert.deepEqual(offered, { share: true, music: true }, "both buttons in a video call");
+
+  /* The music button. */
+  await caller.eval(`musicBtn.click(); true`);
+  await caller.waitFor(`sharingScreen === true && sharedMusic !== null`, "the caller sharing music");
+  await callee.waitFor(`!musicCard.classList.contains("hidden")`, "the music card at the callee");
+  const seen = await callee.eval(`({
+    big: callOverlay.classList.contains("screen-big"),
+    text: musicCard.querySelector(".music-theirs").offsetParent !== null,
+    slider: getComputedStyle(musicVolumeRange).display !== "none",
+    below: musicCard.getBoundingClientRect().bottom <= document.querySelector(".call-controls").getBoundingClientRect().top,
+    camera: remoteVideo.videoWidth > 0
+  })`);
+  assert.deepEqual(seen, { big: false, text: true, slider: true, below: true, camera: true },
+    "a card above the call's buttons, with its slider — the tab not shown big, the caller's camera still showing");
+  const sharer = await caller.eval(`({
+    camera: localStream.getVideoTracks()[0]?.readyState,
+    sent: callPc.getSenders().some(s => s.track === localStream.getVideoTracks()[0]),
+    shareHidden: shareBtn.classList.contains("hidden"),
+    musicStop: musicBtn.getAttribute("aria-label") === t("stopMusic")
+  })`);
+  assert.deepEqual(sharer, { camera: "live", sent: true, shareHidden: true, musicStop: true }, "the sharer's camera still going; the music button stops it");
+
+  /* The music's sound in its own channel; no picture of the tab; the camera's picture still coming. */
+  const music = energyOf("screenSoundTransceiver(callPc).receiver");
+  const tabPicture = `(async () => {
+    let bytes = 0;
+    (await screenVideoTransceiver(callPc).receiver.getStats()).forEach(r => { if (r.type === "inbound-rtp") bytes = r.bytesReceived || 0; });
+    return bytes;
+  })()`;
+  const before = { music: await callee.eval(music), frames: await callee.eval(`remoteVideo.getVideoPlaybackQuality().totalVideoFrames`) };
+  await new Promise(r => setTimeout(r, 3000));
+  const after = { music: await callee.eval(music), tab: await callee.eval(tabPicture), frames: await callee.eval(`remoteVideo.getVideoPlaybackQuality().totalVideoFrames`) };
+  assert.ok(after.music.bytes > before.music.bytes && after.music.e > before.music.e, "the music arriving, and not silence");
+  assert.equal(after.tab, 0, "no picture of the tab arriving");
+  assert.ok(after.frames > before.frames, "the caller's camera still arriving");
+
+  /* Stopped with the same button: the card gone, the cameras as they were. */
+  await caller.eval(`musicBtn.click(); true`);
+  await callee.waitFor(`musicCard.classList.contains("hidden")`, "the music card gone at the callee", 20_000);
+  assert.deepEqual(await caller.eval(`({ sharing: sharingScreen, camera: localStream.getVideoTracks()[0]?.readyState, share: !shareBtn.classList.contains("hidden") })`),
+                   { sharing: false, camera: "live", share: true });
+  await caller.eval(`endCallBtn.click(); true`);
+  await callee.waitFor(`!inCall && callOverlay.classList.contains("hidden")`, "the call ended at the callee", 20_000);
+});

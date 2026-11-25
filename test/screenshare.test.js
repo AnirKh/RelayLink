@@ -80,7 +80,7 @@ const SOURCE = [
   grab(/^function screenScale\([^)]*\)\s*\{[\s\S]*?^\}/m,             "screenScale"),
   grab(/^function screenConstraints\([^)]*\)\s*\{[\s\S]*?^\}/m,       "screenConstraints"),
   grab(/^async function limitScreenSender\([^)]*\)\s*\{[\s\S]*?^\}/m,  "limitScreenSender"),
-  grab(/^async function startScreenShare\(\)\s*\{[\s\S]*?^\}/m,        "startScreenShare"),
+  grab(/^async function startScreenShare\([^)]*\)\s*\{[\s\S]*?^\}/m,   "startScreenShare"),
   grab(/^async function stopScreenShare\(\)\s*\{[\s\S]*?^\}/m,         "stopScreenShare"),
   grab(/^function updateShareBtn\(\)\s*\{[\s\S]*?^\}/m,                "updateShareBtn"),
   grab(/^function showCameraFacing\(\)\s*\{[\s\S]*?^\}/m,              "showCameraFacing")
@@ -152,8 +152,9 @@ function call({ inCall = true, video = true, camOff = false, busy = false, suppo
       return new MediaStream([track("video", "screen"), ...(withSound ? [track("audio", "screen sound")] : [])]);
     };
   }
-  const shareBtn = { disabled: false, classList: classes(["hidden"]), icon: null, attributes: {},
-    replaceChildren(i) { this.icon = i; }, setAttribute(k, v) { this.attributes[k] = v; } };
+  const button = () => ({ disabled: false, classList: classes(["hidden"]), icon: null, attributes: {},
+    replaceChildren(i) { this.icon = i; }, setAttribute(k, v) { this.attributes[k] = v; } });
+  const shareBtn = button(), musicBtn = button();
   const toggleCamBtn = { icon: null, replaceChildren(i) { this.icon = i; } };
   const env = {
     G, MediaStream, t: k => k,
@@ -172,7 +173,7 @@ function call({ inCall = true, video = true, camOff = false, busy = false, suppo
     dcReady: () => true,
     dcSendCallSignal: async m => { log.signals.push(m); },
     setTimeout: (f) => { log.order.push("retry later"); },
-    shareBtn, toggleCamBtn,
+    shareBtn, musicBtn, toggleCamBtn,
     /* A stand-in Web Audio: what goes into the mix, and a mixed track out. */
     window: { AudioContext: class {
       constructor() { if (mixFails) throw new Error("NotAllowedError"); this.state = "running"; this.destination = { name: "speakers" }; }
@@ -206,7 +207,7 @@ function call({ inCall = true, video = true, camOff = false, busy = false, suppo
       hangUp: () => { inCall = false; localStream = null; }
     };
   `)(...names.map(n => env[n]), env.state);
-  return { ...api, log, mic, cam, senders, shareBtn, toggleCamBtn,
+  return { ...api, log, mic, cam, senders, shareBtn, musicBtn, toggleCamBtn,
            hold: () => { let open; gate = new Promise(r => { open = r; }); return () => { gate = null; open(); }; } };
 }
 
@@ -815,4 +816,79 @@ test("a screen big in a voice call: who it is small in the corner, the call's so
   assert.match(css, /\.call-overlay\.voice-only\.screen-big:not\(\.mini\) \.voice-only-avatar\s*\{[^}]*top:\s*calc\(54px[^}]*transform:\s*none/,
     "out of the middle of the screen, to the top corner");
   assert.match(css, /\.call-overlay\.mini\.voice-only\.screen-big #screenVideo\s*\{\s*display:\s*none;\s*\}/);
+});
+
+/* ══════════════════════════════════════════
+   Music in a video call — the music button
+══════════════════════════════════════════ */
+
+test("music in a video call: its sound alone goes, in its own channel — the camera going on untouched, a card and not the tab", async () => {
+  /* Asked for: music shared in a video call too, as in a voice call. */
+  const c = call({ video: true, channel: "agreed", withSound: true, surface: "browser", kept: true });
+  await c.startScreenShare({ music: true });
+  assert.equal(c.senders[1].track, c.cam, "the camera still in its own sender");
+  assert.ok(!c.log.order.includes("stop camera"), "and never stopped");
+  assert.equal(c.senders[0].track, c.mic, "the voice as the microphone gave it");
+  assert.equal(c.senders[2].track.name, "mix", "the music in the screen sound's own channel: stereo, dipped");
+  assert.equal(c.senders[3].track, null, "no picture sent");
+  assert.deepEqual(c.log.params, [], "nothing's rate changed: the camera goes at its own");
+  assert.deepEqual(c.log.applied, [["screen", { width: { max: 320 }, height: { max: 180 }, frameRate: { max: 1 } }]]);
+  assert.equal(c.now().sharedMusic.name, "screen");
+  assert.equal(c.now().sharedScreen, null);
+  assert.ok(c.log.order.includes("music card") && !c.log.order.includes("screen big"));
+  assert.deepEqual(c.log.signals, [{ type: "call-music", on: true }]);
+  assert.equal(c.now().isCamOff, false);
+});
+
+test("music asked for with no sound ticked in the picker: nothing shared, and said how", async () => {
+  const c = call({ video: true, channel: "agreed", withSound: false });
+  await c.startScreenShare({ music: true });
+  assert.equal(c.now().sharingScreen, false);
+  assert.ok(c.log.order.includes("stop screen"));
+  assert.equal(c.senders[1].track, c.cam);
+  assert.deepEqual(c.log.signals, []);
+  assert.deepEqual(c.log.toasts, ["musicNeedsSound"]);
+  assert.equal(c.now().restartingCallMedia, false);
+});
+
+test("the share button in a video call still shows a tab with its sound big — music only from the music button", async () => {
+  const c = call({ video: true, channel: "agreed", withSound: true });
+  await c.startScreenShare();
+  assert.equal(c.now().sharedScreen.name, "screen");
+  assert.equal(c.now().sharedMusic, null);
+  assert.ok(c.log.order.includes("screen big"));
+});
+
+test("stopping music in a video call: the sound's channel empty, the camera as it was, nothing opened, the other side told", async () => {
+  const c = call({ video: true, channel: "agreed", withSound: true });
+  await c.startScreenShare({ music: true });
+  await c.stopScreenShare();
+  assert.equal(c.senders[2].track, null);
+  assert.equal(c.senders[1].track, c.cam);
+  assert.deepEqual(c.log.asked, [], "no camera opened again: it never went");
+  assert.deepEqual(c.log.signals, [{ type: "call-music", on: true }, { type: "call-music", on: false }]);
+  assert.equal(c.now().sharingScreen, false);
+  assert.equal(c.now().sharedMusic, null);
+});
+
+test("the two buttons: offered together; sharing one, the other steps aside and the one in use stops it", async () => {
+  const idle = call({ video: true, channel: "agreed" });
+  idle.updateShareBtn();
+  assert.ok(!idle.shareBtn.classList.contains("hidden") && !idle.musicBtn.classList.contains("hidden"));
+  assert.deepEqual([idle.musicBtn.icon, idle.musicBtn.attributes["aria-label"]], ["music", "shareMusic"]);
+  const playing = call({ video: true, channel: "agreed", withSound: true });
+  await playing.startScreenShare({ music: true });
+  assert.ok(playing.shareBtn.classList.contains("hidden"), "the screen's button steps aside");
+  assert.ok(playing.musicBtn.classList.contains("sharing"));
+  assert.deepEqual([playing.musicBtn.icon, playing.musicBtn.attributes["aria-label"]], ["music-off", "stopMusic"]);
+  const showing = call({ video: true, channel: "agreed" });
+  await showing.startScreenShare();
+  assert.ok(showing.musicBtn.classList.contains("hidden"), "music's steps aside while a screen is shown");
+  assert.deepEqual([showing.shareBtn.icon, showing.shareBtn.attributes["aria-label"]], ["screen-share-off", "stopSharing"]);
+  const nowhere = call({ supported: false });
+  nowhere.updateShareBtn();
+  assert.ok(nowhere.musicBtn.classList.contains("hidden"), "where a browser cannot share, neither");
+  const html = fs.readFileSync(path.join(__dirname, "..", "index.html"), "utf8");
+  assert.match(html, /<button id="musicBtn" class="call-btn hidden"/);
+  assert.match(app, /musicBtn\.onclick = \(\) => \(sharingScreen \? stopScreenShare\(\) : startScreenShare\(\{ music: true \}\)\);/);
 });

@@ -27,7 +27,7 @@
 
    APP_BUILD is written by tools/sync-build.js and by nothing else.
 ══════════════════════════════════════════════ */
-const APP_BUILD = "202611232316-25a14d3a";
+const APP_BUILD = "202611250421-34b88ad1";
 
 function refuseToRunInAStalePage() {
   let builtFor = null;
@@ -220,6 +220,7 @@ const screenVideo      = document.getElementById("screenVideo");
 const screenVolume     = document.getElementById("screenVolume");
 const screenVolumeRange = document.getElementById("screenVolumeRange");
 const musicCard        = document.getElementById("musicCard");
+const musicBtn         = document.getElementById("musicBtn");
 const musicVolumeRange = document.getElementById("musicVolumeRange");
 const localVideo       = document.getElementById("localVideo");
 const toggleMuteBtn    = document.getElementById("toggleMuteBtn");
@@ -6108,7 +6109,7 @@ function handleTextMessage(data, sealed = false) {
 
     case "call-music":
       /* They began playing music from a tab in a voice call, or stopped (see
-         "Music in a voice call"). */
+         "Music in a call"). */
       if (!inCall) break;
       peerMusic = data.on === true;
       showMusicCard();
@@ -7421,7 +7422,7 @@ for (const range of SCREEN_VOLUME_RANGES) {
   });
 }
 
-/* ── Music in a voice call ──────────────────
+/* ── Music in a call ────────────────────────
    Asked for: while talking in a voice call, music from a tab — found on
    YouTube or Spotify — heard well on both sides. The tab's picture was shown
    big at first; then asked: not needed, a card is enough. So in a voice call
@@ -7433,7 +7434,11 @@ for (const range of SCREEN_VOLUME_RANGES) {
    playing, with how loud it plays here (the film's volume, one setting);
    ours says it is being shared. A page cannot read a song's name from
    another tab, so the card does not say it. Shared without its sound, a tab
-   or a screen still shows big; a video call is as it was.               */
+   or a screen still shows big.
+
+   Then asked for in a video call too: there, the share button still shows
+   a tab big, and the music button (♪) shares a tab as music — its sound
+   alone, the camera going on as it was. One shared at a time.           */
 const MUSIC_PICTURE = { width: { max: 320 }, height: { max: 180 }, frameRate: { max: 1 } };
 let peerMusic = false;           // the other side says it is sharing music
 let sharedMusic = null;          // our share's picture, kept but not sent, while we share music
@@ -8377,7 +8382,8 @@ async function letGoOfSteps(sender) {
   await sender.setParameters(back);
 }
 
-async function startScreenShare() {
+/** `music`: the music button's — a tab's sound alone, in a video call too. */
+async function startScreenShare({ music: asMusic = false } = {}) {
   const camera = localStream?.getVideoTracks()[0];
   if (sharingScreen) return;
   if (!G.mayShareScreen({ inCall, busy: restartingCallMedia, supported: SHARE_SUPPORTED })) return;
@@ -8399,10 +8405,16 @@ async function startScreenShare() {
       display.getTracks().forEach(track => track.stop());
       return;
     }
+    /* Music asked for, with no sound ticked in the picker: nothing to share — said how. */
+    if (asMusic && !sound) {
+      display.getTracks().forEach(track => track.stop());
+      showToast(t("musicNeedsSound"), "warn");
+      return;
+    }
     const profile = screenProfile(Boolean(sound));
-    /* A voice call, with its sound: music — its sound alone goes (see "Music
-       in a voice call"). */
-    const music = !camera && Boolean(sound);
+    /* With its sound, in a voice call, or from the music button: music — its
+       sound alone goes (see "Music in a call"). */
+    const music = Boolean(sound) && (!camera || asMusic);
     screen.contentHint = profile.hint;      // a page kept sharp; a video kept moving
     screen.onended = () => stopScreenShare();
     /* The track is asked again for the profile's size and rate — and where the
@@ -8415,7 +8427,9 @@ async function startScreenShare() {
        its sound alone going, mixed in with the voice (below). */
     const apart = music ? null : screenVideoSender(pc);
     const cameraSender = camera ? pc.getSenders().find(s => s.track === camera) : null;
-    if (apart) {
+    if (music) {
+      /* No picture goes: the camera, if there is one, goes on as it was. */
+    } else if (apart) {
       await apart.replaceTrack(screen);
       await limitScreenSender(apart, screen, profile);
       await limitCameraSender(cameraSender);
@@ -8561,14 +8575,25 @@ async function stopScreenShare() {
   }
 }
 
+/** The two share buttons: the screen's and music's. Sharing one, the other
+    steps aside — and the one in use stops it. */
 function updateShareBtn() {
-  shareBtn.classList.toggle("hidden", !G.shareOffered({ inCall, supported: SHARE_SUPPORTED }));
-  shareBtn.classList.toggle("sharing", sharingScreen);
-  shareBtn.replaceChildren(tablerIcon(sharingScreen ? "screen-share-off" : "screen-share"));
-  shareBtn.setAttribute("aria-label", t(sharingScreen ? "stopSharing" : "shareScreen"));
+  const offered = G.shareOffered({ inCall, supported: SHARE_SUPPORTED });
+  const playing = sharingScreen && Boolean(sharedMusic);
+  const showing = sharingScreen && !sharedMusic;
+  shareBtn.classList.toggle("hidden", !offered || playing);
+  shareBtn.classList.toggle("sharing", showing);
+  shareBtn.replaceChildren(tablerIcon(showing ? "screen-share-off" : "screen-share"));
+  shareBtn.setAttribute("aria-label", t(showing ? "stopSharing" : "shareScreen"));
+  if (!musicBtn) return;
+  musicBtn.classList.toggle("hidden", !offered || showing);
+  musicBtn.classList.toggle("sharing", playing);
+  musicBtn.replaceChildren(tablerIcon(playing ? "music-off" : "music"));
+  musicBtn.setAttribute("aria-label", t(playing ? "stopMusic" : "shareMusic"));
 }
 
 shareBtn.onclick = () => (sharingScreen ? stopScreenShare() : startScreenShare());
+if (musicBtn) musicBtn.onclick = () => (sharingScreen ? stopScreenShare() : startScreenShare({ music: true }));
 
 /* ── Headphones connected mid-call ──────────
    Reported: Bluetooth headphones connected during a video call on an iPhone,
