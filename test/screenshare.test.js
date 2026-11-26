@@ -83,7 +83,8 @@ const SOURCE = [
   grab(/^async function startScreenShare\([^)]*\)\s*\{[\s\S]*?^\}/m,   "startScreenShare"),
   grab(/^async function stopScreenShare\(\)\s*\{[\s\S]*?^\}/m,         "stopScreenShare"),
   grab(/^function updateShareBtn\(\)\s*\{[\s\S]*?^\}/m,                "updateShareBtn"),
-  grab(/^function showCameraFacing\(\)\s*\{[\s\S]*?^\}/m,              "showCameraFacing")
+  grab(/^function showCameraFacing\(\)\s*\{[\s\S]*?^\}/m,              "showCameraFacing"),
+  grab(/^function screenInCameraPlace\(\)\s*\{[\s\S]*?^\}/m,           "screenInCameraPlace")
 ].join("\n");
 
 function classes(initial = []) {
@@ -679,7 +680,7 @@ test("the button toggles; a call offers it once its devices are in; ending one r
 });
 
 test("nothing that opens the camera can put it back over a shared screen", () => {
-  assert.match(grab(/^async function flipCamera\(\)\s*\{[\s\S]*?^\}/m, "flipCamera"), /sharing: sharingScreen/);
+  assert.match(grab(/^async function flipCamera\(\)\s*\{[\s\S]*?^\}/m, "flipCamera"), /sharing: screenInCameraPlace\(\)/);
   assert.match(grab(/^async function restartLikeCallStart\(\)\s*\{[\s\S]*?^\}/m, "restartLikeCallStart"), /if \(sharingScreen\) return;/);
   assert.match(grab(/^async function followAudioDevice\(\)\s*\{[\s\S]*?^\}/m, "followAudioDevice"),
     /hasVideo: Boolean\(localStream\?\.getVideoTracks\(\)\.length\) && !sharingScreen/,
@@ -838,6 +839,24 @@ test("music in a video call: its sound alone goes, in its own channel — the ca
   assert.ok(c.log.order.includes("music card") && !c.log.order.includes("screen big"));
   assert.deepEqual(c.log.signals, [{ type: "call-music", on: true }]);
   assert.equal(c.now().isCamOff, false);
+});
+
+test("your own picture stays mirrored while music or a screen beside the camera is shared, and after — only a screen in the camera's place is not", async () => {
+  /* Reported: on a computer, your own picture showed unmirrored — music
+     shared in a video call took it for a screen in the camera's place, and
+     nothing put the mirror back once it stopped. */
+  for (const [label, setup, music] of [["music", { withSound: true, surface: "browser", kept: true }, true], ["a screen beside the camera", {}, false]]) {
+    const c = call({ video: true, channel: "agreed", ...setup });
+    await c.startScreenShare({ music });
+    assert.equal(c.now().localVideo.classList.contains("screen-share"), false, `${label}: still mirrored while shared`);
+    await c.stopScreenShare();
+    assert.equal(c.now().localVideo.classList.contains("screen-share"), false, `${label}: mirrored after`);
+  }
+  const old = call();                                  // an older page: the screen in the camera's place
+  await old.startScreenShare();
+  assert.equal(old.now().localVideo.classList.contains("screen-share"), true, "a screen is not mirrored where your camera was");
+  await old.stopScreenShare();
+  assert.equal(old.now().localVideo.classList.contains("screen-share"), false, "your camera again: mirrored");
 });
 
 test("music asked for with no sound ticked in the picker: nothing shared, and said how", async () => {

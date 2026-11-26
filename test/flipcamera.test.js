@@ -77,6 +77,7 @@ const SOURCE = [
   grab(/^function callVideo\(\)\s*\{[\s\S]*?^\}/m,                            "callVideo"),
   grab(/^async function flipCamera\(\)\s*\{[\s\S]*?^\}/m,                     "flipCamera"),
   grab(/^function showCameraFacing\(\)\s*\{[\s\S]*?^\}/m,                     "showCameraFacing"),
+  grab(/^function screenInCameraPlace\(\)\s*\{[\s\S]*?^\}/m,                  "screenInCameraPlace"),
   grab(/^async function updateFlipCamBtn\(\)\s*\{[\s\S]*?^\}/m,               "updateFlipCamBtn")
 ].join("\n");
 
@@ -143,6 +144,7 @@ function call({ inCall = true, video = true, camOff = false, busy = false, facin
   const names = Object.keys(env).filter(n => n !== "state");
   const api = new Function(...names, "state", `
     let { inCall, isCamOff, restartingCallMedia, cameraFacing, callPc, localStream, localVideo, sharingScreen = false } = state;
+    let sharedScreen = null, sharedMusic = null;
     ${SOURCE}
     return {
       flipCamera, updateFlipCamBtn, callVideo, showCameraFacing,

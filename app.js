@@ -27,7 +27,7 @@
 
    APP_BUILD is written by tools/sync-build.js and by nothing else.
 ══════════════════════════════════════════════ */
-const APP_BUILD = "202611251118-d83cf807";
+const APP_BUILD = "202611261000-7b56877d";
 
 function refuseToRunInAStalePage() {
   let builtFor = null;
@@ -7998,7 +7998,7 @@ toggleCamBtn.onclick = () => {
      the world, and text in it should read the right way round here too.     */
 async function flipCamera() {
   const current = localStream?.getVideoTracks()[0];
-  if (!G.mayFlipCamera({ inCall, hasVideo: Boolean(current), busy: restartingCallMedia, sharing: sharingScreen && !sharedScreen })) return;
+  if (!G.mayFlipCamera({ inCall, hasVideo: Boolean(current), busy: restartingCallMedia, sharing: screenInCameraPlace() })) return;
   restartingCallMedia = true;               // shared with the restart after a lock: one change at a time
   flipCamBtn.disabled = true;
   const pc = callPc;
@@ -8051,7 +8051,15 @@ async function flipCamera() {
     camera, and never a shared screen. */
 function showCameraFacing() {
   localVideo.classList.toggle("back-camera", cameraFacing === "environment");
-  localVideo.classList.toggle("screen-share", sharingScreen && !sharedScreen);
+  localVideo.classList.toggle("screen-share", screenInCameraPlace());
+}
+
+/** A shared screen has taken the camera's place — the way kept for a call
+    with an older page. Not one beside the camera, nor music, whose picture
+    goes nowhere: reported, sharing music in a video call left your own
+    picture unmirrored, and it stayed so after the music stopped. */
+function screenInCameraPlace() {
+  return sharingScreen && !sharedScreen && !sharedMusic;
 }
 
 /** Shown only on a device with a camera on each side — see G.flipCameraOffered.
@@ -8511,6 +8519,7 @@ async function stopScreenShare() {
     sharedMusic = null;
     showScreenBig();
     showMusicCard();
+    showCameraFacing();                     // your own picture mirrored as before
     if (dcReady()) dcSendCallSignal({ type: music ? "call-music" : "call-screen", on: false }).catch(() => {});
   } else {
     /* As it was before sharing: a camera turned off then is off again now. */

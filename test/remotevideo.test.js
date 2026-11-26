@@ -290,8 +290,17 @@ test("on an iPhone or iPad, or without Web Audio, or if it will not start: the v
     assert.equal(c.video.muted, false, JSON.stringify(opts));
     assert.equal(c.video.plays > 0, true);
   }
-  for (const os of ["android", "windows", "macos", "linux", "chromeos", "other"]) {
-    assert.equal(G.mayLevelVoice({ webAudio: true, hasAudio: true, os }), true, os);
+  assert.equal(G.mayLevelVoice({ webAudio: true, hasAudio: true, os: "android" }), true, "an Android phone, where it was asked for");
+  /* Reported: on a computer, both sides on speakers, the voice robotic and
+     crackling — the leveller lifting what echo cancelling leaves behind. */
+  for (const os of ["windows", "macos", "linux", "chromeos", "other", undefined]) {
+    assert.equal(G.mayLevelVoice({ webAudio: true, hasAudio: true, os }), false, `${os}: played as it arrives`);
+  }
+  for (const os of ["windows", "macos"]) {
+    const c = call({ os });
+    c.arrive(c.track("audio"));
+    assert.equal(c.leveller(), null, os);
+    assert.equal(c.video.muted, false, `${os}: heard from the browser's own player`);
   }
   assert.equal(G.mayLevelVoice({ webAudio: true, hasAudio: false, os: "android" }), false, "no voice yet: nothing to even out");
   assert.equal(G.mayLevelVoice(null), false);

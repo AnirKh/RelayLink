@@ -216,9 +216,11 @@ test("music from a tab in a video call, between two real browsers: the sound alo
     camera: localStream.getVideoTracks()[0]?.readyState,
     sent: callPc.getSenders().some(s => s.track === localStream.getVideoTracks()[0]),
     shareHidden: shareBtn.classList.contains("hidden"),
-    musicStop: musicBtn.getAttribute("aria-label") === t("stopMusic")
+    musicStop: musicBtn.getAttribute("aria-label") === t("stopMusic"),
+    mirrored: getComputedStyle(localVideo).transform.startsWith("matrix(-1")
   })`);
-  assert.deepEqual(sharer, { camera: "live", sent: true, shareHidden: true, musicStop: true }, "the sharer's camera still going; the music button stops it");
+  assert.deepEqual(sharer, { camera: "live", sent: true, shareHidden: true, musicStop: true, mirrored: true },
+    "the sharer's camera still going, its own picture still mirrored; the music button stops it");
 
   /* The music's sound in its own channel; no picture of the tab; the camera's picture still coming. */
   const music = energyOf("screenSoundTransceiver(callPc).receiver");
@@ -240,8 +242,9 @@ test("music from a tab in a video call, between two real browsers: the sound alo
   /* The other side is told first, and the sharer's buttons are put back once
      its own stopping is done: one run in four looked a moment too soon. */
   await caller.waitFor(`!sharingScreen && !shareBtn.classList.contains("hidden")`, "the share button back at the caller", 10_000);
-  assert.deepEqual(await caller.eval(`({ sharing: sharingScreen, camera: localStream.getVideoTracks()[0]?.readyState, share: !shareBtn.classList.contains("hidden") })`),
-                   { sharing: false, camera: "live", share: true });
+  assert.deepEqual(await caller.eval(`({ sharing: sharingScreen, camera: localStream.getVideoTracks()[0]?.readyState, share: !shareBtn.classList.contains("hidden"),
+                                         mirrored: getComputedStyle(localVideo).transform.startsWith("matrix(-1") })`),
+                   { sharing: false, camera: "live", share: true, mirrored: true });
   await caller.eval(`endCallBtn.click(); true`);
   await callee.waitFor(`!inCall && callOverlay.classList.contains("hidden")`, "the call ended at the callee", 20_000);
 });
