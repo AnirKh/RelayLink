@@ -1018,25 +1018,15 @@
                                          limit: -3, limitRatio: 20, limitAttack: 0.002, limitRelease: 0.1 });
 
   /**
-   * Is the other person's voice evened out here? On an Android phone, where it
-   * was asked for — an iPhone's voice arriving loud in one call and far and
-   * quiet in the next — wherever Web Audio is, and there is a voice.
-   *
-   * Not on an iPhone or iPad, where a page's sound while its microphone is
-   * open is the phone's own business, and a call has gone silent there before
-   * for less. And not on a computer: reported, a voice there sounded robotic
-   * and crackled, both sides on speakers. The leveller lifts what is quiet by
-   * up to 17 dB, and with speakers at both ends what is quiet is what the
-   * other side's echo cancelling leaves behind — its warbling, metallic
-   * remains, now loud; and the voice went through Web Audio rather than the
-   * browser's own player. A computer's voice comes steady from a desk and its
-   * volume is to hand, so there it plays exactly as it arrives, as in any
-   * other call app.
+   * Is the other person's voice evened out here? Wherever Web Audio is, and
+   * there is a voice — but not on an iPhone or iPad, where a page's sound while
+   * its microphone is open is the phone's own business, and a call has gone
+   * silent there before for less: the plain way stays.
    *
    * @param {{webAudio: boolean, hasAudio: boolean, os: string}} o
    */
   function mayLevelVoice(o) {
-    return Boolean(o) && o.webAudio === true && o.hasAudio === true && o.os === "android";
+    return Boolean(o) && o.webAudio === true && o.hasAudio === true && o.os !== "iphone" && o.os !== "ipad";
   }
 
   /**

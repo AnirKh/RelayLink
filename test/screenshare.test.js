@@ -72,7 +72,6 @@ const SOURCE = [
   grab(/^const SCREEN_CAPTURE = [^\n]*;$/m,                           "SCREEN_CAPTURE"),
   grab(/^const SCREEN_SOUND = [^\n]*;$/m,                             "SCREEN_SOUND"),
   grab(/^const MUSIC_PICTURE = [^\n]*;$/m,                            "MUSIC_PICTURE"),
-  grab(/^const MUSIC_SOUND = [^\n]*;$/m,                              "MUSIC_SOUND"),
   grab(/^function screenProfile\([^)]*\)\s*\{[\s\S]*?^\}/m,           "screenProfile"),
   grab(/^function mixScreenSound\([^)]*\)\s*\{[\s\S]*?^\}/m,          "mixScreenSound"),
   grab(/^function screenChannel\([\s\S]*?^function screenVideoSender\([^\n]*\n/m, "the screen's channels"),
@@ -858,24 +857,6 @@ test("your own picture stays mirrored while music or a screen beside the camera 
   assert.equal(old.now().localVideo.classList.contains("screen-share"), true, "a screen is not mirrored where your camera was");
   await old.stopScreenShare();
   assert.equal(old.now().localVideo.classList.contains("screen-share"), false, "your camera again: mirrored");
-});
-
-test("music from the music button keeps playing in its own tab, as it is — this page plays no copy of its own; a film from the share button is still played here, dipped", async () => {
-  /* Reported: shared music sounded tinny and crackly on the sharer's own
-     laptop, played by this page, while the other side heard it clean. */
-  const music = call({ video: true, channel: "agreed", withSound: true, surface: "browser", kept: false });
-  await music.startScreenShare({ music: true });
-  assert.deepEqual(music.log.picker[0].audio, { suppressLocalAudioPlayback: false }, "the browser asked to go on playing the tab here");
-  assert.equal(music.now().screenMix.playsHere, false);
-  assert.ok(!music.log.mixed.some(m => m.startsWith("here:")), "nothing of it played by this page");
-  assert.equal(music.senders[2].track.name, "mix", "still sent, in its own channel, dipped while the sharer talks");
-  assert.deepEqual(music.log.toasts, ["musicSoundTip"], "and said so: dipped for them, as it always is here");
-
-  const film = call({ video: true, channel: "agreed", withSound: true, surface: "browser", kept: true });
-  await film.startScreenShare();
-  assert.deepEqual(film.log.picker[0].audio, { suppressLocalAudioPlayback: true }, "the share button: kept off the speakers");
-  assert.ok(film.log.mixed.includes("here: screen sound"), "and played here, dipped, as before");
-  assert.deepEqual(film.log.toasts, ["shareSoundTip"]);
 });
 
 test("music asked for with no sound ticked in the picker: nothing shared, and said how", async () => {

@@ -92,8 +92,7 @@ test("a video call between two real browsers", { skip: BROWSER ? false : "no Chr
       rec: window.__callRec,
       stats: callStats.textContent,
       none: t("callVideoNone"),
-      posters: ["screenVideo", "remoteVideo", "localVideo"].map(id => document.getElementById(id).getAttribute("poster") || ""),
-      voice: { levelled: voiceLeveller !== null, playerMuted: remoteVideo.muted, os: MY_DEVICE.os }
+      posters: ["screenVideo", "remoteVideo", "localVideo"].map(id => document.getElementById(id).getAttribute("poster") || "")
     })`);
     /* Each stream handed over restarts the player. One per track that
        arrives (voice, camera) is the most a call needs; a third was the old
@@ -107,9 +106,6 @@ test("a video call between two real browsers", { skip: BROWSER ? false : "no Chr
     const down = r.stats.split("\n").find(l => l.startsWith("↓")) || "";
     assert.ok(down && !down.includes(r.none) && /\d+×\d+/.test(down), `${who}: the incoming video's figures are missing — got ${JSON.stringify(r.stats)}`);
     for (const p of r.posters) assert.ok(p.startsWith("data:image/"), `${who}: a call video has no poster — Android draws a grey "play" picture`);
-    /* Reported: on a computer the voice sounded robotic and crackled. There it
-       plays as it arrives, from the browser's own player — see G.mayLevelVoice. */
-    assert.deepEqual(r.voice, { levelled: false, playerMuted: false, os: r.voice.os }, `${who} (${r.voice.os}): the voice as it arrives`);
   }
 
   /* Hung up: both sides back out of the call. */
