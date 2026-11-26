@@ -38,7 +38,8 @@ const BROWSER = findBrowser();
    name on it, and a 660 Hz tone. */
 const SETUP = `
   window.DIRECT_CONNECTION_SERVER_URL = location.origin;
-  navigator.mediaDevices.getDisplayMedia = async () => {
+  navigator.mediaDevices.getDisplayMedia = async asked => {
+    window.__pickerLast = asked;
     window.__pickerAsked = (window.__pickerAsked || 0) + 1;
     const canvas = document.createElement("canvas");
     canvas.width = 1280; canvas.height = 720;
@@ -202,6 +203,11 @@ test("music from a tab in a video call, between two real browsers: the sound alo
   /* The music button. */
   await caller.eval(`musicBtn.click(); true`);
   await caller.waitFor(`sharingScreen === true && sharedMusic !== null`, "the caller sharing music");
+  /* Reported: music played back by this page sounded tinny and crackly on the
+     sharer's laptop. The music button leaves the tab playing there itself. */
+  assert.deepEqual(await caller.eval(`({ asked: window.__pickerLast.audio, playsHere: screenMix.playsHere })`),
+                   { asked: { suppressLocalAudioPlayback: false }, playsHere: false },
+                   "the tab asked to go on playing on the sharer's computer, and no copy played by the page");
   await callee.waitFor(`!musicCard.classList.contains("hidden")`, "the music card at the callee");
   const seen = await callee.eval(`({
     big: callOverlay.classList.contains("screen-big"),

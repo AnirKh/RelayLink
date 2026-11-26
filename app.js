@@ -27,7 +27,7 @@
 
    APP_BUILD is written by tools/sync-build.js and by nothing else.
 ══════════════════════════════════════════════ */
-const APP_BUILD = "202611261000-7b56877d";
+const APP_BUILD = "202611261036-3b5c1150";
 
 function refuseToRunInAStalePage() {
   let builtFor = null;
@@ -8125,6 +8125,15 @@ const SCREEN_CAPTURE = { width: { max: SCREEN_MAX.width }, height: { max: SCREEN
    plays it, dipped (see mixScreenSound). Other browsers, and other choices
    in the picker, ignore it. */
 const SCREEN_SOUND = { suppressLocalAudioPlayback: true };
+/* Music, from the music button: the tab goes on playing here itself, as it
+   always does. Reported: shared music sounded tinny and crackly on the
+   sharer's own laptop, played by this page — while the other side heard it
+   clean. So this page plays no copy of its own: the tab is heard here exactly
+   as outside a call, and only sent from here, dipped for the other side while
+   the sharer talks. What that gives up: the sharer no longer hears their own
+   dip (a film from the share button still does), and the browser's echo
+   cancelling, not this page, keeps the speakers' music out of the voice. */
+const MUSIC_SOUND = { suppressLocalAudioPlayback: false };
 
 function screenProfile(withSound) {
   return withSound ? SCREEN_PROFILES.moving : SCREEN_PROFILES.still;
@@ -8402,9 +8411,10 @@ async function startScreenShare({ music: asMusic = false } = {}) {
     let display;
     /* Nothing awaited before this: the picker needs the tap that asked for it. */
     /* audio: the picker offers to share the sound too — a tab's, or on Windows
-       the whole screen's — and the person ticks it or not. A tab's is kept
-       off this computer's speakers, to be played from here, dipped. */
-    try { display = await navigator.mediaDevices.getDisplayMedia({ video: SCREEN_CAPTURE, audio: SCREEN_SOUND, systemAudio: "include" }); }
+       the whole screen's — and the person ticks it or not. From the share
+       button a tab's is kept off this computer's speakers, to be played from
+       here, dipped; from the music button it goes on playing here as it is. */
+    try { display = await navigator.mediaDevices.getDisplayMedia({ video: SCREEN_CAPTURE, audio: asMusic ? MUSIC_SOUND : SCREEN_SOUND, systemAudio: "include" }); }
     catch (_) { return; }                   // the picker closed, or sharing refused: the call goes on as it was
     const screen = display.getVideoTracks()[0];
     const sound  = display.getAudioTracks()[0] || null;
@@ -8462,7 +8472,7 @@ async function startScreenShare({ music: asMusic = false } = {}) {
           withVoice: !own, playHere, them: remoteCallStream?.getAudioTracks()[0] || null
         });
         await (own || voice).replaceTrack(screenMix.track);
-        showToast(t("shareSoundTip"), "info");
+        showToast(t(screenMix.playsHere ? "shareSoundTip" : asMusic ? "musicSoundTip" : "shareSoundTip"), "info");
       } catch (err) {
         /* The picture is still shared; only its sound is not. */
         console.error("Could not share the screen's sound:", err);

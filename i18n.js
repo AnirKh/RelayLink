@@ -40,6 +40,7 @@ const I18N = {
     shareMusic:      "Хөгжим хуваалцах",
     stopMusic:       "Хөгжим хуваалцахыг зогсоох",
     musicNeedsSound: "Хөгжим хуваалцахын тулд сонгох цонхонд табын дууг хуваалцахыг (Also share tab audio) чагтална уу.",
+    musicSoundTip:   "Хөгжмийг хуваалцаж байна — таныг ярих үед тэдэнд дуу нь намсна, харин танд ердийнхөөрөө тоглоно. Илүү цэвэр дуунд чихэвч зүүгээрэй.",
     authorAbout:    "Хүмүүс хоорондоо хялбар, чөлөөтэй харилцах боломжийг бүрдүүлэхийн тулд энэхүү аппыг бүтээлээ. Надтай холбогдохыг хүсвэл өртөөгөөр холбогдоорой.",
     // Lobby
     tabRooms:        "Өрөөнүүд",
@@ -476,6 +477,7 @@ const I18N = {
     shareMusic:      "Share music",
     stopMusic:       "Stop sharing music",
     musicNeedsSound: "To share music, tick “Also share tab audio” in the picker.",
+    musicSoundTip:   "Sharing the music — it dips for them while you talk, and plays here as it always does. Headphones keep it clean.",
     authorAbout:    "I built this app to make it easier for people to connect and communicate. If you'd like to get in touch with me, you can reach me through Örtöö.",
     tabRooms:        "Rooms",
     installApp:      "Install app",
