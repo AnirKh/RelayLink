@@ -27,7 +27,7 @@
 
    APP_BUILD is written by tools/sync-build.js and by nothing else.
 ══════════════════════════════════════════════ */
-const APP_BUILD = "202611261049-aec18a6d";
+const APP_BUILD = "202611270759-600694c5";
 
 function refuseToRunInAStalePage() {
   let builtFor = null;
@@ -1636,7 +1636,8 @@ function sendPendingCreate() {
 document.documentElement.classList.toggle("in-ortoo-app", /\bOrtooApp\b/.test(navigator.userAgent));
 document.documentElement.classList.toggle("in-desktop-app", inDesktopApp());
 /* The Windows app's window and taskbar show the page's icon: make it the
-   app's own icon (the link mark), not the browser page's speech bubble. */
+   app's own icon (the link mark). Since 2026-11-27 the page's icon is the
+   same mark; this keeps the window right should the two ever differ. */
 if (document.documentElement.classList.contains("in-desktop-app")) {
   const icon = document.querySelector('link[rel="icon"]');
   if (icon) icon.href = "icons/app-icon.svg?v=" + APP_BUILD;
