@@ -27,7 +27,7 @@
 
    APP_BUILD is written by tools/sync-build.js and by nothing else.
 ══════════════════════════════════════════════ */
-const APP_BUILD = "202611270759-600694c5";
+const APP_BUILD = "202611271157-79c71876";
 
 function refuseToRunInAStalePage() {
   let builtFor = null;
@@ -583,13 +583,21 @@ let ringOut     = null;     // the ring's own output — cut to silence it
 let ringTimer   = null;
 
 function readySound() {
+  if (soundCtx && soundCtx.state === "closed") soundCtx = null;   // broke: start a fresh one
   if (soundCtx) {
     if (soundCtx.state === "suspended") soundCtx.resume().catch(() => {});
     return;
   }
   const Ctx = window.AudioContext || window.webkitAudioContext;
   if (!Ctx) return;
-  try { soundCtx = new Ctx(); } catch (_) { soundCtx = null; }
+  try { soundCtx = new Ctx(); } catch (_) { soundCtx = null; return; }
+  /* The phone's speaker or headset went away under it (a call, Bluetooth):
+     drop it, so the next tap makes a working one. */
+  const mine = soundCtx;
+  if (mine.addEventListener) mine.addEventListener("error", () => {
+    if (soundCtx === mine) soundCtx = null;
+    mine.close().catch(() => {});
+  });
 }
 document.addEventListener("pointerdown", readySound, true);
 document.addEventListener("keydown", readySound, true);
