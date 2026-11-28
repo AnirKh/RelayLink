@@ -1196,7 +1196,9 @@
     return o.host === true ? "restart" : "ask";
   }
 
-  const CALL_RECOVER = Object.freeze({ firstTryMs: 3000, retryMs: 8000, giveUpMs: 30000 });
+  /* giveUpMs: a minute, not half — a lift or a tunnel takes longer than 30 s,
+     and a call that comes back is worth more than one ended a little sooner. */
+  const CALL_RECOVER = Object.freeze({ firstTryMs: 3000, retryMs: 8000, giveUpMs: 60000 });
   function callRecovery(o) {
     if (!o || (o.state !== "disconnected" && o.state !== "failed")) return "none";
     if (!(o.downFor >= 0)) return "wait";

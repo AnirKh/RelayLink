@@ -27,7 +27,7 @@
 
    APP_BUILD is written by tools/sync-build.js and by nothing else.
 ══════════════════════════════════════════════ */
-const APP_BUILD = "202611271157-79c71876";
+const APP_BUILD = "202611281017-8c321f12";
 
 function refuseToRunInAStalePage() {
   let builtFor = null;
@@ -6092,6 +6092,12 @@ function handleTextMessage(data, sealed = false) {
       handleCallRestartAnswer(data);
       break;
 
+    case "call-net-changed":
+      /* Their network changed (see "The phone's network changed"): the side
+         that placed the call asks for a fresh route now. */
+      restartCallNow(false);
+      break;
+
     case "call-away":
     case "call-back":
       /* Their page was hidden — a locked screen, or another app — or is back. */
@@ -6810,6 +6816,7 @@ async function updateCallStats() {
   callStatsLast = video;
   callAudioLast = sound;
   retryLine(report);                        // a picture held down after a bad line, helped back up
+  keepCameraCap();                          // data saver on mobile data
   const lines = [];
   if (video.in || video.out) lines.push(`↓ ${describeCallVideo(video.in, t("callVideoNone"))}`, `↑ ${describeCallVideo(video.out, "—")}`);
   if (sound.in || sound.out) lines.push(`${t("callSound")} ↓ ${describeCallSound(sound.in)} · ↑ ${describeCallSound(sound.out)}`);
@@ -6822,6 +6829,7 @@ function watchCallStats(on) {
   callStatsTimer = null;
   callStatsLast = null;
   callAudioLast = null;
+  cameraCapSet = null;                      // a new call: its camera has no ceiling set yet
   callStats.textContent = "";
   lineRetrying.since = lineRetrying.tests = lineRetrying.roomAtTest = 0;
   resetMicCheck();                          // a call starting, or over: nothing paused yet
@@ -7560,7 +7568,8 @@ async function handleCallIce(candidate) {
    camera and microphone carry on — after a few seconds down, and again now
    and then. Only that side asks, so two offers never cross. The call says
    "Reconnecting…" meanwhile, and both sides give up and say so once it has
-   been down for half a minute.                                           */
+   been down for a minute (half a minute was too short for a lift or a
+   tunnel).                                                               */
 let callOfferer      = false;          // this side placed the call
 let callDownSince    = 0;
 let callRestartAt    = 0;
@@ -7640,6 +7649,64 @@ async function handleCallRestartAnswer(data) {
     console.error("Could not take the call's fresh route:", err);
   }
 }
+
+/* ── The phone's network changed ────────────
+   Asked for: a call that freezes for about 8 seconds when the phone leaves
+   Wi-Fi for mobile data. The browser first has to notice that nothing
+   arrives (about 5 s), and the call then waited 3 s more before asking for a
+   fresh route. But the phone says at once that its network changed
+   (navigator.connection "change"; "online" where that is missing). Then the
+   fresh routes are asked for straight away: the chat's (the host restarts,
+   the guest asks it through the server) and the call's (the side that placed
+   it restarts; the other side tells it, call-net-changed). A restart on a
+   link that was still fine costs a moment's messages and changes nothing.
+   Events come in bursts as a network goes and another comes: one second's
+   quiet is waited for. An older page on the other side ignores the message
+   and finds its own way back, as before.                                  */
+const NET_SETTLE_MS = 1000;
+let netChangeTimer = null;
+
+function noteNetworkChanged() {
+  if (!currentSession || !pc) return;
+  clearTimeout(netChangeTimer);
+  netChangeTimer = setTimeout(routesAfterNetworkChange, NET_SETTLE_MS);
+}
+
+function routesAfterNetworkChange() {
+  netChangeTimer = null;
+  if (chatOver()) return;
+  const now = Date.now();
+  if (serverPathOpen() && now - chatRepairAt >= 3000) {
+    chatRepairAt = now;
+    chatRepairs++;
+    if (isHost) handleFullRenegotiation();
+    else wsSend({ type: "repair-request", sessionId: currentSession.sessionId });
+  }
+  /* The call's ask goes on the chat's channel: sent now, it waits there and
+     arrives as soon as the chat's own fresh route is up. */
+  if (inCall && callPc && dcReady()) restartCallNow(true);
+}
+
+/** A fresh route for the call now: this side's own, where it placed the
+    call; otherwise the side that did is told to ask (heard = false when it
+    is that side telling us, so it is never sent back). */
+function restartCallNow(here) {
+  if (!inCall || !callPc) return;
+  if (!callOfferer) {
+    if (here) dcSendCallSignal({ type: "call-net-changed" }).catch(() => {});
+    return;
+  }
+  const now = Date.now();
+  if (callRestartAt && now - callRestartAt < 3000) return;   // one just went
+  callRestartAt = now;
+  callRestarts++;
+  restartCallRoute();
+}
+
+if (navigator.connection && typeof navigator.connection.addEventListener === "function") {
+  navigator.connection.addEventListener("change", () => { noteNetworkChanged(); keepCameraCap(); });
+}
+window.addEventListener("online", noteNetworkChanged);
 
 async function initiateCallOffer(peerWantsVideo) {
   if (!pc || !currentSession) return;
@@ -8294,6 +8361,43 @@ async function limitCameraSender(sender) {
     if (!params.encodings || !params.encodings.length) return;
     for (const encoding of params.encodings) Object.assign(encoding, CAMERA_BESIDE_SCREEN);
     await sender.setParameters(params);
+  } catch (_) { /* a browser that will not take limits sends as it would have */ }
+}
+
+/* ── Data saver on mobile data ──────────────
+   Asked for: a video call on mobile data used about 1–2.5 Mb/s for the
+   camera — some 1 GB an hour. On mobile data the camera now has a ceiling
+   of 600 kb/s: still a clear picture, about 300 MB an hour. On Wi-Fi, or
+   where the browser does not say (an iPhone, most computers), no ceiling, as
+   before. Beside a shared screen the camera has its own, smaller one
+   (CAMERA_BESIDE_SCREEN), left alone here. Checked with the call's figures
+   (every 2 s) and when the network changes; set only when it differs from
+   what was set, so a sender is not touched every time.                   */
+const MOBILE_CAMERA_BITRATE = 600_000;
+let cameraCapSet = null;                    // the ceiling last set: b/s, 0 for none, null not yet
+
+function onMobileData() {
+  try { return navigator.connection?.type === "cellular"; } catch (_) { return false; }
+}
+
+async function keepCameraCap() {
+  const pc = callPc;
+  if (!pc || sharingScreen) { cameraCapSet = null; return; }   // the screen's limits rule then
+  if (lineRetrying.busy) return;            // a line test moves the ceiling for a moment
+  const cap = onMobileData() ? MOBILE_CAMERA_BITRATE : 0;
+  if (cap === cameraCapSet) return;
+  const camera = localStream?.getVideoTracks()[0];
+  const sender = camera && pc.getSenders().find(s => s.track === camera);
+  if (!sender || typeof sender.getParameters !== "function") return;
+  try {
+    const params = sender.getParameters();
+    if (!params.encodings || !params.encodings.length) return;   // not negotiated yet: next time
+    for (const encoding of params.encodings) {
+      if (cap) encoding.maxBitrate = cap;
+      else delete encoding.maxBitrate;
+    }
+    await sender.setParameters(params);
+    if (callPc === pc) cameraCapSet = cap;
   } catch (_) { /* a browser that will not take limits sends as it would have */ }
 }
 

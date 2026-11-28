@@ -5,7 +5,8 @@
   to mobile data mid-call, a moment without signal — simply ended, while the
   chat beside it tried again. Now the side that placed the call asks for a
   fresh route (an ICE restart) over the chat's channel, on the same
-  connection; both sides give up once it has been down for half a minute.
+  connection; both sides give up once it has been down for a minute (it was half a
+  minute: too short for a lift or a tunnel).
 
   G.callRecovery decides. watchCallLink(), stepCallRecovery(),
   restartCallRoute() and the two handlers are lifted out of app.js and run
@@ -47,10 +48,11 @@ test("the side that answered never asks — two offers must not cross", () => {
   for (const downFor of [3000, 10000, 20000]) assert.equal(step({ offerer: false, downFor }), "wait");
 });
 
-test("down for half a minute, both sides give up", () => {
-  assert.equal(step({ downFor: 30000 }), "give-up");
-  assert.equal(step({ offerer: false, downFor: 30000 }), "give-up");
-  assert.equal(step({ downFor: 29999, restarts: 3, sinceRestart: 1000 }), "wait");
+test("down for a minute, both sides give up", () => {
+  assert.equal(step({ downFor: 60000 }), "give-up");
+  assert.equal(step({ offerer: false, downFor: 60000 }), "give-up");
+  assert.equal(step({ downFor: 59999, restarts: 3, sinceRestart: 1000 }), "wait");
+  assert.equal(step({ downFor: 30000, restarts: 3, sinceRestart: 8000 }), "restart", "half a minute is no longer the end");
 });
 
 test("a time that makes no sense is waited on, not acted on", () => {
@@ -149,10 +151,10 @@ test("still down: asked again every eight seconds", async () => {
   assert.deepEqual(c.log.sent, ["call-restart", "call-restart", "call-restart"], "at 3, 11 and 19 seconds");
 });
 
-test("down for half a minute: the call ends, the other side is told, and the chat says why", async () => {
+test("down for a minute: the call ends, the other side is told, and the chat says why", async () => {
   const c = call();
   c.link("failed");
-  await c.wait(30000);
+  await c.wait(60000);
   assert.deepEqual(c.log.ended, [true], "endCall(true) — the other side is told");
   assert.deepEqual(c.log.sys, ["callLinkLost"]);
   assert.equal(c.now().callRecoverTimer, null);
@@ -171,8 +173,9 @@ test("with the chat's channel down too, the ask waits for it rather than going n
 test("the side that answered waits — and gives up at the same time", async () => {
   const c = call({ offerer: false });
   c.link("disconnected");
-  await c.wait(29000);
+  await c.wait(59000);
   assert.deepEqual(c.log.sent, []);
+  assert.deepEqual(c.log.ended, []);
   await c.wait(1000);
   assert.deepEqual(c.log.ended, [true]);
 });
